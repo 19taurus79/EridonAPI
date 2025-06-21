@@ -187,6 +187,8 @@ class InitDataModel(BaseModel):
 
 @app.post("/auth")
 def auth(data: InitDataModel):
+    print("RAW INIT DATA:", data.initData)
+    print(TELEGRAM_BOT_TOKEN)
     parsed = check_telegram_auth(data.initData)
     user = json.loads(parsed["user"])
     return user
