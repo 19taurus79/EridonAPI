@@ -146,7 +146,7 @@ app = FastAPI(
 origins = [
     "https://taurus.pp.ua",  # Для http://localhost
     "https://eridon-react.vercel.app",
-      "https://eridon-bot-next-js.vercel.app",  # Ваш React/Next.js сервер разработки
+    "https://eridon-bot-next-js.vercel.app",  # Ваш React/Next.js сервер разработки
     "http://127.0.0.1:5173",  # На случай, если localhost разрешается в 127.0.0.1 для клиента
     "http://127.0.0.1:8000",  # Сам ваш бэкенд, если к нему иногда обращаются напрямую
     # Добавьте другие источники по мере необходимости для разных сред (например, ваш домен для staging/production)
@@ -167,23 +167,137 @@ app.add_middleware(
 from aiogram import Bot
 
 bot = Bot(TELEGRAM_BOT_TOKEN)
+
+
 def check_telegram_auth(init_data: str) -> dict:
+    """
+    Проверяет init_data, полученные от Telegram Mini App,
+    строго следуя предоставленному алгоритму двухэтапного HMAC-SHA256.
+    """
+    if not TELEGRAM_BOT_TOKEN:
+        # Если токен не установлен, это означает ошибку конфигурации
+        raise RuntimeError(
+            "TELEGRAM_BOT_TOKEN не установлен в переменных окружения. Проверьте ваш файл .env"
+        )
+
+    # --- Отладочный вывод (ОСТАВЬТЕ ВКЛЮЧЕННЫМ ВО ВРЕМЯ ТЕСТИРОВАНИЯ) ---
+    print("\n--- НАЧАЛО ДЕТАЛЬНОЙ ОТЛАДКИ check_telegram_auth ---")
+    print(f"1. Получена init_data: '{init_data}'")
+    print(f"2. Длина init_data: {len(init_data)}")
+    # Для безопасности, выводим только часть токена
+    print(
+        f"3. TELEGRAM_BOT_TOKEN (обрезан): '{TELEGRAM_BOT_TOKEN[:5]}...{TELEGRAM_BOT_TOKEN[-5:]}'"
+    )
+    print(f"4. Длина TELEGRAM_BOT_TOKEN: {len(TELEGRAM_BOT_TOKEN)}")
+
+    # 1. Парсим строку запроса и создаем пары ключ-значение.
     parsed = dict(parse_qsl(init_data))
+
+    # Ключ 'hash' должен быть исключен, но запомнен.
     hash_ = parsed.pop("hash", None)
     if not hash_:
-        raise HTTPException(401, "Missing hash")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Отсутствует 'hash' в данных инициализации Telegram.",
+        )
 
-    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
-    secret_key = hashlib.sha256(TELEGRAM_BOT_TOKEN.encode()).digest()
-    calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+    # Согласно вашей документации, поле 'signature' не упоминается для удаления
+    # при формировании data_check_string. Поэтому мы НЕ удаляем его здесь.
+    # Если в вашей init_data оно присутствует и вызывает несовпадение,
+    # это означает, что либо фронтенд передает лишнее, либо это поле
+    # должно быть исключено, даже если не указано явно в этом описании.
+    # Но мы следуем **строго** предоставленному тексту.
 
+    print(f"5. Извлечен 'hash_': '{hash_}'")
+    print(f"6. Распарсенные данные (после удаления 'hash'): {parsed}")
+    print(f"7. Количество полей для проверки: {len(parsed)}")
+
+    # 2. Формируем data_check_string:
+    #    - Цепочка всех полученных полей, отсортированных в алфавитном порядке.
+    #    - Формат 'key=<value>'.
+    #    - Разделитель - символ перевода строки ('\n').
+    sorted_items = sorted(parsed.items())
+    data_check_string_parts = []
+    for k, v in sorted_items:
+        part = f"{k}={v}"
+        data_check_string_parts.append(part)
+
+    data_check_string = "\n".join(data_check_string_parts)
+
+    print(f"8. Сформированная data_check_string (длина {len(data_check_string)}):")
+    print("--- НАЧАЛО data_check_string ---")
+    print(data_check_string)
+    print("--- КОНЕЦ data_check_string ---")
+
+    # 3. Вычисляем секретный ключ (secret_key):
+    #    - Это HMAC-SHA-256 токена бота с константной строкой "WebAppData" в качестве ключа.
+    #    - Ваша документация говорит: secret_key = HMAC_SHA256(<bot_token>, "WebAppData")
+    #    - Примечание: "WebAppData" используется как КЛЮЧ для HMAC, а bot_token как СООБЩЕНИЕ.
+    #      (Это не совсем обычное использование, но так написано в вашей доке.)
+    #      Однако, более стандартно, что WebAppData - это сообщение, а bot_token - ключ для первого HMAC.
+    #      "HMAC_SHA256(<bot_token>, "WebAppData")"
+    #      Значит, TELEGRAM_BOT_TOKEN.encode() - это ключ, а b"WebAppData" - это сообщение.
+
+    #    Уточнение: Документация обычно формулирует HMAC(ключ, сообщение).
+    #    "подпись HMAC-SHA-256 токена бота с константной строкой, WebAppData используемой в качестве ключа."
+    #    Это может быть истолковано двояко:
+    #    Вариант А (подразумеваемый вашей цитатой "HMAC_SHA256(<bot_token>, "WebAppData")"):
+    #       Ключ: TELEGRAM_BOT_TOKEN.encode()
+    #       Сообщение: b"WebAppData"
+    #    Вариант Б (менее вероятный, но иногда встречается):
+    #       Ключ: b"WebAppData"
+    #       Сообщение: TELEGRAM_BOT_TOKEN.encode()
+
+    #    Исходя из примера в вашей предыдущей цитате:
+    #    HMAC-SHA256(  5768337691:AAH5YkoiEuPk8-FZa32hStHTqXiLPtAEhx8,  WebAppData)
+    #    Это означает, что токен бота - это сообщение, а "WebAppData" - это ключ.
+    #    Давайте следовать ЭТОМУ примеру, так как он конкретен.
+
+    #    Значит, ключ для первого HMAC: b"WebAppData"
+    #    Сообщение для первого HMAC: TELEGRAM_BOT_TOKEN.encode("utf-8")
+
+    secret_key_intermediate = hmac.new(
+        key=b"WebAppData",  # Ключ: константа "WebAppData"
+        msg=TELEGRAM_BOT_TOKEN.encode("utf-8"),  # Сообщение: токен бота
+        digestmod=hashlib.sha256,
+    ).digest()  # Получаем байтовое представление
+
+    print(
+        f"9. Промежуточный секретный ключ (HMAC(WebAppData, bot_token)) (hex): {secret_key_intermediate.hex()}"
+    )
+
+    # 4. Вычисляем финальный хэш:
+    #    - HMAC-SHA-256 data_check_string с secret_key_intermediate в качестве ключа.
+    calculated_hash = hmac.new(
+        key=secret_key_intermediate,  # Ключ: промежуточный секретный ключ
+        msg=data_check_string.encode("utf-8"),  # Сообщение: data_check_string
+        digestmod=hashlib.sha256,
+    ).hexdigest()  # Получаем шестнадцатеричное представление
+
+    print(f"10. Вычисленный финальный хэш: '{calculated_hash}'")
+    print(f"11. Хэши совпадают? (Calculated == Received) : {calculated_hash == hash_}")
+    print("--- КОНЕЦ ДЕТАЛЬНОЙ ОТЛАДКИ check_telegram_auth ---\n")
+
+    # 5. Сравниваем:
     if calculated_hash != hash_:
-        raise HTTPException(401, "Invalid hash")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный хэш данных инициализации Telegram. Хэши не совпадают.",
+        )
+
+    # После проверки, данные могут быть использованы.
+    # Сложные типы данных, как 'user', представлены как сериализованные объекты JSON.
+    # Если вам нужен объект Python, вы можете распарсить parsed['user'] здесь:
+    # import json
+    # if 'user' in parsed:
+    #     parsed['user'] = json.loads(parsed['user'])
 
     return parsed
 
+
 class InitDataModel(BaseModel):
     initData: str
+
 
 @app.post("/auth")
 def auth(data: InitDataModel):
@@ -192,6 +306,8 @@ def auth(data: InitDataModel):
     parsed = check_telegram_auth(data.initData)
     user = json.loads(parsed["user"])
     return user
+
+
 # Пул потоков для выполнения синхронных операций (Pandas обработка)
 # Это нужно, чтобы не блокировать основной асинхронный поток FastAPI,
 # пока Pandas выполняет тяжелые вычисления.
