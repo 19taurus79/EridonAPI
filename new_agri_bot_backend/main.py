@@ -20,7 +20,10 @@ import pandas as pd
 import io
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+
+from datetime import timedelta, datetime, timezone
+
+# import datetime
 import uuid
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,6 +37,7 @@ from .tables import (
     Submissions,
     Payment,
     MovedData,
+    Users,
 )
 from .config import (
     TELEGRAM_BOT_TOKEN,
@@ -299,13 +303,130 @@ class InitDataModel(BaseModel):
     initData: str
 
 
-@app.post("/auth")
-def auth(data: InitDataModel):
-    print("RAW INIT DATA:", data.initData)
-    print(TELEGRAM_BOT_TOKEN)
-    parsed = check_telegram_auth(data.initData)
-    user = json.loads(parsed["user"])
-    return user
+@app.post("/auth", summary="Аутентификация пользователя Telegram Mini App")
+async def auth(data: InitDataModel):
+    """
+    Эндпоинт для аутентификации пользователей Telegram Mini App.
+
+    1. Проверяет подлинность данных `initData` от Telegram.
+    2. Извлекает `telegram_id` и другие данные пользователя.
+    3. Находит пользователя в базе данных `Users` по `telegram_id`.
+       - Если пользователь не найден: возвращает ошибку 403 Forbidden, так как доступ ему закрыт.
+       - Если пользователь найден: обновляет его `username`, `first_name`, `last_name`
+         и `last_activity_date`.
+    4. Возвращает основные данные пользователя из вашей БД.
+
+    Возвращает:
+    - `telegram_id`: Уникальный ID пользователя Telegram.
+    - `username`: Имя пользователя Telegram (если есть).
+    - `first_name`: Имя пользователя Telegram.
+    - `last_name`: Фамилия пользователя Telegram.
+    - `is_allowed`: Статус разрешения доступа в вашей системе.
+    - `message`: Сообщение о статусе операции.
+
+    Выбрасывает HTTPException:
+    - 401 Unauthorized: Если `initData` недействительна (например, подделана или истекла).
+    - 400 Bad Request: Если `initData` отсутствует или имеет некорректный формат.
+    - **403 Forbidden**: Если пользователь с данным `telegram_id` не найден в вашей базе данных `Users`.
+    - 500 Internal Server Error: При внутренних ошибках сервера.
+    """
+    print(
+        f"[{datetime.now(timezone.utc)}] Получены RAW INIT DATA: {data.initData[:100]}..."
+    )
+
+    # 1. Проверяем init_data на подлинность
+    try:
+        parsed_init_data = check_telegram_auth(data.initData)
+    except HTTPException as e:
+        print(
+            f"[{datetime.now(timezone.utc)}] Ошибка аутентификации initData: {e.detail}"
+        )
+        raise e
+    except Exception as e:
+        print(
+            f"[{datetime.now(timezone.utc)}] Неожиданная ошибка при проверке initData: {e}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Внутренняя ошибка сервера при проверке данных: {e}",
+        )
+
+    # 2. Извлекаем информацию о пользователе из проверенных данных
+    user_info_str = parsed_init_data.get("user")
+    if not user_info_str:
+        print(f"[{datetime.now(timezone.utc)}] Отсутствует поле 'user' в initData.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="В данных инициализации Telegram отсутствует информация о пользователе (поле 'user').",
+        )
+
+    try:
+        user_data = json.loads(user_info_str)
+    except json.JSONDecodeError:
+        print(
+            f"[{datetime.now(timezone.utc)}] Неверный формат JSON для данных пользователя: {user_info_str[:50]}..."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Неверный формат JSON для данных пользователя в initData.",
+        )
+
+    telegram_id = user_data.get("id")
+    if not isinstance(telegram_id, int):
+        print(
+            f"[{datetime.now(datetime.timezone.utc)}] Telegram ID пользователя не является целым числом: {telegram_id}."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Telegram ID пользователя не является целым числом или отсутствует.",
+        )
+
+    # 3. Находим пользователя в БД. Если не найден - ОТКАЗЫВАЕМ В ДОСТУПЕ.
+    current_utc_time = datetime.now(timezone.utc)
+    user_in_db = (
+        await Users.objects().where(Users.telegram_id == telegram_id).first().run()
+    )
+
+    if not user_in_db:
+        # Пользователь не найден в вашей БД, доступ закрыт.
+        print(
+            f"[{current_utc_time}] Пользователь с Telegram ID {telegram_id} НЕ НАЙДЕН в БД. Доступ запрещен."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Доступ запрещен. Пользователь с Telegram ID {telegram_id} не зарегистрирован в системе.",
+        )
+    if not user_in_db.is_allowed:
+        print(
+            f"[{current_utc_time}] Пользователь {user_in_db.username or user_in_db.telegram_id} (ID: {user_in_db.telegram_id}) найден, но is_allowed=False. Доступ запрещен."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Доступ запрещен. Ваш аккаунт (Telegram ID {telegram_id}) не имеет активного разрешения. Обратитесь к администратору.",
+        )
+        # Пользователь найден, обновляем его данные и дату последней активности
+    print(
+        f"[{current_utc_time}] Пользователь с Telegram ID {telegram_id} найден. Обновляем данные."
+    )
+    user_in_db.username = user_data.get("username")
+    user_in_db.first_name = user_data.get("first_name")
+    user_in_db.last_name = user_data.get("last_name")
+    user_in_db.last_activity_date = current_utc_time
+    await user_in_db.save().run()
+    message = "Данные пользователя успешно обновлены."
+    print(
+        f"[{current_utc_time}] Данные пользователя {user_in_db.username or user_in_db.telegram_id} (ID: {user_in_db.telegram_id}) обновлены."
+    )
+
+    # 4. Возвращаем основные данные пользователя из вашей БД
+    return {
+        "message": message,
+        "telegram_id": user_in_db.telegram_id,
+        "username": user_in_db.username,
+        "first_name": user_in_db.first_name,
+        "last_name": user_in_db.last_name,
+        "is_allowed": user_in_db.is_allowed,  # Важный статус для фронтенда
+    }
 
 
 # Пул потоков для выполнения синхронных операций (Pandas обработка)
