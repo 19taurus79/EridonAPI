@@ -1,6 +1,8 @@
 # data_loader_api/app/main.py
 from typing import Optional
-
+from pydantic import BaseModel
+from urllib.parse import parse_qsl
+import hmac, hashlib, json
 import uvicorn
 from fastapi import (
     FastAPI,
@@ -49,6 +51,7 @@ from dotenv import load_dotenv
 load_dotenv()
 os.environ["PICCOLO_CONF"] = "piccolo_conf"
 SECRET_KEY = os.getenv("SECRET_KEY")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 # Алгоритм шифрования
 ALGORITHM = "HS256"
@@ -142,7 +145,8 @@ app = FastAPI(
 # --- Конфигурация CORS ---
 origins = [
     "https://taurus.pp.ua",  # Для http://localhost
-    "https://eridon-react.vercel.app",  # Ваш React/Next.js сервер разработки
+    "https://eridon-react.vercel.app",
+      "https://eridon-bot-next-js.vercel.app",  # Ваш React/Next.js сервер разработки
     "http://127.0.0.1:5173",  # На случай, если localhost разрешается в 127.0.0.1 для клиента
     "http://127.0.0.1:8000",  # Сам ваш бэкенд, если к нему иногда обращаются напрямую
     # Добавьте другие источники по мере необходимости для разных сред (например, ваш домен для staging/production)
@@ -163,7 +167,29 @@ app.add_middleware(
 from aiogram import Bot
 
 bot = Bot(TELEGRAM_BOT_TOKEN)
+def check_telegram_auth(init_data: str) -> dict:
+    parsed = dict(parse_qsl(init_data))
+    hash_ = parsed.pop("hash", None)
+    if not hash_:
+        raise HTTPException(401, "Missing hash")
 
+    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
+    secret_key = hashlib.sha256(TELEGRAM_BOT_TOKEN.encode()).digest()
+    calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+
+    if calculated_hash != hash_:
+        raise HTTPException(401, "Invalid hash")
+
+    return parsed
+
+class InitDataModel(BaseModel):
+    initData: str
+
+@app.post("/auth")
+def auth(data: InitDataModel):
+    parsed = check_telegram_auth(data.initData)
+    user = json.loads(parsed["user"])
+    return user
 # Пул потоков для выполнения синхронных операций (Pandas обработка)
 # Это нужно, чтобы не блокировать основной асинхронный поток FastAPI,
 # пока Pandas выполняет тяжелые вычисления.
