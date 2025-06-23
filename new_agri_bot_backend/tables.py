@@ -4,11 +4,11 @@ from piccolo.columns import (
     UUID,
     ForeignKey,
     Date,
-    DoublePrecision, BigInt, Boolean, Timestamptz,
+    DoublePrecision,
+    BigInt,
+    Boolean,
+    Timestamptz,
 )
-
-
-
 
 
 class ProductGuide(Table):
@@ -19,6 +19,7 @@ class ProductGuide(Table):
 
 
 #
+
 
 class Remains(Table):
     id = UUID(primary_key=True)
@@ -121,12 +122,23 @@ class Payment(Table):
     actual_sale_amount = DoublePrecision()
     actual_payment_amount = DoublePrecision()
 
-class Users(Table):
-    telegram_id=BigInt(primary_key=True)
-    username=Varchar()
-    first_name=Varchar()
-    last_name=Varchar()
-    is_allowed=Boolean(default=False)
-    registration_date=Timestamptz()
-    last_activity_date=Timestamptz()
 
+class Users(Table):
+    telegram_id = BigInt(primary_key=True)
+    username = Varchar()
+    first_name = Varchar()
+    last_name = Varchar()
+    is_allowed = Boolean(default=False)
+    registration_date = Timestamptz()
+    last_activity_date = Timestamptz()
+    is_admin = Boolean(default=False)
+    full_name_for_orders = Varchar()
+
+
+class ClientManagerGuide(Table):
+    id = BigInt(primary_key=True)
+    client = Varchar(required=True)
+    manager = Varchar(required=True)
+
+    class Meta:
+        tablename = "client_manager_guide"
