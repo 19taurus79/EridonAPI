@@ -3,7 +3,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Query, HTTPException, status, Depends
 
 # Імпортуйте ваші моделі Piccolo ORM
-from .tables import Remains, ProductGuide, Users, ClientManagerGuide
+from .tables import Remains, ProductGuide, Users, ClientManagerGuide, ProductOnWarehouse
 from .telegram_auth import get_current_telegram_user
 
 router = APIRouter(
@@ -85,9 +85,39 @@ async def get_product_by_id(
 
 @router.get("/clients", summary="отримати клієнтів по менеджеру, якщо адмін то усіх ")
 async def get_clients(manager: dict = Depends(get_current_telegram_user)):
-    clients = (
-        await ClientManagerGuide.select()
-        .where(ClientManagerGuide.manager == manager["full_name_for_orders"])
-        .run()
-    )
+    if manager["is_admin"]:
+        clients = await ClientManagerGuide.select(ClientManagerGuide.client)
+    else:
+        clients = (
+            await ClientManagerGuide.select(ClientManagerGuide.client)
+            .where(ClientManagerGuide.manager == manager["full_name_for_orders"])
+            .run()
+        )
     return clients
+
+
+@router.get(
+    "/product_on_warehouse",
+    summary="Отримати товари, по яким є залишки на складі, з опціональними фільтрами",
+)
+async def get_product_on_warehouse(
+    category: Optional[str] = None, name_part: Optional[str] = None
+):
+    """
+    Повертає записи про товари, по яким є залишки на складі, з бази даних.
+    Опціональні фільтри:
+    - `category`: Фільтрувати за назвою категорії (повна відповідність).
+    - `name_part`: Фільтрувати за частиною найменування товару (нечутливий до регістру).
+    """
+    query = ProductOnWarehouse.select()
+
+    if category:
+        query = query.where(ProductOnWarehouse.line_of_business == category)
+
+    if name_part:
+        # Використовуємо .ilike() для регістронезалежного пошуку по частині рядка
+        # Якщо ваша ORM/БД не підтримує .ilike(), можливо, знадобиться інший підхід
+        query = query.where(ProductOnWarehouse.product.ilike(f"%{name_part}%"))
+
+    product = await query.run()
+    return product

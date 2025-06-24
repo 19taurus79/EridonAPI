@@ -142,3 +142,12 @@ class ClientManagerGuide(Table):
 
     class Meta:
         tablename = "client_manager_guide"
+
+
+class ProductOnWarehouse(Table):
+    id = BigInt(primary_key=True)
+    product = Varchar()
+    line_of_business = Varchar()
+
+    class Meta:
+        tablename = "product_on_warehouse"
