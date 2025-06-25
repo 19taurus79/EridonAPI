@@ -57,11 +57,11 @@ async def save_processed_data_to_db(
     # 2. Очищення існуючих даних у таблицях (ВАЖЛИВО: ПЕРЕКОНАЙТЕСЯ, ЩО ЦЕ ТЕ, ЩО ВАМ ПОТРІБНО)
     # ЦЕ ВИДАЛИТЬ УСІ ЗАПИСИ з відповідних таблиць перед новою вставкою.
     # Якщо вам потрібна інша логіка (наприклад, оновлення або upsert), реалізуйте її тут.
-    await AvailableStock.delete().run()  # <--- ВИПРАВЛЕНО
-    await Remains.delete().run()  # <--- ВИПРАВЛЕНО
-    await Submissions.delete().run()  # <--- ВИПРАВЛЕНО
-    await Payment.delete().run()  # <--- ВИПРАВЛЕНО
-    await MovedData.delete().run()  # <--- ВИПРАВЛЕНО
+    await AvailableStock.delete(force=True).run()  # <--- ВИПРАВЛЕНО
+    await Remains.delete(force=True).run()  # <--- ВИПРАВЛЕНО
+    await Submissions.delete(force=True).run()  # <--- ВИПРАВЛЕНО
+    await Payment.delete(force=True).run()  # <--- ВИПРАВЛЕНО
+    await MovedData.delete(force=True).run()  # <--- ВИПРАВЛЕНО
     # ProductGuide, ймовірно, не слід очищати кожного разу,
     # оскільки це "довідник", який оновлюється рідше.
     # await ProductGuide.delete().run() # <--- ВИПРАВЛЕНО, якщо потрібно
@@ -75,7 +75,9 @@ async def save_processed_data_to_db(
 
     if not df_av_stock.empty:
         records_av_stock = df_av_stock.to_dict(orient="records")
-        await AvailableStock.objects().insert(*records_av_stock).run()
+        await AvailableStock.insert(
+            *[AvailableStock(**d) for d in records_av_stock]
+        ).run()
         print(f"Вставлено {len(records_av_stock)} записей в AvailableStock.")
     else:
         print("DataFrame для AvailableStock пуст, пропускаем вставку.")
@@ -84,28 +86,28 @@ async def save_processed_data_to_db(
     # Пример:
     if not df_remains.empty:
         records_remains = df_remains.to_dict(orient="records")
-        await Remains.objects().insert(*records_remains).run()
+        await Remains.insert(*[Remains(**d) for d in records_remains]).run()
         print(f"Вставлено {len(records_remains)} записей в Remains.")
     else:
         print("DataFrame для Remains пуст, пропускаем вставку.")
 
     if not df_submissions.empty:
         records_submissions = df_submissions.to_dict(orient="records")
-        await Submissions.objects().insert(*records_submissions).run()
+        await Submissions.insert(*[Submissions(**d) for d in records_submissions]).run()
         print(f"Вставлено {len(records_submissions)} записей в Submissions.")
     else:
         print("DataFrame для Submissions пуст, пропускаем вставку.")
 
     if not df_payment.empty:
         records_payment = df_payment.to_dict(orient="records")
-        await Payment.objects().insert(*records_payment).run()
+        await Payment.insert(*[Payment(**d) for d in records_payment]).run()
         print(f"Вставлено {len(records_payment)} записей в Payment.")
     else:
         print("DataFrame для Payment пуст, пропускаем вставку.")
 
     if not df_moved.empty:
         records_moved = df_moved.to_dict(orient="records")
-        await MovedData.objects().insert(*records_moved).run()
+        await MovedData.insert(*[MovedData(**d) for d in records_moved]).run()
         print(f"Вставлено {len(records_moved)} записей в MovedData.")
     else:
         print("DataFrame для MovedData пуст, пропускаем вставку.")
