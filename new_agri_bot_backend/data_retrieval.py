@@ -3,7 +3,14 @@ from typing import Optional, List
 from fastapi import APIRouter, Query, HTTPException, status, Depends
 
 # Імпортуйте ваші моделі Piccolo ORM
-from .tables import Remains, ProductGuide, Users, ClientManagerGuide, ProductOnWarehouse
+from .tables import (
+    Remains,
+    ProductGuide,
+    Users,
+    ClientManagerGuide,
+    ProductOnWarehouse,
+    Submissions,
+)
 from .telegram_auth import get_current_telegram_user
 
 router = APIRouter(
@@ -84,15 +91,18 @@ async def get_product_by_id(
 
 
 @router.get("/clients", summary="отримати клієнтів по менеджеру, якщо адмін то усіх ")
-async def get_clients(manager: dict = Depends(get_current_telegram_user)):
+async def get_clients(
+    manager: dict = Depends(get_current_telegram_user), name_part: Optional[str] = None
+):
     if manager["is_admin"]:
-        clients = await ClientManagerGuide.select(ClientManagerGuide.client)
+        query = ClientManagerGuide.select(ClientManagerGuide.client)
     else:
-        clients = (
-            await ClientManagerGuide.select(ClientManagerGuide.client)
-            .where(ClientManagerGuide.manager == manager["full_name_for_orders"])
-            .run()
+        query = ClientManagerGuide.select(ClientManagerGuide.client).where(
+            ClientManagerGuide.manager == manager["full_name_for_orders"]
         )
+    if name_part:
+        query = query.where(ClientManagerGuide.client.ilike(f"%{name_part}%"))
+    clients = await query.run()
     return clients
 
 
@@ -121,3 +131,42 @@ async def get_product_on_warehouse(
 
     product = await query.run()
     return product
+
+
+@router.get("/orders/{client}")
+async def get_orders(client):
+    orders = (
+        await Submissions.select()
+        .where((Submissions.client == client) & (Submissions.different > 0))
+        .run()
+    )
+    return orders
+
+
+@router.get("/contracts/{client}")
+async def get_contracts(client):
+    contracts = (
+        await Submissions.select(Submissions.contract_supplement)
+        .where((Submissions.different > 0) & (Submissions.client == client))
+        .group_by(Submissions.contract_supplement)
+        .order_by(Submissions.contract_supplement)
+        .run()
+    )
+    return contracts
+
+
+@router.get("/contract_detail/{contract}")
+async def get_contract_detail(contract):
+    detail = (
+        await Submissions.select(
+            Submissions.nomenclature,
+            Submissions.party_sign,
+            Submissions.buying_season,
+            Submissions.different,
+        )
+        .where(
+            (Submissions.contract_supplement == contract) & (Submissions.different > 0)
+        )
+        .run()
+    )
+    return detail
