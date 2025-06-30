@@ -146,9 +146,11 @@ async def get_orders(client):
 @router.get("/contracts/{client}")
 async def get_contracts(client):
     contracts = (
-        await Submissions.select(Submissions.contract_supplement)
+        await Submissions.select(
+            Submissions.contract_supplement, Submissions.line_of_business
+        )
         .where((Submissions.different > 0) & (Submissions.client == client))
-        .group_by(Submissions.contract_supplement)
+        .group_by(Submissions.contract_supplement, Submissions.line_of_business)
         .order_by(Submissions.contract_supplement)
         .run()
     )
@@ -163,6 +165,9 @@ async def get_contract_detail(contract):
             Submissions.party_sign,
             Submissions.buying_season,
             Submissions.different,
+            Submissions.client,
+            Submissions.contract_supplement,
+            Submissions.manager,
         )
         .where(
             (Submissions.contract_supplement == contract) & (Submissions.different > 0)
