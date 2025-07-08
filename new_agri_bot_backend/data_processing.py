@@ -109,6 +109,7 @@ def process_av_stock(content: bytes) -> pd.DataFrame:
         lambda row: f"{row['nomenclature'].rstrip()} {row['party_sign'].rstrip()} {row['buying_season'].rstrip()}",
         axis=1,
     )
+    av_stock.drop("active_substance", axis=1, inplace=True)
     return av_stock
 
 

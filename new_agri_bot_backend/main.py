@@ -1,8 +1,14 @@
-from typing import Optional
+import csv
+import io
+import os
+import tempfile
+from pathlib import Path
+from typing import Optional, List
 import uvicorn
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
+from aiogram.types import FSInputFile, BufferedInputFile
 from fastapi import (
     FastAPI,
     UploadFile,
@@ -12,11 +18,16 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     Query,
+    Request,
 )
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone, timedelta
+
+from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
+from pydantic import BaseModel
 
 # Импорты из ваших новых модулей
 from .telegram_auth import router as telegram_auth_router, InitDataModel
@@ -33,6 +44,48 @@ from aiogram import Bot
 bot = Bot(
     TELEGRAM_BOT_TOKEN
 )  # Важно: если бот не используется напрямую в main, эту строку можно убрать
+
+
+# class Product(BaseModel):
+#     product: str
+#     quantity: int
+#
+#
+# class Order(BaseModel):
+#     order: str
+#     products: List[Product]
+#
+#
+# class Delivery(BaseModel):
+#     client: str
+#     manager: str
+#     orders: List[Order]
+#     deliveryAddress: Optional[str] = None
+#     contactPerson: Optional[str] = None
+#     deliveryDate: Optional[str] = None
+#
+#
+# class DeliveryRequest(BaseModel):
+#     chat_id: int
+#     deliveries: List[Delivery]
+class DeliveryItem(BaseModel):
+    product: str
+    quantity: int
+
+
+class DeliveryOrder(BaseModel):
+    order: str
+    items: List[DeliveryItem]
+
+
+class DeliveryRequest(BaseModel):
+    client: str
+    manager: str
+    address: str
+    contact: str
+    phone: str
+    date: str  # ISO-формат строки
+    orders: List[DeliveryOrder]
 
 
 # Определяем контекстный менеджер для жизненного цикла приложения
@@ -75,6 +128,104 @@ app.add_middleware(
 # --- Подключение маршрутов ---
 app.include_router(telegram_auth_router)  # Подключаем маршруты из telegram_auth.py
 app.include_router(data_retrieval_router)
+
+
+#
+class Product(BaseModel):
+    product: str
+    quantity: int
+
+
+class Order(BaseModel):
+    order: str
+    products: List[Product]
+
+
+class ClientData(BaseModel):
+    client: str
+    manager: str
+    orders: List[Order]
+    deliveryAddress: Optional[str]
+    contactPerson: Optional[str]
+    deliveryDate: Optional[str]
+
+
+def format_message(data: List[ClientData]) -> str:
+    lines = []
+    for client in data:
+        lines.append(f"🧑‍💼 <b>Клиент:</b> {client.client}")
+        lines.append(f"👨‍💼 <b>Менеджер:</b> {client.manager}")
+        lines.append("📦 <b>Заказы:</b>")
+        for order in client.orders:
+            lines.append(f"  🆔 <b>Заказ:</b> <code>{order.order}</code>")
+            for product in order.products:
+                lines.append(
+                    f"    • <code>{product.product}</code> — <b>{product.quantity}</b> "
+                )
+        if client.deliveryAddress:
+            lines.append(f"🏠 <b>Адрес доставки:</b> {client.deliveryAddress}")
+        if client.contactPerson:
+            lines.append(f"📞 <b>Контактное лицо:</b> {client.contactPerson}")
+        if client.deliveryDate:
+            lines.append(f"📅 <b>Дата доставки:</b> {client.deliveryDate}")
+
+    return "\n".join(lines)
+
+
+def json_to_csv_save_local_d_drive(data: List[ClientData]) -> str:
+    filepath = Path("D:/orders.csv")
+
+    with open(filepath, mode="w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+
+        writer.writerow(
+            [
+                "Клиент",
+                "Менеджер",
+                "Заказ",
+                "Продукт",
+                "Количество",
+                "Адрес доставки",
+                "Контактное лицо",
+                "Дата доставки",
+            ]
+        )
+
+        for client in data:
+            for order in client.orders:
+                for product in order.products:
+                    writer.writerow(
+                        [
+                            client.client,
+                            client.manager,
+                            order.order,
+                            product.product,
+                            product.quantity,
+                            client.deliveryAddress or "",
+                            client.contactPerson or "",
+                            client.deliveryDate or "",
+                        ]
+                    )
+
+    return str(filepath)  # возвращаем путь к файлу
+
+
+@app.post("/send_telegram_message/")
+async def send_telegram_message(
+    data: List[ClientData],
+    chat_id: int = Query(..., description="Telegram chat id для отправки сообщения"),
+):
+    message_text = format_message(data)
+    csv_file = json_to_csv_save_local_d_drive(data)
+
+    try:
+        # await bot.send_message(chat_id=chat_id, text=message_text, parse_mode="HTML")
+        await bot.send_document(
+            chat_id=chat_id, document=FSInputFile(csv_file, filename=csv_file.name)
+        )
+        return {"status": "ok", "message": "Сообщение и CSV файл отправлены"}
+    except Exception as e:
+        return {"status": "error", "details": str(e)}
 
 
 # --- Маршрут для загрузки и обработки данных ---
@@ -133,3 +284,76 @@ async def upload_data(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Ошибка обработки файлов: {e}",
         )
+
+
+@app.post("/delivery/send")
+async def send_delivery(data: DeliveryRequest):
+    # 📝 Формируем текст для Telegram
+    message_lines = [
+        f"👤 Менеджер: {data.manager}",
+        f"🚚 Контрагент: <code>{data.client}</code>",
+        f"📍 Адреса: {data.address}",
+        f"👤 Контакт: {data.contact}",
+        f"📞 Телефон: {data.phone}",
+        f"📅 Дата доставки: {data.date}",
+        "",
+    ]
+
+    for order in data.orders:
+        message_lines.append(f"📦 *Доповнення:* <code>{order.order}</code>")
+        for item in order.items:
+            message_lines.append(f" • <code>{item.product}</code> — {item.quantity}")
+        message_lines.append("")
+
+    message = "\n".join(message_lines)
+
+    # 🧾 Генерируем Excel
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Доставка"
+
+    ws.append(["Менеджер", data.manager])
+    ws.append(["Контрагент", data.client])
+    ws.append(["Адреса", data.address])
+    ws.append(["Контакт", data.contact])
+    ws.append(["Телефон", data.phone])
+    ws.append(["Дата", data.date])
+    ws.append([])
+    ws.append(["Доповнення", "Товар", "Кількість"])
+
+    for order in data.orders:
+        for item in order.items:
+            ws.append([order.order, item.product, item.quantity])
+
+        # Сохраняем Excel во временный файл
+    # Название файла с именем менеджера
+    safe_manager = data.manager.replace(" ", "_")
+    filename = (
+        f"Доставка_{safe_manager}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    )
+    # 📐 Устанавливаем автоширину колонок
+    for column_cells in ws.columns:
+        max_length = 0
+        column = column_cells[0].column
+        col_letter = get_column_letter(column)
+        for cell in column_cells:
+            if cell.value:
+                max_length = max(max_length, len(str(cell.value)))
+        ws.column_dimensions[col_letter].width = max_length + 2
+
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+        # Сохраняем Excel
+        wb.save(tmp.name)
+        tmp.flush()
+
+        # Готовим файл к отправке
+        excel_file = FSInputFile(tmp.name, filename=filename)
+
+        # Отправка сообщения
+        await bot.send_message(chat_id="548019148", text=message, parse_mode="HTML")
+        await bot.send_document(chat_id="548019148", document=excel_file)
+
+    # Удаляем временный файл
+    os.remove(tmp.name)
+
+    return {"status": "ok"}
