@@ -90,6 +90,7 @@ class DeliveryRequest(BaseModel):
     orders: List[DeliveryOrder]
 
 
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "credentials.json")
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
@@ -149,6 +150,7 @@ def create_calendar_event(data: DeliveryRequest) -> Optional[str]:
     except Exception as e:
         print("Ошибка при добавлении в календарь:", e)
         return None
+
 
 
 # Определяем контекстный менеджер для жизненного цикла приложения
@@ -418,10 +420,12 @@ async def send_delivery(data: DeliveryRequest):
 
     # Удаляем временный файл
     os.remove(tmp.name)
+
     calendar_link = create_calendar_event(data)
     if calendar_link:
         print("📅 Добавлено в календарь:", calendar_link)
     else:
         print("❌ Не удалось добавить в календарь")
+
 
     return {"status": "ok"}
