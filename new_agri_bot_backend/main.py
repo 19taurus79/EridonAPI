@@ -40,6 +40,8 @@ from .config import TELEGRAM_BOT_TOKEN
 
 # Инициализация Telegram Bot (используется в utils.py, но может быть нужен здесь для глобальной инициализации)
 from aiogram import Bot
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
 bot = Bot(
     TELEGRAM_BOT_TOKEN
@@ -86,6 +88,69 @@ class DeliveryRequest(BaseModel):
     phone: str
     date: str  # ISO-формат строки
     orders: List[DeliveryOrder]
+
+
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "credentials.json")
+SCOPES = ["https://www.googleapis.com/auth/calendar"]
+CALENDAR_ID = "dca9aa4129540be8ec133f20092e7f0a500897595fc1736cd295a739d9dc9466@group.calendar.google.com"  # или укажи явный ID календаря
+
+
+def create_calendar_event(data: DeliveryRequest) -> Optional[str]:
+    try:
+        credentials = service_account.Credentials.from_service_account_file(
+            SERVICE_ACCOUNT_FILE, scopes=SCOPES
+        )
+        service = build("calendar", "v3", credentials=credentials)
+
+        delivery_date = datetime.strptime(data.date, "%Y-%m-%d")
+        start = delivery_date.replace(hour=9, minute=0)
+        end = start + timedelta(hours=1)
+
+        # 📝 Основная информация
+        lines = [
+            f"Контрагент: {data.client}",
+            f"Менеджер: {data.manager}",
+            f"Адреса: {data.address}",
+            f"Контакт: {data.contact}",
+            f"Телефон: {data.phone}",
+            f"Дата доставки: {data.date}",
+            "",
+        ]
+
+        # 📦 Добавляем заказы и товары
+        for order in data.orders:
+            lines.append(f"📦 Доповнення: {order.order}")
+            for item in order.items:
+                lines.append(f" • {item.product} — {item.quantity}")
+            lines.append("")  # пустая строка между заказами
+
+        description = "\n".join(lines)
+
+        event = {
+            "summary": f"🚚 Доставка: {data.client}",
+            "location": data.address,
+            "description": description,
+            "start": {
+                "dateTime": start.isoformat(),
+                "timeZone": "Europe/Kyiv",
+            },
+            "end": {
+                "dateTime": end.isoformat(),
+                "timeZone": "Europe/Kyiv",
+            },
+        }
+
+        created_event = (
+            service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+        )
+        return created_event.get("htmlLink")
+
+    except Exception as e:
+        print("Ошибка при добавлении в календарь:", e)
+        return None
+
 
 
 # Определяем контекстный менеджер для жизненного цикла приложения
@@ -355,5 +420,12 @@ async def send_delivery(data: DeliveryRequest):
 
     # Удаляем временный файл
     os.remove(tmp.name)
+
+    calendar_link = create_calendar_event(data)
+    if calendar_link:
+        print("📅 Добавлено в календарь:", calendar_link)
+    else:
+        print("❌ Не удалось добавить в календарь")
+
 
     return {"status": "ok"}
