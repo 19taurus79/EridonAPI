@@ -151,3 +151,12 @@ class ProductOnWarehouse(Table):
 
     class Meta:
         tablename = "product_on_warehouse"
+
+
+class AvStockProd(Table):
+    id = BigInt(primary_key=True)
+    product = Varchar()
+    line_of_business = Varchar()
+
+    class Meta:
+        tablename = "av_stock_prod"
