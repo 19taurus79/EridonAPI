@@ -1,6 +1,7 @@
 # app/data_retrieval.py
 from typing import Optional, List
 from fastapi import APIRouter, Query, HTTPException, status, Depends
+from piccolo.query import Sum
 
 # Імпортуйте ваші моделі Piccolo ORM
 from .tables import (
@@ -74,7 +75,7 @@ async def get_products(
 
 @router.get("/product/{product_id}", summary="Отримати інформацію про продукт за ID")
 async def get_product_by_id(
-    product_id: int,
+    product_id: str,
 ):  # Припускаємо, що product_id є цілочисельним первинним ключем
     """
     Повертає інформацію про продукт за його унікальним ID.
@@ -175,3 +176,49 @@ async def get_contract_detail(contract):
         .run()
     )
     return detail
+
+
+@router.get("/sum_order_by_product/{product}")
+async def get_sum_order_products(product):
+    # data = (
+    #     await Submissions.select()
+    #     .where(
+    #         (Submissions.product == product)
+    #         & (Submissions.different > 0)
+    #         & (Submissions.document_status == "затверджено")
+    #     )
+    #     .run()
+    # )
+    total_sum = (
+        await Submissions.select(Sum(Submissions.different))
+        .where(
+            (Submissions.product == product)
+            & (Submissions.different > 0)
+            & (Submissions.document_status == "затверджено")
+        )
+        .run()
+    )
+    return total_sum
+
+
+@router.get("/order_by_product/{product}")
+async def get_sum_order_products(product):
+    data = (
+        await Submissions.select()
+        .where(
+            (Submissions.product == product)
+            & (Submissions.different > 0)
+            & (Submissions.document_status == "затверджено")
+        )
+        .run()
+    )
+    # total_sum = (
+    #     await Submissions.select(Sum(Submissions.different))
+    #     .where(
+    #         (Submissions.product == product)
+    #         & (Submissions.different > 0)
+    #         & (Submissions.document_status == "затверджено")
+    #     )
+    #     .run()
+    # )
+    return data

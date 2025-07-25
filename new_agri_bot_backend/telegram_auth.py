@@ -19,7 +19,7 @@ load_dotenv()
 # либо просто импортируйте из config.py
 # TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") # Лучше брать из config.py
 
-router = APIRouter()
+router = APIRouter(tags=["Аутентифікація"])
 
 
 class InitDataModel(BaseModel):
