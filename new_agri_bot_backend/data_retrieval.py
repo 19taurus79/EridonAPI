@@ -11,6 +11,8 @@ from .tables import (
     ClientManagerGuide,
     ProductOnWarehouse,
     Submissions,
+    AvailableStock,
+    AvStockProd,
 )
 from .telegram_auth import get_current_telegram_user
 
@@ -47,30 +49,46 @@ async def get_remains_by_product(
     return remains
 
 
-@router.get("/products", summary="Отримати список продуктів з можливістю пошуку")
-async def get_products(
-    query: Optional[str] = Query(
-        None, description="Рядок для пошуку за назвою продукту"
+@router.get(
+    "/av_stock/{product_id}",
+    summary="Отримати вільні залишки на РУ за конкретним продуктом",
+)
+async def get_av_remains_by_product(
+    product_id: str,
+):  # Використовуємо product_id для ясності
+    """
+    Повертає записи про залишки на складі для зазначеного продукту.
+    Використовує `product_id` для фільтрації за полем `product`.
+    """
+    remains = (
+        await AvailableStock.select().where(AvailableStock.product == product_id).run()
     )
-):
+    if not remains:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Залишки для продукту з ID '{product_id}' не знайдено.",
+        )
+    return remains
+
+
+@router.get("/products", summary="Отримати список продуктів з можливістю пошуку")
+async def get_products(category: Optional[str] = None, name_part: Optional[str] = None):
     """
     Повертає список всіх продуктів.
     Можна використовувати параметр `query` для пошуку продуктів за частиною назви (без урахування регістру).
     """
-    if query:
-        # Якщо ProductGuide.product – це поле, за яким ви хочете шукати
-        products = (
-            await ProductGuide.select()
-            .where(
-                ProductGuide.product.ilike(
-                    f"%{query}%"
-                )  # Нечутливий до регістру пошук LIKE
-            )
-            .run()
-        )
-    else:
-        products = await ProductGuide.select().run()
-    return products
+    query = AvStockProd.select()
+
+    if category:
+        query = query.where(AvStockProd.line_of_business == category)
+
+    if name_part:
+        # Використовуємо .ilike() для регістронезалежного пошуку по частині рядка
+        # Якщо ваша ORM/БД не підтримує .ilike(), можливо, знадобиться інший підхід
+        query = query.where(AvStockProd.product.ilike(f"%{name_part}%"))
+
+    product = await query.run()
+    return product
 
 
 @router.get("/product/{product_id}", summary="Отримати інформацію про продукт за ID")
@@ -128,7 +146,7 @@ async def get_product_on_warehouse(
     if name_part:
         # Використовуємо .ilike() для регістронезалежного пошуку по частині рядка
         # Якщо ваша ORM/БД не підтримує .ilike(), можливо, знадобиться інший підхід
-        query = query.where(ProductOnWarehouse.product.ilike(f"%{name_part}%"))
+        query = query.where(ProductOnWarehouse.ilike(f"%{name_part}%"))
 
     product = await query.run()
     return product
