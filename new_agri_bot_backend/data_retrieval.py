@@ -3,6 +3,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Query, HTTPException, status, Depends
 from piccolo.query import Sum
 
+
 # Імпортуйте ваші моделі Piccolo ORM
 from .tables import (
     Remains,
@@ -13,6 +14,8 @@ from .tables import (
     Submissions,
     AvailableStock,
     AvStockProd,
+    MovedData,
+    ProductsForOrders,
 )
 from .telegram_auth import get_current_telegram_user
 
@@ -41,6 +44,27 @@ async def get_remains_by_product(
     Використовує `product_id` для фільтрації за полем `product`.
     """
     remains = await Remains.select().where(Remains.product == product_id).run()
+    if not remains:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Залишки для продукту з ID '{product_id}' не знайдено.",
+        )
+    return remains
+
+
+@router.get(
+    "/remains_group/{product_id}",
+    summary="Отримати залишки за конкретним продуктом, згруповані по партії ",
+)
+async def get_group_remains_by_product(product_id: str):
+    remains = (
+        await Remains.select(
+            Remains.product.as_alias("product_id"), Sum(Remains.buh).as_alias("remains")
+        )
+        .where(Remains.product == product_id)
+        .group_by(Remains.product)
+        .run()
+    )
     if not remains:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -146,7 +170,7 @@ async def get_product_on_warehouse(
     if name_part:
         # Використовуємо .ilike() для регістронезалежного пошуку по частині рядка
         # Якщо ваша ORM/БД не підтримує .ilike(), можливо, знадобиться інший підхід
-        query = query.where(ProductOnWarehouse.ilike(f"%{name_part}%"))
+        query = query.where(ProductOnWarehouse.product.ilike(f"%{name_part}%"))
 
     product = await query.run()
     return product
@@ -166,10 +190,16 @@ async def get_orders(client):
 async def get_contracts(client):
     contracts = (
         await Submissions.select(
-            Submissions.contract_supplement, Submissions.line_of_business
+            Submissions.contract_supplement,
+            Submissions.line_of_business,
+            Submissions.document_status,
         )
         .where((Submissions.different > 0) & (Submissions.client == client))
-        .group_by(Submissions.contract_supplement, Submissions.line_of_business)
+        .group_by(
+            Submissions.contract_supplement,
+            Submissions.line_of_business,
+            Submissions.document_status,
+        )
         .order_by(Submissions.contract_supplement)
         .run()
     )
@@ -187,6 +217,7 @@ async def get_contract_detail(contract):
             Submissions.client,
             Submissions.contract_supplement,
             Submissions.manager,
+            Submissions.product,
         )
         .where(
             (Submissions.contract_supplement == contract) & (Submissions.different > 0)
@@ -208,14 +239,20 @@ async def get_sum_order_products(product):
     #     .run()
     # )
     total_sum = (
-        await Submissions.select(Sum(Submissions.different))
+        await Submissions.select(
+            Submissions.product.as_alias("product_id"),
+            Sum(Submissions.different).as_alias("total_orders"),
+        )
         .where(
             (Submissions.product == product)
             & (Submissions.different > 0)
             & (Submissions.document_status == "затверджено")
         )
+        .group_by(Submissions.product)
         .run()
     )
+    if total_sum == []:
+        total_sum = [{"product_id": product, "total_orders": 0}]
     return total_sum
 
 
@@ -239,4 +276,42 @@ async def get_sum_order_products(product):
     #     )
     #     .run()
     # )
+    return data
+
+
+@router.get("/moved_products_for_order/{order}")
+async def get_moved_products_for_order(order: str):
+    data = await MovedData.select().where(MovedData.contract == order)
+    return data
+
+
+@router.get("/products_for_all_orders")
+async def get_products_for_all_orders():
+    data = await ProductsForOrders.select().run()
+    return data
+
+
+@router.get("/party_data")
+async def get_party_data(party: str):
+    data = (
+        await Remains.select(
+            Remains.crop_year,
+            Remains.germination,
+            Remains.mtn,
+            Remains.origin_country,
+            Remains.weight,
+        )
+        .where(Remains.id == party)
+        .run()
+    )
+    return data
+
+
+@router.get("/id_in_remains")
+async def get_id_in_remains(party: str):
+    data = (
+        await Remains.select(Remains.id)
+        .where(Remains.nomenclature_series == party)
+        .run()
+    )
     return data

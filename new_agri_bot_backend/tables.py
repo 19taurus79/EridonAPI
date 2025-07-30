@@ -99,6 +99,7 @@ class MovedData(Table):
     party_sign = Varchar()
     period = Varchar()
     order = Varchar()
+    product_id = Varchar()
 
 
 class MovedNot(Table):
@@ -160,3 +161,14 @@ class AvStockProd(Table):
 
     class Meta:
         tablename = "av_stock_prod"
+
+
+class ProductsForOrders(Table):
+    id = BigInt(primary_key=True)
+    product = Varchar()
+    order_q = DoublePrecision()
+    remain_q = DoublePrecision()
+    enough = Boolean(default=False)
+
+    class Meta:
+        tablename = "products_for_orders"
