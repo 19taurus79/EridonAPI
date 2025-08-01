@@ -16,6 +16,7 @@ from .tables import (
     AvStockProd,
     MovedData,
     ProductsForOrders,
+    DetailsForOrders,
 )
 from .telegram_auth import get_current_telegram_user
 
@@ -313,5 +314,13 @@ async def get_id_in_remains(party: str):
         await Remains.select(Remains.id)
         .where(Remains.nomenclature_series == party)
         .run()
+    )
+    return data
+
+
+@router.get("/details_for_orders/{order}")
+async def get_details_for_order(order: str):
+    data = await DetailsForOrders.select().where(
+        DetailsForOrders.contract_supplement == order
     )
     return data

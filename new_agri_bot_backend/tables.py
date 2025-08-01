@@ -8,6 +8,7 @@ from piccolo.columns import (
     BigInt,
     Boolean,
     Timestamptz,
+    Numeric,
 )
 
 
@@ -172,3 +173,24 @@ class ProductsForOrders(Table):
 
     class Meta:
         tablename = "products_for_orders"
+
+
+class DetailsForOrders(Table):
+    nomenclature = Varchar(null=True)
+    party_sign = Varchar(null=True)
+    buying_season = Varchar(null=True)
+    different = DoublePrecision()
+    client = Varchar(null=True)
+    contract_supplement = Varchar(null=True)
+    manager = Varchar(null=True)
+    product = UUID(required=True)
+    orders_q = Numeric()
+    moved_q = Numeric()
+    party = Varchar()
+    buh = Numeric()
+    skl = Numeric()
+    id = UUID(required=True)
+    qok = Boolean()
+
+    class Meta:
+        tablename = "details_for_orders"
