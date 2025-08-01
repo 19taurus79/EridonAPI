@@ -23,7 +23,7 @@ from .telegram_auth import get_current_telegram_user
 router = APIRouter(
     prefix="/data",  # Всі едпоінти в цьому роутері починатимуться з /data
     tags=["Отримання даних"],  # Тег для Swagger UI
-    dependencies=[Depends(get_current_telegram_user)],
+    # dependencies=[Depends(get_current_telegram_user)],
 )
 
 
@@ -134,7 +134,11 @@ async def get_product_by_id(
     return product
 
 
-@router.get("/clients", summary="отримати клієнтів по менеджеру, якщо адмін то усіх ")
+@router.get(
+    "/clients",
+    summary="отримати клієнтів по менеджеру, якщо адмін то усіх ",
+    dependencies=[Depends(get_current_telegram_user)],
+)
 async def get_clients(
     manager: dict = Depends(get_current_telegram_user), name_part: Optional[str] = None
 ):
@@ -153,6 +157,7 @@ async def get_clients(
 @router.get(
     "/product_on_warehouse",
     summary="Отримати товари, по яким є залишки на складі, з опціональними фільтрами",
+    dependencies=[Depends(get_current_telegram_user)],
 )
 async def get_product_on_warehouse(
     category: Optional[str] = None, name_part: Optional[str] = None
