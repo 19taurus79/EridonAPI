@@ -16,7 +16,7 @@ async def send_message_to_managers():
     """Отправляет сообщение всем менеджерам в Telegram."""
     # user_tg_id = MANAGERS_ID.values()
     user_tg_id = await Users.select().where(Users.is_allowed == True).run()
-    now = datetime.now()
+    now = datetime.now() + timedelta(hours=3)
     # Убедитесь, что это правильное смещение часового пояса
     time_format = "%d-%m-%Y %H:%M:%S"
     message_text = (
