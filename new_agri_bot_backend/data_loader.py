@@ -1,5 +1,6 @@
 # app/data_loader.py
 import asyncio
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 
@@ -54,60 +55,145 @@ async def save_processed_data_to_db(
 
     print("Данные Excel обработаны в DataFrame. Начинаем сохранение в БД...")
 
-    # 2. Очищення існуючих даних у таблицях (ВАЖЛИВО: ПЕРЕКОНАЙТЕСЯ, ЩО ЦЕ ТЕ, ЩО ВАМ ПОТРІБНО)
-    # ЦЕ ВИДАЛИТЬ УСІ ЗАПИСИ з відповідних таблиць перед новою вставкою.
-    # Якщо вам потрібна інша логіка (наприклад, оновлення або upsert), реалізуйте її тут.
-    await AvailableStock.delete(force=True).run()  # <--- ВИПРАВЛЕНО
-    await Remains.delete(force=True).run()  # <--- ВИПРАВЛЕНО
-    await Submissions.delete(force=True).run()  # <--- ВИПРАВЛЕНО
-    await Payment.delete(force=True).run()  # <--- ВИПРАВЛЕНО
-    await MovedData.delete(force=True).run()  # <--- ВИПРАВЛЕНО
-    # ProductGuide, ймовірно, не слід очищати кожного разу,
-    # оскільки це "довідник", який оновлюється рідше.
-    # await ProductGuide.delete().run() # <--- ВИПРАВЛЕНО, якщо потрібно
+    # print("Старі дані з таблиць видалено. Починаємо вставку нових даних...")
+    # 2.1 Создание справочника товаров
+    av_stock_tmp = df_av_stock[["product", "line_of_business", "active_substance"]]
 
-    print("Старі дані з таблиць видалено. Починаємо вставку нових даних...")
+    remains_tmp = df_remains[["product", "line_of_business", "active_substance"]]
+
+    submissions_tmp = df_submissions[
+        ["product", "line_of_business", "active_ingredient"]
+    ].rename(columns={"active_ingredient": "active_substance"})
+
+    pr = pd.concat([av_stock_tmp, submissions_tmp, remains_tmp], ignore_index=True)
+
+    product_guide = pr.drop_duplicates(["product"]).reset_index(drop=True)
+
+    product_guide.insert(0, "id", product_guide.apply(lambda _: uuid.uuid4(), axis=1))
 
     # 3. Вставка новых данных из DataFrame в соответствующие таблицы Piccolo
     # Вам нужно будет преобразовать DataFrame в список словарей, где ключи -
     # это имена колонок в базе данных, а значения - данные.
     # Убедитесь, что имена колонок DataFrame соответствуют полям в вашей модели Piccolo.
-
+    BATCH_SIZE = 1000
+    if not product_guide.empty:
+        await ProductGuide.delete(force=True).run()
+        records_product_guide = product_guide.to_dict(orient="records")
+        product_guide_raw = [ProductGuide(**item) for item in records_product_guide]
+        for i in range(0, len(product_guide_raw), BATCH_SIZE):
+            batch = product_guide_raw[i : i + BATCH_SIZE]
+            rows = list(batch)
+            await ProductGuide.insert().add(*rows).run()
     if not df_av_stock.empty:
-        records_av_stock = df_av_stock.to_dict(orient="records")
-        await AvailableStock.insert(
-            *[AvailableStock(**d) for d in records_av_stock]
-        ).run()
+        df_av_stock = df_av_stock.drop("active_substance", axis=1)
+        await AvailableStock.delete(force=True).run()
+        av_stock_data = df_av_stock.merge(
+            product_guide, on="product", how="left", suffixes=("_av", "_guide")
+        )
+        av_stock_data = av_stock_data.drop(
+            ["product", "line_of_business_guide", "active_substance"], axis=1
+        )
+        av_stock_data = av_stock_data.rename(columns={"id": "product"})
+        av_stock_data = av_stock_data.rename(
+            columns={"line_of_business_av": "line_of_business"}
+        )
+
+        records_av_stock = av_stock_data.to_dict(orient="records")
+        av_stock_raw = [AvailableStock(**item) for item in records_av_stock]
+
+        for i in range(0, len(av_stock_raw), BATCH_SIZE):
+            batch = av_stock_raw[i : i + BATCH_SIZE]
+            rows = list(batch)
+            await AvailableStock.insert().add(*rows).run()
+
+        # await AvailableStock.insert().add(*av_stock_raw).run()
         print(f"Вставлено {len(records_av_stock)} записей в AvailableStock.")
     else:
         print("DataFrame для AvailableStock пуст, пропускаем вставку.")
 
-    # TODO: Дополните аналогичную логику для Remains, Submissions, Payment, MovedData, ProductGuide
     # Пример:
     if not df_remains.empty:
-        records_remains = df_remains.to_dict(orient="records")
-        await Remains.insert(*[Remains(**d) for d in records_remains]).run()
+        await Remains.delete(force=True).run()
+        remains_data = df_remains.merge(
+            product_guide, on="product", how="left", suffixes=("_av", "_guide")
+        )
+        remains_data = remains_data.drop(
+            ["product", "line_of_business_guide", "active_substance_guide"], axis=1
+        )
+        remains_data = remains_data.rename(columns={"id": "product"})
+        remains_data = remains_data.rename(
+            columns={"active_substance_av": "active_substance"}
+        )
+        remains_data = remains_data.rename(
+            columns={"line_of_business_av": "line_of_business"}
+        )
+        records_remains = remains_data.to_dict(orient="records")
+        remains_raw = [Remains(**item) for item in records_remains]
+        for i in range(0, len(remains_raw), BATCH_SIZE):
+            batch = remains_raw[i : i + BATCH_SIZE]
+            rows = list(batch)
+            await Remains.insert().add(*rows).run()
+        # await Remains.insert(*[Remains(**d) for d in records_remains]).run()
         print(f"Вставлено {len(records_remains)} записей в Remains.")
     else:
         print("DataFrame для Remains пуст, пропускаем вставку.")
 
     if not df_submissions.empty:
-        records_submissions = df_submissions.to_dict(orient="records")
-        await Submissions.insert(*[Submissions(**d) for d in records_submissions]).run()
+        await Submissions.delete(force=True).run()
+        submissions_data = df_submissions.merge(
+            product_guide, on="product", how="left", suffixes=("_av", "_guide")
+        )
+        submissions_data = submissions_data.drop(
+            ["product", "line_of_business_guide", "active_substance"], axis=1
+        )
+        submissions_data = submissions_data.rename(columns={"id": "product"})
+        submissions_data = submissions_data.rename(
+            columns={"line_of_business_av": "line_of_business"}
+        )
+        records_submissions = submissions_data.to_dict(orient="records")
+        submissions_raw = [Submissions(**item) for item in records_submissions]
+        for i in range(0, len(submissions_raw), BATCH_SIZE):
+            batch = submissions_raw[i : i + BATCH_SIZE]
+            rows = list(batch)
+            await Submissions.insert().add(*rows).run()
+        # await Submissions.insert(*[Submissions(**d) for d in records_submissions]).run()
         print(f"Вставлено {len(records_submissions)} записей в Submissions.")
     else:
         print("DataFrame для Submissions пуст, пропускаем вставку.")
 
     if not df_payment.empty:
+        await Payment.delete(force=True).run()
         records_payment = df_payment.to_dict(orient="records")
-        await Payment.insert(*[Payment(**d) for d in records_payment]).run()
+        payment_raw = [Payment(**item) for item in records_payment]
+        for i in range(0, len(payment_raw), BATCH_SIZE):
+            batch = payment_raw[i : i + BATCH_SIZE]
+            rows = list(batch)
+            await Payment.insert().add(*rows).run()
+        # await Payment.insert(*[Payment(**d) for d in records_payment]).run()
         print(f"Вставлено {len(records_payment)} записей в Payment.")
     else:
         print("DataFrame для Payment пуст, пропускаем вставку.")
 
     if not df_moved.empty:
-        records_moved = df_moved.to_dict(orient="records")
-        await MovedData.insert(*[MovedData(**d) for d in records_moved]).run()
+        await MovedData.delete(force=True).run()
+        moved_data = df_moved.merge(
+            product_guide, on="product", how="left", suffixes=("_av", "_guide")
+        )
+        moved_data["id"] = moved_data["id"].astype(str)
+        moved_data = moved_data.drop(
+            ["line_of_business_guide", "active_substance"], axis=1
+        )
+        moved_data = moved_data.rename(
+            columns={"line_of_business_av": "line_of_business"}
+        )
+        moved_data = moved_data.rename(columns={"id": "product_id"})
+        records_moved = moved_data.to_dict(orient="records")
+        moved_raw = [MovedData(**item) for item in records_moved]
+        for i in range(0, len(moved_raw), BATCH_SIZE):
+            batch = moved_raw[i : i + BATCH_SIZE]
+            rows = list(batch)
+            await MovedData.insert().add(*rows).run()
+        # await MovedData.insert(*[MovedData(**d) for d in records_moved]).run()
         print(f"Вставлено {len(records_moved)} записей в MovedData.")
     else:
         print("DataFrame для MovedData пуст, пропускаем вставку.")

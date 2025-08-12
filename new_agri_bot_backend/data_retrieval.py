@@ -1,5 +1,7 @@
 # app/data_retrieval.py
 from typing import Optional, List
+
+import requests
 from fastapi import APIRouter, Query, HTTPException, status, Depends
 from piccolo.query import Sum
 
@@ -34,6 +36,15 @@ async def get_remains():
     """
     remains = await Remains.select().run()
     return remains
+
+
+@router.get("/geocode")
+def geocode(address: str = Query(..., description="Адрес для поиска")):
+    url = "https://nominatim.openstreetmap.org/search"
+    params = {"q": address, "format": "json", "addressdetails": "1", "layer": "address"}
+    headers = {"User-Agent": "MyGeocodeApp/1.0"}  # укажи свой
+    response = requests.get(url, params=params, headers=headers)
+    return response.json()
 
 
 @router.get("/remains/{product_id}", summary="Отримати залишки за конкретним продуктом")

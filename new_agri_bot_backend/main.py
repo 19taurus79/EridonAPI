@@ -7,7 +7,7 @@ from typing import Optional, List
 import uvicorn
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-
+from .tables import Remains
 from aiogram.types import FSInputFile, BufferedInputFile
 from fastapi import (
     FastAPI,
@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone, timedelta
+from piccolo_admin.endpoints import create_admin
 
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
@@ -95,6 +96,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "credentials.json")
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 CALENDAR_ID = "dca9aa4129540be8ec133f20092e7f0a500897595fc1736cd295a739d9dc9466@group.calendar.google.com"  # или укажи явный ID календаря
+
+admin_router = create_admin([Remains], allowed_hosts=["localhost"])
 
 
 def create_calendar_event(data: DeliveryRequest) -> Optional[str]:
@@ -176,6 +179,7 @@ origins = [
     "https://eridon-react.vercel.app",
     "https://eridon-bot-next-js.vercel.app",
     "http://127.0.0.1:5173",
+    "http://127.0.0.1:5500",
     "http://127.0.0.1:8000",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -193,6 +197,7 @@ app.add_middleware(
 # --- Подключение маршрутов ---
 app.include_router(telegram_auth_router)  # Подключаем маршруты из telegram_auth.py
 app.include_router(data_retrieval_router)
+app.mount("/admin", admin_router)
 
 
 #
