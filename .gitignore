@@ -314,3 +314,5 @@ $RECYCLE.BIN/
 .env
 # End of https://www.toptal.com/developers/gitignore/api/windows,python,pycharm
 credentials.json
+credentials__.json
+token.json

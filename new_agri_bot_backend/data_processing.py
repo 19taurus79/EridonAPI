@@ -1,4 +1,6 @@
 # app/data_processing.py
+import uuid
+
 import pandas as pd
 import io
 from .config import valid_line_of_business, valid_warehouse  # Импорт из config.py
@@ -60,6 +62,7 @@ def process_submissions(content: bytes) -> pd.DataFrame:
         "delivery_status",
         "shipping_address",
         "transport",
+        "period",
     ]
     for col in text_columns:
         submissions[col] = submissions[col].fillna("").astype(str)
@@ -109,7 +112,7 @@ def process_av_stock(content: bytes) -> pd.DataFrame:
         lambda row: f"{row['nomenclature'].rstrip()} {row['party_sign'].rstrip()} {row['buying_season'].rstrip()}",
         axis=1,
     )
-    av_stock.drop("active_substance", axis=1, inplace=True)
+    # av_stock.drop("active_substance", axis=1, inplace=True)
     return av_stock
 
 
@@ -144,7 +147,7 @@ def process_remains_reg(content: bytes) -> pd.DataFrame:
     ]
     remains.columns = remains_col_name
     remains.drop(columns=["storage"], inplace=True)
-    for col in ["buh", "skl", "weight", "quantity_per_pallet"]:
+    for col in ["buh", "skl"]:
         remains[col] = pd.to_numeric(remains[col], errors="coerce").fillna(0)
     text_columns = [
         "line_of_business",
@@ -162,6 +165,8 @@ def process_remains_reg(content: bytes) -> pd.DataFrame:
         "certificate",
         "certificate_start_date",
         "certificate_end_date",
+        "weight",
+        "quantity_per_pallet",
     ]
     for col in text_columns:
         remains[col] = remains[col].fillna("").astype(str)
@@ -227,16 +232,17 @@ def process_moved_data(content: bytes) -> pd.DataFrame:
         "contract",
     ]
     moved.columns = moved_col_names
-    for col in ["qt_order", "qt_moved"]:
-        moved[col] = pd.to_numeric(moved[col], errors="coerce").fillna(0)
+    # for col in ["qt_order", "qt_moved"]:
+    #     moved[col] = pd.to_numeric(moved[col], errors="coerce").fillna(0)
     text_columns = [
         "order",
-        "date",
         "line_of_business",
         "product",
         "party_sign",
         "period",
         "contract",
+        "qt_order",
+        "qt_moved",
     ]
     for col in text_columns:
         moved[col] = moved[col].astype(str).fillna("")
