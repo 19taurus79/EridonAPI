@@ -5,6 +5,7 @@ import requests
 from fastapi import APIRouter, Query, HTTPException, status, Depends
 from piccolo.query import Sum
 
+# from .main import get_calendar_events
 
 # Імпортуйте ваші моделі Piccolo ORM
 from .tables import (
@@ -21,6 +22,7 @@ from .tables import (
     DetailsForOrders,
 )
 from .telegram_auth import get_current_telegram_user
+from .test import get_all_tasks, create_task
 
 router = APIRouter(
     prefix="/data",  # Всі едпоінти в цьому роутері починатимуться з /data
@@ -340,3 +342,23 @@ async def get_details_for_order(order: str):
         DetailsForOrders.contract_supplement == order
     )
     return data
+
+
+@router.get("/calendar_events")
+def get_events():
+    from .main import get_calendar_events
+
+    data = get_calendar_events()
+    return data
+
+
+@router.get("/get_all_tasks")
+def get_tasks():
+    data = get_all_tasks()
+    return data
+
+
+@router.post("/add_task")
+def add_task(date, note, title):
+    task = create_task(date, note, title)
+    return task
