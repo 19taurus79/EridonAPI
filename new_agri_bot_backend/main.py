@@ -3,7 +3,7 @@ import io
 import os
 import tempfile
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict
 import uvicorn
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -49,28 +49,6 @@ bot = Bot(
 )  # Важно: если бот не используется напрямую в main, эту строку можно убрать
 
 
-# class Product(BaseModel):
-#     product: str
-#     quantity: int
-#
-#
-# class Order(BaseModel):
-#     order: str
-#     products: List[Product]
-#
-#
-# class Delivery(BaseModel):
-#     client: str
-#     manager: str
-#     orders: List[Order]
-#     deliveryAddress: Optional[str] = None
-#     contactPerson: Optional[str] = None
-#     deliveryDate: Optional[str] = None
-#
-#
-# class DeliveryRequest(BaseModel):
-#     chat_id: int
-#     deliveries: List[Delivery]
 class DeliveryItem(BaseModel):
     product: str
     quantity: int
@@ -154,6 +132,63 @@ def create_calendar_event(data: DeliveryRequest) -> Optional[str]:
         print("Ошибка при добавлении в календарь:", e)
         return None
 
+
+
+def get_calendar_events(
+    start_date: Optional[str] = None, end_date: Optional[str] = None
+) -> Optional[List[Dict]]:
+    """
+    Получает список событий из календаря в заданном диапазоне дат.
+
+    Args:
+        start_date (str, optional): Начальная дата в формате 'YYYY-MM-DD'.
+        end_date (str, optional): Конечная дата в формате 'YYYY-MM-DD'.
+
+    Returns:
+        Optional[List[Dict]]: Список событий или None в случае ошибки.
+    """
+    try:
+        # 1. Подключение к API
+        credentials = service_account.Credentials.from_service_account_file(
+            SERVICE_ACCOUNT_FILE, scopes=SCOPES
+        )
+        service = build("calendar", "v3", credentials=credentials)
+
+        # 2. Определение временного диапазона
+        now = datetime.utcnow()
+        time_min = (
+            datetime.utcnow() - timedelta(days=30)
+        ).isoformat() + "Z"  # По умолчанию за последние 30 дней
+        time_max = now.isoformat() + "Z"  # До текущего момента
+
+        if start_date:
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            time_min = start_dt.isoformat() + "Z"
+
+        if end_date:
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+            time_max = end_dt.isoformat() + "Z"
+
+        # 3. Выполнение запроса к API
+        events_result = (
+            service.events()
+            .list(
+                calendarId=CALENDAR_ID,
+                timeMin=time_min,
+                timeMax=time_max,
+                maxResults=20,  # Максимальное количество событий
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            .execute()
+        )
+
+        events = events_result.get("items", [])
+        return events
+
+    except Exception as e:
+        print("Ошибка при получении событий из календаря:", e)
+        return None
 
 
 # Определяем контекстный менеджер для жизненного цикла приложения

@@ -4,6 +4,8 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 
+from piccolo_conf import DB, DB_2
+
 # Импорты моделей Piccolo ORM
 from .tables import (
     AvailableStock,
@@ -58,17 +60,12 @@ async def save_processed_data_to_db(
     # print("Старі дані з таблиць видалено. Починаємо вставку нових даних...")
     # 2.1 Создание справочника товаров
     av_stock_tmp = df_av_stock[["product", "line_of_business", "active_substance"]]
-
     remains_tmp = df_remains[["product", "line_of_business", "active_substance"]]
-
     submissions_tmp = df_submissions[
         ["product", "line_of_business", "active_ingredient"]
     ].rename(columns={"active_ingredient": "active_substance"})
-
     pr = pd.concat([av_stock_tmp, submissions_tmp, remains_tmp], ignore_index=True)
-
     product_guide = pr.drop_duplicates(["product"]).reset_index(drop=True)
-
     product_guide.insert(0, "id", product_guide.apply(lambda _: uuid.uuid4(), axis=1))
 
     # 3. Вставка новых данных из DataFrame в соответствующие таблицы Piccolo
@@ -78,15 +75,19 @@ async def save_processed_data_to_db(
     BATCH_SIZE = 1000
     if not product_guide.empty:
         await ProductGuide.delete(force=True).run()
+        await ProductGuide.delete(force=True).run(node="DB_2")
         records_product_guide = product_guide.to_dict(orient="records")
         product_guide_raw = [ProductGuide(**item) for item in records_product_guide]
         for i in range(0, len(product_guide_raw), BATCH_SIZE):
             batch = product_guide_raw[i : i + BATCH_SIZE]
             rows = list(batch)
             await ProductGuide.insert().add(*rows).run()
+            await ProductGuide.insert().add(*rows).run(node="DB_2")
+
     if not df_av_stock.empty:
         df_av_stock = df_av_stock.drop("active_substance", axis=1)
         await AvailableStock.delete(force=True).run()
+        await AvailableStock.delete(force=True).run(node="DB_2")
         av_stock_data = df_av_stock.merge(
             product_guide, on="product", how="left", suffixes=("_av", "_guide")
         )
@@ -105,6 +106,7 @@ async def save_processed_data_to_db(
             batch = av_stock_raw[i : i + BATCH_SIZE]
             rows = list(batch)
             await AvailableStock.insert().add(*rows).run()
+            await AvailableStock.insert().add(*rows).run(node="DB_2")
 
         # await AvailableStock.insert().add(*av_stock_raw).run()
         print(f"Вставлено {len(records_av_stock)} записей в AvailableStock.")
@@ -114,6 +116,7 @@ async def save_processed_data_to_db(
     # Пример:
     if not df_remains.empty:
         await Remains.delete(force=True).run()
+        await Remains.delete(force=True).run(node="DB_2")
         remains_data = df_remains.merge(
             product_guide, on="product", how="left", suffixes=("_av", "_guide")
         )
@@ -133,6 +136,7 @@ async def save_processed_data_to_db(
             batch = remains_raw[i : i + BATCH_SIZE]
             rows = list(batch)
             await Remains.insert().add(*rows).run()
+            await Remains.insert().add(*rows).run(node="DB_2")
         # await Remains.insert(*[Remains(**d) for d in records_remains]).run()
         print(f"Вставлено {len(records_remains)} записей в Remains.")
     else:
@@ -140,6 +144,7 @@ async def save_processed_data_to_db(
 
     if not df_submissions.empty:
         await Submissions.delete(force=True).run()
+        await Submissions.delete(force=True).run(node="DB_2")
         submissions_data = df_submissions.merge(
             product_guide, on="product", how="left", suffixes=("_av", "_guide")
         )
@@ -156,6 +161,7 @@ async def save_processed_data_to_db(
             batch = submissions_raw[i : i + BATCH_SIZE]
             rows = list(batch)
             await Submissions.insert().add(*rows).run()
+            await Submissions.insert().add(*rows).run(node="DB_2")
         # await Submissions.insert(*[Submissions(**d) for d in records_submissions]).run()
         print(f"Вставлено {len(records_submissions)} записей в Submissions.")
     else:
@@ -163,12 +169,14 @@ async def save_processed_data_to_db(
 
     if not df_payment.empty:
         await Payment.delete(force=True).run()
+        await Payment.delete(force=True).run(node="DB_2")
         records_payment = df_payment.to_dict(orient="records")
         payment_raw = [Payment(**item) for item in records_payment]
         for i in range(0, len(payment_raw), BATCH_SIZE):
             batch = payment_raw[i : i + BATCH_SIZE]
             rows = list(batch)
             await Payment.insert().add(*rows).run()
+            await Payment.insert().add(*rows).run(node="DB_2")
         # await Payment.insert(*[Payment(**d) for d in records_payment]).run()
         print(f"Вставлено {len(records_payment)} записей в Payment.")
     else:
@@ -176,6 +184,7 @@ async def save_processed_data_to_db(
 
     if not df_moved.empty:
         await MovedData.delete(force=True).run()
+        await MovedData.delete(force=True).run(node="DB_2")
         moved_data = df_moved.merge(
             product_guide, on="product", how="left", suffixes=("_av", "_guide")
         )
@@ -193,6 +202,7 @@ async def save_processed_data_to_db(
             batch = moved_raw[i : i + BATCH_SIZE]
             rows = list(batch)
             await MovedData.insert().add(*rows).run()
+            await MovedData.insert().add(*rows).run(node="DB_2")
         # await MovedData.insert(*[MovedData(**d) for d in records_moved]).run()
         print(f"Вставлено {len(records_moved)} записей в MovedData.")
     else:
