@@ -121,6 +121,7 @@ def create_calendar_event(data: DeliveryRequest) -> Optional[str]:
                 "dateTime": end.isoformat(),
                 "timeZone": "Europe/Kyiv",
             },
+            "colorId": "11",
         }
 
         created_event = (
@@ -156,18 +157,26 @@ def get_calendar_events(
 
         # 2. Определение временного диапазона
         now = datetime.utcnow()
-        time_min = (
-            datetime.utcnow() - timedelta(days=30)
-        ).isoformat() + "Z"  # По умолчанию за последние 30 дней
-        time_max = now.isoformat() + "Z"  # До текущего момента
+        time_min = (datetime.utcnow() - timedelta(days=3)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ).isoformat() + "Z"  # По умолчанию за последние 7 дней
+        time_max = (now + timedelta(days=3)).replace(
+            hour=23, minute=59, second=0, microsecond=0
+        ).isoformat() + "Z"  # До текущего момента
 
         if start_date:
             start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-            time_min = start_dt.isoformat() + "Z"
+            time_min = (
+                start_dt.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+                + "Z"
+            )
 
         if end_date:
             end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-            time_max = end_dt.isoformat() + "Z"
+            time_max = (
+                end_dt.replace(hour=23, minute=59, second=0, microsecond=0).isoformat()
+                + "Z"
+            )
 
         # 3. Выполнение запроса к API
         events_result = (
@@ -176,7 +185,7 @@ def get_calendar_events(
                 calendarId=CALENDAR_ID,
                 timeMin=time_min,
                 timeMax=time_max,
-                maxResults=20,  # Максимальное количество событий
+                # maxResults=20,  # Максимальное количество событий
                 singleEvents=True,
                 orderBy="startTime",
             )
