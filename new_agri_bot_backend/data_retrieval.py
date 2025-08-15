@@ -1,6 +1,6 @@
 # app/data_retrieval.py
 from typing import Optional, List
-
+from collections import defaultdict
 import requests
 from fastapi import APIRouter, Query, HTTPException, status, Depends
 from piccolo.query import Sum
@@ -336,19 +336,89 @@ async def get_id_in_remains(party: str):
     return data
 
 
+def group_products_with_parties(items):
+    grouped = defaultdict(
+        lambda: {
+            "id": None,
+            "nomenclature": None,
+            "party_sign": None,
+            "buying_season": None,
+            "different": None,
+            "client": None,
+            "contract_supplement": None,
+            "manager": None,
+            "product": None,
+            "orders_q": None,
+            "buh": None,
+            "skl": None,
+            "qok": True,
+            "parties": [],
+        }
+    )
+
+    for item in items:
+        product_uuid = item["product"]
+        group = grouped[product_uuid]
+
+        # Инициализация данных в группе, если не инициализирована
+        if group["product"] is None:
+            group["id"] = str(item.get("id")) if item.get("id") else None
+            group["nomenclature"] = item.get("nomenclature")
+            group["party_sign"] = item.get("party_sign")
+            group["buying_season"] = item.get("buying_season")
+            group["different"] = (
+                float(item.get("different"))
+                if item.get("different") is not None
+                else None
+            )
+            group["client"] = item.get("client")
+            group["contract_supplement"] = item.get("contract_supplement")
+            group["manager"] = item.get("manager")
+            group["product"] = str(product_uuid)
+            group["orders_q"] = (
+                float(item.get("orders_q"))
+                if item.get("orders_q") is not None
+                else None
+            )
+            group["buh"] = (
+                float(item.get("buh")) if item.get("buh") is not None else None
+            )
+            group["skl"] = (
+                float(item.get("skl")) if item.get("skl") is not None else None
+            )
+            group["qok"] = bool(item.get("qok", True))
+
+        else:
+            # Обновление флага qok, если нужно
+            group["qok"] = group["qok"] and bool(item.get("qok", True))
+
+        # Добавляем партию
+        party_data = {
+            "moved_q": (
+                float(item.get("moved_q")) if item.get("moved_q") is not None else 0
+            ),
+            "party": item.get("party"),
+        }
+        group["parties"].append(party_data)
+
+    # Возвращаем именно список словарей (без product в качестве ключа)
+    return list(grouped.values())
+
+
 @router.get("/details_for_orders/{order}")
 async def get_details_for_order(order: str):
     data = await DetailsForOrders.select().where(
         DetailsForOrders.contract_supplement == order
     )
-    return data
+    result = group_products_with_parties(data)
+    return result
 
 
 @router.get("/calendar_events")
-def get_events():
+def get_events(start: Optional[str] = None, end: Optional[str] = None):
     from .main import get_calendar_events
 
-    data = get_calendar_events()
+    data = get_calendar_events(start_date=start, end_date=end)
     return data
 
 
