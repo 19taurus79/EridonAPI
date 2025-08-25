@@ -7,11 +7,13 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from new_agri_bot_backend.tables import Tasks
+
 # If modifying these scopes, delete the file token.json.
 SCOPES = ["https://www.googleapis.com/auth/tasks"]
 
 
-def get_all_tasks():
+async def get_all_tasks(user):
     """Shows basic usage of the Tasks API.
     Prints the title and ID of the first 10 task lists.
     """
@@ -52,7 +54,15 @@ def get_all_tasks():
             .execute()
         )
         items = results.get("items", [])
-
+        if user.is_admin:
+            return items
+        user_tasks = (
+            await Tasks.select().where(Tasks.task_creator == user.telegram_id).run()
+        )
+        user_tasks_value = []
+        for task in user_tasks:
+            user_tasks_value.append(task["task_id"])
+        filtered_tasks = [item for item in items if item["id"] in user_tasks_value]
         # if not items:
         #     print("No task lists found.")
         #     return
@@ -85,37 +95,45 @@ def get_all_tasks():
         #         print(
         #             f"- {task['title']} (Статус: {task.get('status', 'no status')}, ID:{task['id']})"
         #         )
-        return items
+        return filtered_tasks
     except HttpError as err:
         print(err)
 
 
-def complete_task():
+def complete_task(task_id, user):
     creds = None
     # The file token.json stores the user's access and refresh tokens, and is
     # created automatically when the authorization flow completes for the first
     # time.
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    TOKEN_ACCOUNT_FILE = os.path.join(BASE_DIR, "token.json")
+    SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "credentials_task.json")
+    if os.path.exists(TOKEN_ACCOUNT_FILE):
+        creds = Credentials.from_authorized_user_file(TOKEN_ACCOUNT_FILE, SCOPES)
     # If there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(
+                SERVICE_ACCOUNT_FILE, SCOPES
+            )
             creds = flow.run_local_server(port=0)
         # Save the credentials for the next run
-        with open("token.json", "w") as token:
+        with open(TOKEN_ACCOUNT_FILE, "w") as token:
             token.write(creds.to_json())
 
     service = build("tasks", "v1", credentials=creds)
 
-    task_id = "TVZMWXNPOFAycExNbE4tag"
-    tasklist_id = "MDc4ODMwMjQ3NDUzMzgzMDM5MTg6MDow"  # Например, '@default'
+    task_id = task_id
+    tasklist_id = "RnFScjhXZHRvVHhhZWN0Sg"  # Например, '@default'
 
     # Получаем задачу
     task = service.tasks().get(tasklist=tasklist_id, task=task_id).execute()
-
+    previous_title = task["title"]
+    split_title = previous_title.split("_")
+    new_title = f"{split_title[0]} виконав {user.full_name_for_orders}"
+    task["title"] = new_title
     # Обновляем статус
     task["status"] = "completed"
     # Можно также установить дату выполнения (RFC3339 формат)
@@ -132,7 +150,94 @@ def complete_task():
     )
 
 
-def create_task(date, note, title):
+def in_progress_task(task_id, user):
+    creds = None
+    # The file token.json stores the user's access and refresh tokens, and is
+    # created automatically when the authorization flow completes for the first
+    # time.
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    TOKEN_ACCOUNT_FILE = os.path.join(BASE_DIR, "token.json")
+    SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "credentials_task.json")
+    if os.path.exists(TOKEN_ACCOUNT_FILE):
+        creds = Credentials.from_authorized_user_file(TOKEN_ACCOUNT_FILE, SCOPES)
+    # If there are no (valid) credentials available, let the user log in.
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                SERVICE_ACCOUNT_FILE, SCOPES
+            )
+            creds = flow.run_local_server(port=0)
+        # Save the credentials for the next run
+        with open(TOKEN_ACCOUNT_FILE, "w") as token:
+            token.write(creds.to_json())
+
+    service = build("tasks", "v1", credentials=creds)
+
+    task_id = task_id
+    tasklist_id = "RnFScjhXZHRvVHhhZWN0Sg"  # Например, '@default'
+
+    # Получаем задачу
+    task = service.tasks().get(tasklist=tasklist_id, task=task_id).execute()
+
+    # Обновляем статус
+    previous_title = task["title"]
+    new_title = f"{previous_title}_зараз виконує {user.full_name_for_orders}"
+    task["title"] = new_title
+    # Можно также установить дату выполнения (RFC3339 формат)
+    import datetime
+
+    task["updated"] = datetime.datetime.utcnow().isoformat() + "Z"
+
+    # Отправляем обновления
+    updated_task = (
+        service.tasks().update(tasklist=tasklist_id, task=task_id, body=task).execute()
+    )
+    print(
+        f"Обновленная задача: {updated_task['title']} со статусом {updated_task['status']}"
+    )
+
+
+def get_task_by_id(task_id):
+    creds = None
+    # The file token.json stores the user's access and refresh tokens, and is
+    # created automatically when the authorization flow completes for the first
+    # time.
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    TOKEN_ACCOUNT_FILE = os.path.join(BASE_DIR, "token.json")
+    SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "credentials_task.json")
+    if os.path.exists(TOKEN_ACCOUNT_FILE):
+        creds = Credentials.from_authorized_user_file(TOKEN_ACCOUNT_FILE, SCOPES)
+    # If there are no (valid) credentials available, let the user log in.
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                SERVICE_ACCOUNT_FILE, SCOPES
+            )
+            creds = flow.run_local_server(port=0)
+        # Save the credentials for the next run
+        with open(TOKEN_ACCOUNT_FILE, "w") as token:
+            token.write(creds.to_json())
+
+    try:
+        service = build("tasks", "v1", credentials=creds)
+        tasklist_id = "RnFScjhXZHRvVHhhZWN0Sg"  # Например, '@default'
+        task = service.tasks().get(tasklist=tasklist_id, task=task_id).execute()
+        return task
+    except HttpError as err:
+        print(err)
+
+    # service = build("tasks", "v1", credentials=creds)
+
+    # task_id = "TVZMWXNPOFAycExNbE4tag"
+
+    # Получаем задачу
+
+
+async def create_task(date, note, title, user):
     creds = None
     # The file token.json stores the user's access and refresh tokens, and is
     # created automatically when the authorization flow completes for the first
@@ -167,12 +272,15 @@ def create_task(date, note, title):
             .insert(tasklist="RnFScjhXZHRvVHhhZWN0Sg", body=task)
             .execute()
         )
-
+        await Tasks.insert(
+            Tasks(task_id=results["id"], task_creator=user.telegram_id, task_status=0)
+        )
+        print(user)
         print(results["webViewLink"])
     except HttpError as err:
         print(err)
 
 
 if __name__ == "__main__":
-    pprint(get_all_tasks())
-    # complete_task()
+    # pprint(get_all_tasks())
+    complete_task("b2R2X3N3VVNnVUk4RkFBVg")

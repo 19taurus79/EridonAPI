@@ -15,6 +15,8 @@ bash
 Копіювати
 Редагувати
 docker build --no-cache -t my-app .
+docker build -t eridon_api .
+
 ✅ 2. Создать сеть (если ещё нет)
 Например, создать bridge-сеть с именем my-network:
 
@@ -27,6 +29,9 @@ bash
 Копіювати
 Редагувати
 docker run -d --name my-container --network my-network my-app
+
+docker run -d --name eridon_api --network shared_network eridon_api
+
 -d — запуск в фоне
 
 --name my-container — имя контейнера

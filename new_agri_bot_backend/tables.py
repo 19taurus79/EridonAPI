@@ -9,6 +9,7 @@ from piccolo.columns import (
     Boolean,
     Timestamptz,
     Numeric,
+    Integer,
 )
 
 
@@ -194,3 +195,21 @@ class DetailsForOrders(Table):
 
     class Meta:
         tablename = "details_for_orders"
+
+
+class Events(Table):
+    id = UUID(primary_key=True)
+    event_id = Varchar()
+    event_creator = Integer()
+    event_status = Integer()
+    event_who_changed_id = Integer()
+    event_who_changed_name = Varchar()
+
+
+class Tasks(Table):
+    id = UUID(primary_key=True)
+    task_id = Varchar()
+    task_creator = Integer()
+    task_status = Integer()
+    task_who_changed_id = Integer()
+    task_who_changed_name = Varchar()
