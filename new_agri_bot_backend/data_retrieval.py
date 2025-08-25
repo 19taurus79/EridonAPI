@@ -20,9 +20,16 @@ from .tables import (
     MovedData,
     ProductsForOrders,
     DetailsForOrders,
+    Tasks,
 )
 from .telegram_auth import get_current_telegram_user
-from .test import get_all_tasks, create_task
+from .test import (
+    get_all_tasks,
+    create_task,
+    get_task_by_id,
+    complete_task,
+    in_progress_task,
+)
 
 router = APIRouter(
     prefix="/data",  # Всі едпоінти в цьому роутері починатимуться з /data
@@ -423,12 +430,53 @@ def get_events(start: Optional[str] = None, end: Optional[str] = None):
 
 
 @router.get("/get_all_tasks")
-def get_tasks():
-    data = get_all_tasks()
+async def get_tasks(user=Depends(get_current_telegram_user)):
+    data = await get_all_tasks(user)
     return data
 
 
 @router.post("/add_task")
-def add_task(date, note, title):
-    task = create_task(date, note, title)
+async def add_task(date, note, title, user=Depends(get_current_telegram_user)):
+    task = await create_task(date, note, title, user)
     return task
+
+
+@router.get("/get_task")
+def get_task(task_id):
+    task = get_task_by_id(task_id)
+    return task
+
+
+@router.patch("/task_in_progress")
+async def task_in_progress(task_id, user=Depends(get_current_telegram_user)):
+    await Tasks.update(
+        {
+            Tasks.task_status: 1,
+            Tasks.task_who_changed_id: user.telegram_id,
+            Tasks.task_who_changed_name: user.full_name_for_orders,
+        },
+        force=True,
+    ).where(Tasks.task_id == task_id).run()
+    in_progress_task(task_id, user)
+
+
+@router.patch("/task_completed")
+async def task_completed(task_id, user=Depends(get_current_telegram_user)):
+    await Tasks.update(
+        {
+            Tasks.task_status: 2,
+            Tasks.task_who_changed_id: user.telegram_id,
+            Tasks.task_who_changed_name: user.full_name_for_orders,
+        },
+        force=True,
+    ).where(Tasks.task_id == task_id).run()
+    complete_task(task_id, user)
+
+
+@router.get("/get_task_status")
+async def get_task_status(task_id):
+    try:
+        data = await Tasks.objects().where(Tasks.task_id == task_id).run()
+        return data[0]
+    except Exception as e:
+        print(e)

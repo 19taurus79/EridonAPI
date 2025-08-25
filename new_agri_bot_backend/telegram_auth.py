@@ -220,14 +220,16 @@ async def auth(data: InitDataModel):
     }
 
 
+@router.get("/get_user")
 # НОВА ФУНКЦІЯ ЗАЛЕЖНОСТІ
 async def get_current_telegram_user(
     # Припускаємо, що фронтенд відправлятиме initData як кастомний хедер "X-Telegram-Init-Data"
-    x_telegram_init_data: str = Header(
-        ...,
-        alias="X-Telegram-Init-Data",
-        description="Дані ініціалізації Telegram Mini App",
-    )
+    # x_telegram_init_data: str = Header(
+    #     ...,
+    #     alias="X-Telegram-Init-Data",
+    #     description="Дані ініціалізації Telegram Mini App",
+    # )
+    x_telegram_init_data: str = "user=%7B%22id%22%3A548019148%2C%22first_name%22%3A%22%D0%A1%D0%B5%D1%80%D0%B3%D0%B5%D0%B9%22%2C%22last_name%22%3A%22%D0%9E%D0%BD%D0%B8%D1%89%D0%B5%D0%BD%D0%BA%D0%BE%22%2C%22username%22%3A%22OnyshchenkoSergey%22%2C%22language_code%22%3A%22uk%22%2C%22allows_write_to_pm%22%3Atrue%2C%22photo_url%22%3A%22https%3A%5C%2F%5C%2Ft.me%5C%2Fi%5C%2Fuserpic%5C%2F320%5C%2Fqf0qiya3lYZumE5ExiC55ONcmy-5vzP6pZzzBMV92vw.svg%22%7D&chat_instance=1925380814121275371&chat_type=channel&auth_date=1755268382&signature=-Wek8bfSlr6OOwIVIFYV_5bsXA9Krzzw_I51BXxoIZxn4L0qvcU48b7sgZOPf-AjiQaW1Q5BOkFGG8ekj6ycAw&hash=add338a30c8ad8606d1d303d0a99eb25f95bcf3f4a7a58b34e61f37111215853",
 ):
     """
     Залежність, яка перевіряє Telegram initData з хедера запиту.
