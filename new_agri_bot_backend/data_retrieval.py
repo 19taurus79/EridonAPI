@@ -1,9 +1,11 @@
 # app/data_retrieval.py
+from datetime import datetime, timezone
 from typing import Optional, List
 from collections import defaultdict
 import requests
 from fastapi import APIRouter, Query, HTTPException, status, Depends
 from piccolo.query import Sum
+from pydantic import BaseModel, Field
 
 # from .main import get_calendar_events
 
@@ -435,9 +437,22 @@ async def get_tasks(user=Depends(get_current_telegram_user)):
     return data
 
 
+class TaskCreate(BaseModel):
+    date: Optional[datetime] = Field(default_factory=lambda: datetime.utcnow())
+    title: str
+    note: str
+
+
 @router.post("/add_task")
-async def add_task(date, note, title, user=Depends(get_current_telegram_user)):
-    task = await create_task(date, note, title, user)
+async def add_task(task_data: TaskCreate, user=Depends(get_current_telegram_user)):
+    date_iso = (
+        task_data.date.astimezone(timezone.utc).isoformat()
+        if task_data.date
+        else datetime.now(timezone.utc).isoformat()
+    )
+    task = await create_task(
+        date=date_iso, note=task_data.note, title=task_data.title, user=user
+    )
     return task
 
 
