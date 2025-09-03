@@ -1,3 +1,7 @@
+from datetime import datetime
+
+from piccolo.columns.defaults import TimestampNow
+from piccolo.columns.defaults.timestamptz import TimestamptzNow
 from piccolo.table import Table
 from piccolo.columns import (
     Varchar,
@@ -10,6 +14,7 @@ from piccolo.columns import (
     Timestamptz,
     Numeric,
     Integer,
+    Timestamp,
 )
 
 
@@ -200,16 +205,20 @@ class DetailsForOrders(Table):
 class Events(Table):
     id = UUID(primary_key=True)
     event_id = Varchar()
-    event_creator = Integer()
+    event_creator = BigInt()
     event_status = Integer()
-    event_who_changed_id = Integer()
+    event_who_changed_id = BigInt()
     event_who_changed_name = Varchar()
+    created_at = Timestamptz(default=TimestamptzNow())
+    updated_at = Timestamptz(null=True, auto_update=True)
 
 
 class Tasks(Table):
     id = UUID(primary_key=True)
     task_id = Varchar()
-    task_creator = Integer()
+    task_creator = BigInt()
     task_status = Integer()
-    task_who_changed_id = Integer()
+    task_who_changed_id = BigInt()
     task_who_changed_name = Varchar()
+    created_at = Timestamptz(default=TimestamptzNow())
+    updated_at = Timestamptz(null=True, auto_update=True)
