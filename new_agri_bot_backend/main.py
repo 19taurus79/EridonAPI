@@ -78,6 +78,7 @@ class DeliveryRequest(BaseModel):
     orders: List[DeliveryOrder]
 
 
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "credentials.json")
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
@@ -141,6 +142,7 @@ async def create_calendar_event(data: DeliveryRequest) -> Optional[str]:
     except Exception as e:
         print("Ошибка при добавлении в календарь:", e)
         return None
+
 
 
 def get_calendar_events(
@@ -489,6 +491,7 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
 
     # Удаляем временный файл
     os.remove(tmp.name)
+
     calendar = await create_calendar_event(data)
     calendar_link = calendar["htmlLink"]
 
@@ -499,9 +502,11 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
             event_status=0,
         )
     ).run()
+
     if calendar_link:
         print("📅 Добавлено в календарь:", calendar_link)
     else:
         print("❌ Не удалось добавить в календарь")
+
 
     return {"status": "ok"}
