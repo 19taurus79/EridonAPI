@@ -1,4 +1,5 @@
 import csv
+import json
 import io
 import os
 import tempfile
@@ -7,7 +8,10 @@ from typing import Optional, List, Dict
 import uvicorn
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from .tables import Remains
+
+from piccolo.columns.defaults import TimestampNow
+
+from .tables import Remains, Events
 from aiogram.types import FSInputFile, BufferedInputFile
 from fastapi import (
     FastAPI,
@@ -19,6 +23,7 @@ from fastapi import (
     Depends,
     Query,
     Request,
+    Header,
 )
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
@@ -31,7 +36,11 @@ from openpyxl.utils import get_column_letter
 from pydantic import BaseModel
 
 # Импорты из ваших новых модулей
-from .telegram_auth import router as telegram_auth_router, InitDataModel
+from .telegram_auth import (
+    router as telegram_auth_router,
+    InitDataModel,
+    check_telegram_auth,
+)
 from .data_retrieval import router as data_retrieval_router
 from .data_loader import save_processed_data_to_db
 from .utils import send_message_to_managers
@@ -77,7 +86,7 @@ CALENDAR_ID = "dca9aa4129540be8ec133f20092e7f0a500897595fc1736cd295a739d9dc9466@
 admin_router = create_admin([Remains], allowed_hosts=["localhost"])
 
 
-def create_calendar_event(data: DeliveryRequest) -> Optional[str]:
+async def create_calendar_event(data: DeliveryRequest) -> Optional[str]:
     try:
         credentials = service_account.Credentials.from_service_account_file(
             SERVICE_ACCOUNT_FILE, scopes=SCOPES
@@ -126,7 +135,8 @@ def create_calendar_event(data: DeliveryRequest) -> Optional[str]:
         created_event = (
             service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
         )
-        return created_event.get("htmlLink")
+
+        return created_event
 
     except Exception as e:
         print("Ошибка при добавлении в календарь:", e)
@@ -221,6 +231,7 @@ origins = [
     "https://eridon-react.vercel.app",
     "https://eridon-bot-next-js.vercel.app",
     "http://127.0.0.1:5173",
+    "http://localhost:5173",
     "http://127.0.0.1:5500",
     "http://127.0.0.1:8000",
     "http://localhost:3000",
@@ -399,8 +410,13 @@ async def upload_data(
 
 
 @app.post("/delivery/send")
-async def send_delivery(data: DeliveryRequest):
+async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Header()):
+    parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
+    user_info_str = parsed_init_data.get("user")
+    user_data = json.loads(user_info_str)
+    telegram_id = user_data.get("id")
     # 📝 Формируем текст для Telegram
+    print(X_Telegram_Init_Data)
     message_lines = [
         f"👤 Менеджер: {data.manager}",
         f"🚚 Контрагент: <code>{data.client}</code>",
@@ -462,12 +478,27 @@ async def send_delivery(data: DeliveryRequest):
         excel_file = FSInputFile(tmp.name, filename=filename)
 
         # Отправка сообщения
-        await bot.send_message(chat_id="548019148", text=message, parse_mode="HTML")
-        await bot.send_document(chat_id="548019148", document=excel_file)
+        admins = ["548019148", "1060393824"]
+        for admin in admins:
+            await bot.send_message(chat_id=admin, text=message, parse_mode="HTML")
+            await bot.send_document(chat_id=admin, document=excel_file)
+        await bot.send_message(
+            chat_id=telegram_id, text="Ви відправили такі данні для доставки :"
+        )
+        await bot.send_message(chat_id=telegram_id, text=message, parse_mode="HTML")
 
     # Удаляем временный файл
     os.remove(tmp.name)
-    calendar_link = create_calendar_event(data)
+    calendar = await create_calendar_event(data)
+    calendar_link = calendar["htmlLink"]
+
+    await Events.insert(
+        Events(
+            event_id=calendar["id"],
+            event_creator=telegram_id,
+            event_status=0,
+        )
+    ).run()
     if calendar_link:
         print("📅 Добавлено в календарь:", calendar_link)
     else:
