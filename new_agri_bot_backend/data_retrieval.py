@@ -1,9 +1,10 @@
 # app/data_retrieval.py
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 from collections import defaultdict
 import requests
 from fastapi import APIRouter, Query, HTTPException, status, Depends
+from piccolo.columns.defaults.timestamptz import TimestamptzNow
 from piccolo.query import Sum
 from pydantic import BaseModel, Field
 
@@ -23,6 +24,7 @@ from .tables import (
     ProductsForOrders,
     DetailsForOrders,
     Tasks,
+    Events,
 )
 from .telegram_auth import get_current_telegram_user
 from .test import (
@@ -428,6 +430,21 @@ def get_events(start: Optional[str] = None, end: Optional[str] = None):
     from .main import get_calendar_events
 
     data = get_calendar_events(start_date=start, end_date=end)
+    return data
+
+
+@router.get("/calendar_events_by_user")
+async def get_events_by_user(user=Depends(get_current_telegram_user)):
+    three_days_ago = datetime.now() - timedelta(days=3)
+    if user.is_admin:
+        data = await Events.select().where(
+            (Events.start_event >= three_days_ago) | (Events.event_status != 3)
+        )
+    else:
+        data = await Events.select().where(
+            (Events.event_creator == user.telegram_id)
+            & ((Events.start_event >= three_days_ago) | (Events.event_status != 3))
+        )
     return data
 
 

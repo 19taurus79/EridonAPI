@@ -209,6 +209,8 @@ class Events(Table):
     event_status = Integer()
     event_who_changed_id = BigInt()
     event_who_changed_name = Varchar()
+    start_event = Date()
+    event = Varchar()
     created_at = Timestamptz(default=TimestamptzNow())
     updated_at = Timestamptz(null=True, auto_update=True)
 
