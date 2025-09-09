@@ -482,8 +482,8 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
         excel_file = FSInputFile(tmp.name, filename=filename)
 
         # Отправка сообщения
-        admins = ["548019148", "1060393824", "7953178333"]
-        # admins = ["548019148", "1060393824"]
+        # admins = ["548019148", "1060393824", "7953178333"]
+        admins = ["548019148", "1060393824"]
         for admin in admins:
             await bot.send_message(chat_id=admin, text=message, parse_mode="HTML")
             await bot.send_document(chat_id=admin, document=excel_file)
@@ -503,7 +503,7 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
             event_creator=telegram_id,
             event_status=0,
             start_event=date,
-            event=calendar["summary"],
+            event=data.client,
         )
     ).run()
     if calendar_link:
