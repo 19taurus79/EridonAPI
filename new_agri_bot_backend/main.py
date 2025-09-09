@@ -75,6 +75,7 @@ class DeliveryRequest(BaseModel):
     contact: str
     phone: str
     date: str  # ISO-формат строки
+    comment: str
     orders: List[DeliveryOrder]
 
 
@@ -106,6 +107,7 @@ async def create_calendar_event(data: DeliveryRequest) -> Optional[str]:
             f"Контакт: {data.contact}",
             f"Телефон: {data.phone}",
             f"Дата доставки: {data.date}",
+            f"Коментар : {data.comment}",
             "",
         ]
 
@@ -426,6 +428,7 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
         f"👤 Контакт: {data.contact}",
         f"📞 Телефон: {data.phone}",
         f"📅 Дата доставки: {data.date}",
+        f"💬 Коментар: {data.comment}",
         "",
     ]
 
@@ -448,6 +451,7 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
     ws.append(["Контакт", data.contact])
     ws.append(["Телефон", data.phone])
     ws.append(["Дата", data.date])
+    ws.append(["Коментар", data.comment])
     ws.append([])
     ws.append(["Доповнення", "Товар", "Кількість"])
 
@@ -480,7 +484,8 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
         excel_file = FSInputFile(tmp.name, filename=filename)
 
         # Отправка сообщения
-        admins = ["548019148", "1060393824", "7953178333"]
+        # admins = ["548019148", "1060393824", "7953178333"]
+        admins = ["548019148", "1060393824"]
         for admin in admins:
             await bot.send_message(chat_id=admin, text=message, parse_mode="HTML")
             await bot.send_document(chat_id=admin, document=excel_file)
@@ -494,12 +499,14 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
 
     calendar = await create_calendar_event(data)
     calendar_link = calendar["htmlLink"]
-
+    date = datetime.fromisoformat(calendar["start"]["dateTime"]).date()
     await Events.insert(
         Events(
             event_id=calendar["id"],
             event_creator=telegram_id,
             event_status=0,
+            start_event=date,
+            event=data.client,
         )
     ).run()
 
