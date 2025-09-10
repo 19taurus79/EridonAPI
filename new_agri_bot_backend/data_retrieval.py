@@ -433,6 +433,14 @@ def get_events(start: Optional[str] = None, end: Optional[str] = None):
     return data
 
 
+@router.get("/calendar_event_by_id")
+async def get_calendar_event_by_id(id: str):
+    from .main import get_calendar_events_by_id
+
+    data = get_calendar_events_by_id(id)
+    return data
+
+
 @router.get("/calendar_events_by_user")
 async def get_events_by_user(user=Depends(get_current_telegram_user)):
     three_days_ago = datetime.now() - timedelta(days=3)

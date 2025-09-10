@@ -212,6 +212,42 @@ def get_calendar_events(
         return None
 
 
+def get_calendar_events_by_id(id: str):
+    """
+    Получает список событий из календаря в заданном диапазоне дат.
+
+    Args:
+        start_date (str, optional): Начальная дата в формате 'YYYY-MM-DD'.
+        end_date (str, optional): Конечная дата в формате 'YYYY-MM-DD'.
+
+    Returns:
+        Optional[List[Dict]]: Список событий или None в случае ошибки.
+    """
+    try:
+        # 1. Подключение к API
+        credentials = service_account.Credentials.from_service_account_file(
+            SERVICE_ACCOUNT_FILE, scopes=SCOPES
+        )
+        service = build("calendar", "v3", credentials=credentials)
+
+        # 3. Выполнение запроса к API
+        events_result = (
+            service.events()
+            .get(
+                calendarId=CALENDAR_ID,
+                eventId=id,
+            )
+            .execute()
+        )
+        # print(events_result)
+        # events = events_result.get("items", [])
+        return events_result
+
+    except Exception as e:
+        print("Ошибка при получении событий из календаря:", e)
+        return None
+
+
 # Определяем контекстный менеджер для жизненного цикла приложения
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -485,7 +521,9 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
 
         # Отправка сообщения
         # admins = ["548019148", "1060393824", "7953178333"]
-        admins = ["548019148", "1060393824"]
+        # admins = ["548019148", "1060393824"]
+        admins_json = os.getenv("ADMINS", "[]")
+        admins = json.loads(admins_json)
         for admin in admins:
             await bot.send_message(chat_id=admin, text=message, parse_mode="HTML")
             await bot.send_document(chat_id=admin, document=excel_file)
