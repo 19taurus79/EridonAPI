@@ -4,7 +4,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 
-from piccolo_conf import DB
+# from piccolo_conf import DB
 
 # Импорты моделей Piccolo ORM
 from .tables import (
