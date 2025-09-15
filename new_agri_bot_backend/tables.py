@@ -212,7 +212,7 @@ class Events(Table):
     start_event = Date()
     event = Varchar()
     created_at = Timestamptz(default=TimestamptzNow())
-    updated_at = Timestamptz(null=True, auto_update=True)
+    updated_at = Timestamp(auto_update=datetime.now)
 
 
 class Tasks(Table):
@@ -223,4 +223,4 @@ class Tasks(Table):
     task_who_changed_id = BigInt()
     task_who_changed_name = Varchar()
     created_at = Timestamptz(default=TimestamptzNow())
-    updated_at = Timestamptz(null=True, auto_update=True)
+    updated_at = Timestamp(auto_update=datetime.now)

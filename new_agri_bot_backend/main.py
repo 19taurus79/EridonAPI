@@ -52,10 +52,16 @@ from .config import TELEGRAM_BOT_TOKEN
 from aiogram import Bot
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from pydantic import BaseModel
+from datetime import date
 
 bot = Bot(
     TELEGRAM_BOT_TOKEN
 )  # Важно: если бот не используется напрямую в main, эту строку можно убрать
+
+
+class ChangeDateRequest(BaseModel):
+    new_date: date
 
 
 class DeliveryItem(BaseModel):

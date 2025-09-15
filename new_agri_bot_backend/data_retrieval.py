@@ -8,6 +8,11 @@ from piccolo.columns.defaults.timestamptz import TimestamptzNow
 from piccolo.query import Sum
 from pydantic import BaseModel, Field
 
+from .calendar_utils import (
+    changed_color_calendar_events_by_id,
+    changed_date_calendar_events_by_id,
+)
+
 # from .main import get_calendar_events
 
 # Імпортуйте ваші моделі Piccolo ORM
@@ -34,6 +39,13 @@ from .test import (
     complete_task,
     in_progress_task,
 )
+from pydantic import BaseModel
+from datetime import date
+
+
+class ChangeDateRequest(BaseModel):
+    new_date: date
+
 
 router = APIRouter(
     prefix="/data",  # Всі едпоінти в цьому роутері починатимуться з /data
@@ -445,13 +457,19 @@ async def get_calendar_event_by_id(id: str):
 async def get_events_by_user(user=Depends(get_current_telegram_user)):
     three_days_ago = datetime.now() - timedelta(days=3)
     if user.is_admin:
-        data = await Events.select().where(
-            (Events.start_event >= three_days_ago) | (Events.event_status != 3)
+        data = (
+            await Events.select()
+            .where((Events.start_event >= three_days_ago) | (Events.event_status != 2))
+            .order_by(Events.start_event)
         )
     else:
-        data = await Events.select().where(
-            (Events.event_creator == user.telegram_id)
-            & ((Events.start_event >= three_days_ago) | (Events.event_status != 3))
+        data = (
+            await Events.select()
+            .where(
+                (Events.event_creator == user.telegram_id)
+                & ((Events.start_event >= three_days_ago) | (Events.event_status != 2))
+            )
+            .order_by(Events.start_event)
         )
     return data
 
@@ -511,6 +529,45 @@ async def task_completed(task_id, user=Depends(get_current_telegram_user)):
         force=True,
     ).where(Tasks.task_id == task_id).run()
     complete_task(task_id, user)
+
+
+@router.patch("/event_in_progress")
+async def event_in_progress(event_id, user=Depends(get_current_telegram_user)):
+    await Events.update(
+        {
+            Events.event_status: 1,
+            Events.event_who_changed_id: user.telegram_id,
+            Events.event_who_changed_name: user.full_name_for_orders,
+        }
+    ).where(Events.event_id == event_id).run()
+    changed_color_calendar_events_by_id(event_id, 1)
+
+
+@router.patch("/event_completed")
+async def event_completed(event_id, user=Depends(get_current_telegram_user)):
+    await Events.update(
+        {
+            Events.event_status: 2,
+            Events.event_who_changed_id: user.telegram_id,
+            Events.event_who_changed_name: user.full_name_for_orders,
+        },
+        force=True,
+    ).where(Events.event_id == event_id).run()
+    changed_color_calendar_events_by_id(event_id, 2)
+
+
+@router.patch("/event_changed_date")
+async def event_changed_date(
+    event_id: str, new_date: ChangeDateRequest, user=Depends(get_current_telegram_user)
+):
+    await Events.update(
+        {
+            Events.start_event: new_date.new_date,
+            Events.event_who_changed_id: user.telegram_id,
+            Events.event_who_changed_name: user.full_name_for_orders,
+        }
+    ).where(Events.event_id == event_id).run()
+    changed_date_calendar_events_by_id(id=event_id, new_date=new_date.new_date)
 
 
 @router.get("/get_task_status")
