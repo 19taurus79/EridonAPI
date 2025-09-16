@@ -374,7 +374,7 @@ def group_products_with_parties(items):
             "orders_q": None,
             "buh": None,
             "skl": None,
-            "qok": True,
+            "qok": None,
             "parties": [],
         }
     )
@@ -409,11 +409,11 @@ def group_products_with_parties(items):
             group["skl"] = (
                 float(item.get("skl")) if item.get("skl") is not None else None
             )
-            group["qok"] = bool(item.get("qok", True))
+            group["qok"] = str(item.get("qok"))
 
-        else:
-            # Обновление флага qok, если нужно
-            group["qok"] = group["qok"] and bool(item.get("qok", True))
+        # else:
+        #     # Обновление флага qok, если нужно
+        #     group["qok"] = group["qok"] and bool(item.get("qok", True))
 
         # Добавляем партию
         party_data = {
