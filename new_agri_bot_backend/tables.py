@@ -196,7 +196,7 @@ class DetailsForOrders(Table):
     buh = Numeric()
     skl = Numeric()
     id = UUID(required=True)
-    qok = Varchar()
+    qok = Varchar(length=2)
 
     class Meta:
         tablename = "details_for_orders"
