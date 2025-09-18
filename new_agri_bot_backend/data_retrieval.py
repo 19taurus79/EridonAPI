@@ -179,9 +179,9 @@ async def get_clients(
     manager: dict = Depends(get_current_telegram_user), name_part: Optional[str] = None
 ):
     if manager["is_admin"]:
-        query = ClientManagerGuide.select(ClientManagerGuide.client)
+        query = ClientManagerGuide.select()
     else:
-        query = ClientManagerGuide.select(ClientManagerGuide.client).where(
+        query = ClientManagerGuide.select().where(
             ClientManagerGuide.manager == manager["full_name_for_orders"]
         )
     if name_part:
@@ -230,13 +230,19 @@ async def get_orders(client):
 
 @router.get("/contracts/{client}")
 async def get_contracts(client):
+    client_from_guide = await ClientManagerGuide.select(
+        ClientManagerGuide.client
+    ).where(ClientManagerGuide.id == int(client))
     contracts = (
         await Submissions.select(
             Submissions.contract_supplement,
             Submissions.line_of_business,
             Submissions.document_status,
         )
-        .where((Submissions.different > 0) & (Submissions.client == client))
+        .where(
+            (Submissions.different > 0)
+            & (Submissions.client == client_from_guide[0]["client"])
+        )
         .group_by(
             Submissions.contract_supplement,
             Submissions.line_of_business,
