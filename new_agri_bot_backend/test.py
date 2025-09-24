@@ -81,10 +81,13 @@ async def get_all_tasks(user):
             return all_tasks
         else:
             user_tasks = (
-                await Tasks.select().where((Tasks.task_creator == user.telegram_id))
-                & (
-                    (Tasks.task_status != 2)
-                    | ((Tasks.created_at > filter_date) | (Tasks.task_status == 2))
+                await Tasks.select()
+                .where(
+                    (Tasks.task_creator == user.telegram_id)
+                    & (
+                        (Tasks.task_status != 2)
+                        | ((Tasks.created_at > filter_date) | (Tasks.task_status == 2))
+                    )
                 )
                 .order_by(Tasks.task_status)
                 .order_by(Tasks.created_at, ascending=False)
@@ -316,10 +319,10 @@ async def create_task(date, note, title, user):
         admins_json = os.getenv("ADMINS", "[]")
         admins = json.loads(admins_json)
         for admin in admins:
-            await bot.send_message(
+            msg = await bot.send_message(
                 chat_id=admin, text="З'явилось нове завдання", parse_mode="HTML"
             )
-
+            print(msg)
         print(user)
         print(results["webViewLink"])
     except HttpError as err:
