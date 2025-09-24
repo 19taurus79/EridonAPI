@@ -4,6 +4,7 @@ from datetime import date, timedelta, datetime, timezone
 from pprint import pprint
 
 from aiogram import Bot
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -307,6 +308,30 @@ async def create_task(date, note, title, user):
             .insert(tasklist="RnFScjhXZHRvVHhhZWN0Sg", body=task)
             .execute()
         )
+
+        admins_json = os.getenv("ADMINS", "[]")
+        admins = json.loads(admins_json)
+        web_app_url = f"https://telegram-mini-app-six-inky.vercel.app/tasks/{results['id']}?from_link=1"
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Відкрити", web_app=WebAppInfo(url=web_app_url)
+                    )
+                ]
+            ]
+        )
+        for admin in admins:
+            msg = await bot.send_message(
+                chat_id=admin,
+                text="З'явилось нове завдання",
+                parse_mode="HTML",
+                reply_markup=keyboard,
+            )
+            print(msg)
+        user_msg = await bot.send_message(
+            chat_id=user.telegram_id, text="Ви надіслали завдання логісту"
+        )
         await Tasks.insert(
             Tasks(
                 task_id=results["id"],
@@ -314,15 +339,10 @@ async def create_task(date, note, title, user):
                 task_creator_name=user.full_name_for_orders,
                 task_status=0,
                 task=title,
+                chat_id=user_msg.chat.id,
+                message_id=user_msg.message_id,
             )
         )
-        admins_json = os.getenv("ADMINS", "[]")
-        admins = json.loads(admins_json)
-        for admin in admins:
-            msg = await bot.send_message(
-                chat_id=admin, text="З'явилось нове завдання", parse_mode="HTML"
-            )
-            print(msg)
         print(user)
         print(results["webViewLink"])
     except HttpError as err:

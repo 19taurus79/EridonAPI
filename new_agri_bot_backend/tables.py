@@ -225,5 +225,7 @@ class Tasks(Table):
     task_who_changed_id = BigInt()
     task_who_changed_name = Varchar()
     task = Varchar()
+    chat_id = BigInt()
+    message_id = BigInt()
     created_at = Timestamptz(default=TimestamptzNow())
     updated_at = Timestamp(auto_update=datetime.now)
