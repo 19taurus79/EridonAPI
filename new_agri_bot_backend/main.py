@@ -548,6 +548,7 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
         Events(
             event_id=calendar["id"],
             event_creator=telegram_id,
+            event_creator_name=data.manager,
             event_status=0,
             start_event=date,
             event=data.client,
