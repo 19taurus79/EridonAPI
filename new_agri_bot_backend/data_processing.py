@@ -16,7 +16,9 @@ def process_submissions(content: bytes) -> pd.DataFrame:
     submissions.drop(axis=0, labels=[0, 1, 2, 3, 4, 5, 6, 7], inplace=True)
     submissions.drop(axis=0, labels=submissions.tail(1).index, inplace=True)
     submissions.drop(
-        axis=1, labels=["Unnamed: 1", "Unnamed: 2", "Unnamed: 6"], inplace=True
+        axis=1,
+        labels=["Unnamed: 1", "Unnamed: 2", "Unnamed: 6", "Unnamed: 7"],
+        inplace=True,
     )
     submissions_col_names = [
         "division",
@@ -34,7 +36,7 @@ def process_submissions(content: bytes) -> pd.DataFrame:
         "period",
         "shipping_warehouse",
         "document_status",
-        "delivery_status",
+        # "delivery_status",
         "shipping_address",
         "transport",
         "plan",
@@ -59,7 +61,7 @@ def process_submissions(content: bytes) -> pd.DataFrame:
         "line_of_business",
         "shipping_warehouse",
         "document_status",
-        "delivery_status",
+        # "delivery_status",
         "shipping_address",
         "transport",
         "period",
@@ -73,9 +75,10 @@ def process_submissions(content: bytes) -> pd.DataFrame:
         lambda row: f"{str(row['nomenclature']).rstrip()} {str(row['party_sign']).rstrip()} {str(row['buying_season']).rstrip()}",
         axis=1,
     )
-    submissions["contract_supplement"] = submissions["contract_supplement"].str.slice(
-        23, 34
-    )
+    submissions.insert(loc=15, column="delivery_status", value="")
+    # submissions["contract_supplement"] = submissions["contract_supplement"].str.slice(
+    #     23, 34
+    # )
     return submissions
 
 
