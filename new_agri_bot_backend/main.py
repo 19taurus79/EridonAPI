@@ -281,7 +281,7 @@ origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "https://telegram-mini-app-six-inky.vercel.app",
-    "https://geocode-six.vercel.app/",
+    "https://geocode-six.vercel.app",
 ]
 
 app.add_middleware(
