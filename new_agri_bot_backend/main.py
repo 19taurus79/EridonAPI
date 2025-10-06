@@ -43,6 +43,7 @@ from .telegram_auth import (
 )
 from .data_retrieval import router as data_retrieval_router
 from .data_loader import save_processed_data_to_db
+from .bi import router as bi_router
 from .utils import send_message_to_managers
 
 # Импорт TELEGRAM_BOT_TOKEN из config.py для инициализации бота
@@ -295,6 +296,7 @@ app.add_middleware(
 # --- Подключение маршрутов ---
 app.include_router(telegram_auth_router)  # Подключаем маршруты из telegram_auth.py
 app.include_router(data_retrieval_router)
+app.include_router(bi_router)
 app.mount("/admin", admin_router)
 
 
@@ -435,9 +437,9 @@ async def upload_data(
             payment_content,
             moved_content,
         )
-        background_tasks.add_task(
-            send_message_to_managers
-        )  # Добавляем задачу по отправке уведомлений
+        # background_tasks.add_task(
+        #     send_message_to_managers
+        # )  # Добавляем задачу по отправке уведомлений
 
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
