@@ -73,7 +73,7 @@ async def combined_endpoint():
         )
         .where(
             (Submissions.different > 0)
-            & (Submissions.document_status.ilike("%затверджено%"))
+            & (Submissions.document_status.ilike("%затвердже%"))
         )
         .group_by(Submissions.product.product)
         .run()
