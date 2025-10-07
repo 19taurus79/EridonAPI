@@ -439,9 +439,9 @@ async def upload_data(
             payment_content,
             moved_content,
         )
-        # background_tasks.add_task(
-        #     send_message_to_managers
-        # )  # Добавляем задачу по отправке уведомлений
+        background_tasks.add_task(
+            send_message_to_managers
+        )  # Добавляем задачу по отправке уведомлений
 
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,

@@ -229,3 +229,14 @@ class Tasks(Table):
     message_id = BigInt()
     created_at = Timestamptz(default=TimestamptzNow())
     updated_at = Timestamp(auto_update=datetime.now)
+
+
+class FreeStock(Table):
+    product = Varchar()
+    division = Varchar()
+    warehouse = Varchar()
+    date_in_co = Varchar()
+    line_of_business = Varchar()
+    free_qty = BigInt()
+    buh_qty = BigInt()
+    skl_qty = BigInt()
