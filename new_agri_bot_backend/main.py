@@ -67,7 +67,7 @@ class ChangeDateRequest(BaseModel):
 
 class DeliveryItem(BaseModel):
     product: str
-    quantity: int
+    quantity: float
 
 
 class DeliveryOrder(BaseModel):
@@ -408,11 +408,16 @@ async def send_telegram_message(
 )
 async def upload_data(
     background_tasks: BackgroundTasks,
-    av_stock_file: UploadFile = File(..., description="Файл с доступными остатками"),
+    av_stock_file: UploadFile = File(
+        ..., description="Файл с доступными остатками по подразделению"
+    ),
     remains_file: UploadFile = File(..., description="Файл с остатками"),
     submissions_file: UploadFile = File(..., description="Файл с заявками"),
     payment_file: UploadFile = File(..., description="Файл с оплатой"),
     moved_file: UploadFile = File(..., description="Файл с перемещенными данными"),
+    free_stock: UploadFile = File(
+        default=..., description="Файл с доступными остатками"
+    ),
 ):
     """
     Принимает несколько Excel-файлов, обрабатывает их и загружает данные в базу данных.
@@ -428,6 +433,7 @@ async def upload_data(
         submissions_content = await submissions_file.read()
         payment_content = await payment_file.read()
         moved_content = await moved_file.read()
+        free_stock_content = await free_stock.read()
 
         # Запускаем синхронную функцию обработки и сохранения в базу данных
         # в отдельном потоке, чтобы не блокировать ASGI-сервер.
@@ -438,10 +444,12 @@ async def upload_data(
             submissions_content,
             payment_content,
             moved_content,
+            free_stock_content,
         )
-        background_tasks.add_task(
-            send_message_to_managers
-        )  # Добавляем задачу по отправке уведомлений
+        # TODO на разработке убирать, на проде вкоючать отправку сообщений
+        # background_tasks.add_task(
+        #     send_message_to_managers
+        # )  # Добавляем задачу по отправке уведомлений
 
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
