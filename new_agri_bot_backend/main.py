@@ -445,9 +445,9 @@ async def upload_data(
             free_stock_content,
         )
         # TODO на разработке убирать, на проде вкоючать отправку сообщений
-        # background_tasks.add_task(
-        #     send_message_to_managers
-        # )  # Добавляем задачу по отправке уведомлений
+        background_tasks.add_task(
+            send_message_to_managers
+        )  # Добавляем задачу по отправке уведомлений
 
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
