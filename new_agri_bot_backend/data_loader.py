@@ -14,6 +14,7 @@ from .tables import (
     Payment,
     MovedData,
     ProductGuide,
+    FreeStock,
 )
 
 # Импорты функций обработки данных
@@ -23,6 +24,7 @@ from .data_processing import (
     process_submissions,
     process_payment,
     process_moved_data,
+    process_free_stock,
 )
 
 # Пул потоков для выполнения синхронных операций Pandas
@@ -41,6 +43,7 @@ async def save_processed_data_to_db(
     submissions_content: bytes,
     payment_content: bytes,
     moved_content: bytes,
+    free_stock_content: bytes,
 ):
     """
     Асинхронная функция для обработки и сохранения данных в базу данных.
@@ -54,6 +57,7 @@ async def save_processed_data_to_db(
     df_submissions = await run_in_threadpool(process_submissions, submissions_content)
     df_payment = await run_in_threadpool(process_payment, payment_content)
     df_moved = await run_in_threadpool(process_moved_data, moved_content)
+    df_free_stock = await run_in_threadpool(process_free_stock, free_stock_content)
 
     print("Данные Excel обработаны в DataFrame. Начинаем сохранение в БД...")
 
@@ -82,7 +86,6 @@ async def save_processed_data_to_db(
             batch = product_guide_raw[i : i + BATCH_SIZE]
             rows = list(batch)
             await ProductGuide.insert().add(*rows).run()
-            # await ProductGuide.insert().add(*rows).run(node="DB_2")
 
     if not df_av_stock.empty:
         df_av_stock = df_av_stock.drop("active_substance", axis=1)
@@ -222,5 +225,32 @@ async def save_processed_data_to_db(
     #     print(f"Вставлено {len(records_product_guide)} записей в ProductGuide.")
     # else:
     #     print("DataFrame для ProductGuide пуст, пропускаем вставку.")
+
+    if not df_free_stock.empty:
+        await FreeStock.delete(force=True).run()
+        free_stock_data = df_free_stock.merge(
+            product_guide, on="product", how="left", suffixes=("_av", "_guide")
+        )
+        free_stock_data = free_stock_data.drop(
+            ["product", "line_of_business_guide", "active_substance"], axis=1
+        )
+        free_stock_data = free_stock_data.rename(columns={"id_guide": "product"})
+        free_stock_data = free_stock_data.rename(columns={"id_av": "id"})
+        free_stock_data = free_stock_data.rename(
+            columns={"line_of_business_av": "line_of_business"}
+        )
+        free_stock_data.dropna(subset=["product"], inplace=True)
+
+        records_free_stock = free_stock_data.to_dict(orient="records")
+        free_stock_raw = [FreeStock(**item) for item in records_free_stock]
+
+        for i in range(0, len(free_stock_raw), BATCH_SIZE):
+            batch = free_stock_raw[i : i + BATCH_SIZE]
+            rows = list(batch)
+            await FreeStock.insert().add(*rows).run()
+
+        print(f"Вставлено {len(records_free_stock)} записей в FreeStock.")
+    else:
+        print("DataFrame для AvailableStock пуст, пропускаем вставку.")
 
     print("Все данные успешно сохранены в базу данных.")
