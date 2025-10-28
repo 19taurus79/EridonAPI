@@ -232,7 +232,8 @@ class Tasks(Table):
 
 
 class FreeStock(Table):
-    product = Varchar()
+    id = UUID(primary_key=True)
+    product = ForeignKey(references=ProductGuide)
     division = Varchar()
     warehouse = Varchar()
     date_in_co = Varchar()

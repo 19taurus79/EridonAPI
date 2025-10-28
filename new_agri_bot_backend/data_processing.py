@@ -252,3 +252,96 @@ def process_moved_data(content: bytes) -> pd.DataFrame:
     moved = moved.dropna(how="all")
     moved = moved.reset_index(drop=True)
     return moved
+
+
+def process_free_stock(content: bytes) -> pd.DataFrame:
+    file = read_excel_content(content)
+    file = file.loc[3:]
+    file.columns = file.iloc[0]
+    file = file[1:].reset_index(drop=True)
+    new_columns = file.columns.tolist()
+    new_columns[10] = "Свободно"
+    new_columns[11] = "БухУч"
+    new_columns[12] = "СкладУч"
+    file.columns = new_columns
+    file = file.loc[:, file.columns.notna()]
+    file = file.iloc[2:].reset_index(drop=True)
+    # Define the columns to convert to numeric
+    numeric_cols = ["Свободно", "БухУч", "СкладУч"]
+
+    # Convert specified columns to numeric and fill NaN with 0
+    for col in numeric_cols:
+        if col in file.columns:
+            file[col] = (
+                file[col].apply(lambda x: pd.to_numeric(x, errors="coerce")).fillna(0)
+            )
+
+    # Fill NaN with empty strings in other columns
+    for col in file.columns:
+        if col not in numeric_cols:
+            file[col] = file[col].fillna("")
+    file["product"] = (
+        file.iloc[:, 0].astype(str)
+        + " "
+        + file.iloc[:, 1].astype(str)
+        + " "
+        + file.iloc[:, 2].astype(str)
+    )
+    # Get the names of the first three columns
+    cols_to_drop = file.columns[:3].tolist()
+
+    # Drop the columns
+    file = file.drop(columns=cols_to_drop)
+    # Get the current column names from the DataFrame
+    current_cols = file.columns.tolist()
+
+    # Define the new column names in the desired order
+    new_cols = [
+        "division",
+        "warehouse",
+        "date_in_co",
+        "line_of_business",
+        "free_qty",
+        "buh_qty",
+        "skl_qty",
+        "product",
+    ]
+
+    # Check if the number of current columns matches the number of new names
+    if len(current_cols) == len(new_cols):
+        # Create a dictionary mapping current names to new names based on order
+        rename_map = dict(zip(current_cols, new_cols))
+
+        # Rename the columns
+        file = file.rename(columns=rename_map)
+        print("Столбцы успешно переименованы.")
+    else:
+        print(
+            f"Ошибка: Количество текущих столбцов ({len(current_cols)}) не соответствует количеству новых имен ({len(new_cols)})."
+        )
+    # Get the current column names
+    current_cols = file.columns.tolist()
+
+    # Remove 'product' from the list
+    current_cols.remove("product")
+
+    # Create the new list with 'product' as the first column
+    new_order = ["product"] + current_cols
+
+    # Reindex the DataFrame with the new column order
+    file = file[new_order]
+    import uuid
+
+    # Generate a list of unique UUIDs, one for each row
+    uuids = [uuid.uuid4() for _ in range(len(file))]
+
+    # Insert the 'id' column at the beginning of the DataFrame
+    file.insert(0, "id", uuids)
+
+    # Define the columns to check
+    cols_to_check = ["free_qty", "buh_qty", "skl_qty"]
+
+    # Filter out rows where all specified columns are 0
+    # We keep rows where AT LEAST one of the specified columns is NOT 0
+    file = file[(file[cols_to_check] != 0).any(axis=1)].reset_index(drop=True)
+    return file
