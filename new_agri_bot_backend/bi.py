@@ -65,7 +65,7 @@ async def combined_endpoint():
     # Инициализация вспомогательных словарей внутри функции, чтобы не сохранять состояние между вызовами.
     remains_map = {}
     available_map = defaultdict(list)
-
+    orders_map = defaultdict(list)
     # 1. Запросы к базе данных
 
     # Получаем спрос по продуктам — сумма всех положительных значений различий для тех документов, где статус содержит "затвердже"
@@ -81,7 +81,22 @@ async def combined_endpoint():
         .group_by(Submissions.product.product)
         .run()
     )
-
+    orders = (
+        await Submissions.select(
+            Submissions.manager,
+            Submissions.client,
+            Submissions.contract_supplement,
+            Submissions.period,
+            Submissions.document_status,
+            Submissions.product.product.as_alias("product"),
+            Submissions.different,
+        )
+        .where(
+            (Submissions.different > 0)
+            & (Submissions.document_status.ilike("%затвердже%"))
+        )
+        .run()
+    )
     # Получаем остатки в бухучете продуктов с положительным количеством
     remains = (
         await Remains.select(
@@ -94,12 +109,16 @@ async def combined_endpoint():
     )
 
     # Получаем количество свободных товаров на складах по подразделениям
-    available = await FreeStock.select(
-        FreeStock.product.product.as_alias("product"),
-        FreeStock.division,
-        FreeStock.warehouse,
-        FreeStock.free_qty,
-    ).run()
+    available = (
+        await FreeStock.select(
+            FreeStock.product.product.as_alias("product"),
+            FreeStock.division,
+            FreeStock.warehouse,
+            FreeStock.free_qty,
+        )
+        .where(FreeStock.free_qty > 0)
+        .run()
+    )
 
     # 2. Подготовка словарей для удобной работы и быстрого поиска по продуктам
     # remains_map: ключ — товар, значение — остаток в бухучете
@@ -114,7 +133,18 @@ async def combined_endpoint():
                 "available": a["free_qty"],
             }
         )
-
+    for i in orders:
+        orders_map[i["product"]].append(
+            {
+                "manager": i["manager"],
+                "client": i["client"],
+                "contract_supplement": i["contract_supplement"],
+                "period": i["period"],
+                "document_status": i["document_status"],
+                "product": i["product"],
+                "qty": i["different"],
+            }
+        )
     # 3. Производим анализ спроса vs остатков и формируем две группы:
     #    - missing_but_available: есть спрос превышающий остатки, но имеются доступные запасы на складах
     #    - missing_and_unavailable: спрос превышает остатки, но свободных запасов на складах нет
@@ -128,7 +158,7 @@ async def combined_endpoint():
         qty_missing = (
             qty_needed - qty_remain
         )  # сколько не хватает для полного покрытия спроса
-
+        submissions = orders_map.get(product, [])
         if qty_missing > 0:
             # Сортируем доступные остатки по приоритету подразделений, чтобы важные подразделения шли первыми
             sorted_available_stock = sorted(
@@ -150,6 +180,7 @@ async def combined_endpoint():
                 "qty_remain": qty_remain,
                 "qty_missing": qty_missing,
                 "available_stock": sorted_available_stock,
+                "orders": submissions,
             }
 
             # Распределяем в соответствующий список
