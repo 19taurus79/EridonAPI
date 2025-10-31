@@ -72,13 +72,15 @@ async def combined_endpoint():
     demand = (
         await Submissions.select(
             Submissions.product.product.as_alias("product"),
+            Submissions.line_of_business,
             Sum(Submissions.different).as_alias("qty"),
         )
         .where(
             (Submissions.different > 0)
             & (Submissions.document_status.ilike("%затвердже%"))
         )
-        .group_by(Submissions.product.product)
+        .group_by(Submissions.product.product, Submissions.line_of_business)
+        .order_by(Submissions.line_of_business, Submissions.product.product)
         .run()
     )
     orders = (
@@ -153,6 +155,7 @@ async def combined_endpoint():
 
     for d in demand:
         product = d["product"]
+        line_of_business = d["line_of_business"]
         qty_needed = d["qty"]
         qty_remain = remains_map.get(product, 0)  # остаток в бухучете
         qty_missing = (
@@ -176,6 +179,7 @@ async def combined_endpoint():
             # Формируем итоговую запись по продукту с оставшимися параметрами
             combined_item = {
                 "product": product,
+                "line_of_business": line_of_business,
                 "qty_needed": qty_needed,
                 "qty_remain": qty_remain,
                 "qty_missing": qty_missing,
