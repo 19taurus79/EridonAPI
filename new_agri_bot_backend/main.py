@@ -444,7 +444,6 @@ async def upload_data(
             moved_content,
             free_stock_content,
         )
-        # TODO на разработке убирать, на проде вкоючать отправку сообщений
         background_tasks.add_task(
             send_message_to_managers
         )  # Добавляем задачу по отправке уведомлений
