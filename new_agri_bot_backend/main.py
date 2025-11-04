@@ -416,6 +416,8 @@ async def upload_data(
     free_stock: UploadFile = File(
         default=..., description="Файл с доступными остатками"
     ),
+    moved: UploadFile = File(default=..., description="Перемещено"),
+    ordered: UploadFile = File(default=..., description="Заказано"),
 ):
     """
     Принимает несколько Excel-файлов, обрабатывает их и загружает данные в базу данных.
@@ -432,6 +434,8 @@ async def upload_data(
         payment_content = await payment_file.read()
         moved_content = await moved_file.read()
         free_stock_content = await free_stock.read()
+        moved_raw = await moved.read()
+        ordered_raw = await ordered.read()
 
         # Запускаем синхронную функцию обработки и сохранения в базу данных
         # в отдельном потоке, чтобы не блокировать ASGI-сервер.
@@ -443,6 +447,8 @@ async def upload_data(
             payment_content,
             moved_content,
             free_stock_content,
+            moved_raw,
+            ordered_raw,
         )
         background_tasks.add_task(
             send_message_to_managers
