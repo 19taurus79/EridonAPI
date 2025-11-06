@@ -88,6 +88,13 @@ async def save_processed_data_to_db(
     df_moved = await run_in_threadpool(process_moved_data, moved_content)
     df_free_stock = await run_in_threadpool(process_free_stock, free_stock_content)
 
+    # --- ГЛОБАЛЬНАЯ НОРМАЛИЗАЦИЯ: Очищаем 'product' во всех DataFrame ---
+    df_av_stock["product"] = df_av_stock["product"].str.strip()
+    df_remains["product"] = df_remains["product"].str.strip()
+    df_submissions["product"] = df_submissions["product"].str.strip()
+    df_moved["product"] = df_moved["product"].str.strip()
+    df_free_stock["product"] = df_free_stock["product"].str.strip()
+
     print("Данные Excel обработаны в DataFrame. Начинаем сохранение в БД...")
 
     # print("Старі дані з таблиць видалено. Починаємо вставку нових даних...")
@@ -99,6 +106,10 @@ async def save_processed_data_to_db(
     ].rename(columns={"active_ingredient": "active_substance"})
     pr = pd.concat([av_stock_tmp, submissions_tmp, remains_tmp], ignore_index=True)
     product_guide = pr.drop_duplicates(["product"]).reset_index(drop=True)
+    
+    # --- НОРМАЛИЗАЦИЯ: Очищаем 'product' от лишних пробелов ---
+    product_guide["product"] = product_guide["product"].str.strip()
+    
     product_guide.insert(0, "id", product_guide.apply(lambda _: uuid.uuid4(), axis=1))
 
     # 3. Вставка новых данных из DataFrame в соответствующие таблицы Piccolo
@@ -273,16 +284,61 @@ async def save_processed_data_to_db(
         try:
             manual_matches_list = json.loads(manual_matches_json)
             if manual_matches_list:
-                df_manual_matches = pd.DataFrame(manual_matches_list["matched_data"])
+                # Сначала создаем DataFrame
+                df_manual_matches = pd.DataFrame(
+                    manual_matches_list.get("matched_data")
+                    or manual_matches_list.get("matched_list", [])
+                )
                 print(
                     f"Создан DataFrame 'df_manual_matches' из ручных сопоставлений, размер: {df_manual_matches.shape}."
                 )
-                # Теперь вы можете работать с df_manual_matches дальше по коду.
-        except json.JSONDecodeError:
-            print("Ошибка: не удалось декодировать JSON из manual_matches_json.")
+        except (json.JSONDecodeError, AttributeError) as e:
+            print(f"Ошибка при парсинге JSON из manual_matches_json: {e}")
+
+    # Теперь, когда df_manual_matches может быть заполнен, проверяем его
+    if not df_manual_matches.empty:
+        try:
+            # 1. Удаляем ненужные колонки
+            columns_to_delete = [
+                "Номенклатура",
+                "Ознака партії",
+                "Сезон закупівлі",
+                "Примечание_заказано",
+                "Перемещено",
+                "Источник",
+            ]
+            df_matches = df_manual_matches.drop(
+                columns=columns_to_delete, errors="ignore"
+            )
+
+            # 2. Переименовываем колонки для соответствия таблице MovedData
+            rename_map = {
+                "Заявка на відвантаження": "order",
+                "Заказано": "qt_order",
+                "Рік договору": "period",  # Пример, возможно нужно будет скорректировать
+                "Партія номенклатури": "party_sign",
+                "Вид діяльності": "line_of_business",
+                "Дата": "date",
+                "Товар": "product",
+                "Договор": "contract",
+                "Количество": "qt_moved",
+            }
+            df_matches = df_matches.rename(columns=rename_map)
+
+            # --- НОРМАЛИЗАЦИЯ: Очищаем 'product' от лишних пробелов перед сопоставлением ---
+            df_matches["product"] = df_matches["product"].str.strip()
+
+            # 3. Сопоставляем с product_guide для получения product_id
+            # Создаем временный справочник для сопоставления
+            product_id_map = product_guide.set_index("product")["id"]
+            df_matches["product_id"] = df_matches["product"].map(product_id_map)
+
+            print("DataFrame df_matches после обработки и сопоставления:")
+            print(df_matches.head())
+
         except Exception as e:
-            print(f"Ошибка при обработке ручных сопоставлений: {e}")
+            print(f"Ошибка при финальной обработке df_manual_matches: {e}")
     else:
-        print("Данные для ручного сопоставления не предоставлены, пропускаем.")
+        print("Данные для ручного сопоставления не предоставлены или DataFrame пуст.")
 
     print("Все данные успешно сохранены в базу данных.")
