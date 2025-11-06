@@ -3,14 +3,17 @@ import json
 import io
 import os
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Optional, List, Dict
+
+import pandas as pd
 import uvicorn
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 from piccolo.columns.defaults import TimestampNow
-
+from . import models, processing
 from .tables import Remains, Events
 from aiogram.types import FSInputFile, BufferedInputFile
 from fastapi import (
@@ -22,6 +25,7 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     Query,
+    Form,
     Request,
     Header,
 )
@@ -92,6 +96,8 @@ SCOPES = ["https://www.googleapis.com/auth/calendar"]
 CALENDAR_ID = "dca9aa4129540be8ec133f20092e7f0a500897595fc1736cd295a739d9dc9466@group.calendar.google.com"  # или укажи явный ID календаря
 
 admin_router = create_admin([Remains], allowed_hosts=["localhost"])
+
+sessions = {}
 
 
 async def create_calendar_event(data: DeliveryRequest) -> Optional[str]:
@@ -400,6 +406,217 @@ async def send_telegram_message(
 
 # --- Маршрут для загрузки и обработки данных ---
 @app.post(
+    "/upload_ordered_moved", response_model=models.UploadResponse, tags=["Processing"]
+)
+async def upload_and_process_files(
+    ordered_file: UploadFile = File(..., description="Файл 'Заказано.xlsx'"),
+    moved_file: UploadFile = File(..., description="Файл 'Перемещено.xlsx'"),
+):
+    try:
+        _, leftovers, matched_list = processing.process_uploaded_files(
+            ordered_file.file, moved_file.file
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Ошибка при обработке файлов: {e}")
+
+    session_id = str(uuid.uuid4())
+
+    for req_id, data in leftovers.items():
+        data["current_moved"] = pd.DataFrame(data["current_moved"]).set_index("index")
+        data["current_notes"] = pd.DataFrame(data["current_notes"]).set_index("index")
+
+    sessions[session_id] = {"leftovers": leftovers, "matched_list": matched_list}
+
+    response_leftovers = processing.convert_numpy_types(leftovers)
+    for req_id, data in response_leftovers.items():
+        data["current_moved"] = data["current_moved"].reset_index().to_dict("records")
+        data["current_notes"] = data["current_notes"].reset_index().to_dict("records")
+
+    return {"session_id": session_id, "leftovers": response_leftovers}
+
+
+@app.post(
+    "/process/{session_id}/manual_match",
+    response_model=models.MatchResponse,
+    tags=["Processing"],
+)
+async def manual_match(session_id: str, match_input: models.ManualMatchInput):
+    """
+    Эндпоинт для ручного сопоставления с УЛУЧШЕННЫМ АЛГОРИТМОМ.
+    Теперь поддерживает частичное сопоставление (когда суммы не равны).
+    """
+    if session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Сессия не найдена.")
+
+    session_data = sessions[session_id]
+    request_id = match_input.request_id
+
+    if request_id not in session_data["leftovers"]:
+        raise HTTPException(
+            status_code=404, detail=f"Заявка с ID {request_id} не найдена."
+        )
+
+    leftover_data = session_data["leftovers"][request_id]
+    current_moved_df = leftover_data["current_moved"]
+    current_notes_df = leftover_data["current_notes"]
+
+    try:
+        selected_moved = current_moved_df.loc[match_input.selected_moved_indices]
+        selected_notes = current_notes_df.loc[match_input.selected_notes_indices]
+    except KeyError:
+        raise HTTPException(
+            status_code=400,
+            detail="Ошибка: одна или несколько выбранных позиций уже были сопоставлены ранее.",
+        )
+
+    sum_moved = selected_moved["Перемещено"].sum()
+    sum_notes = selected_notes["Количество_в_примечании"].sum()
+    newly_matched = []
+    product = leftover_data["product"]
+
+    # --- ИСПРАВЛЕННЫЙ АЛГОРИТМ ---
+
+    # Сценарий 1: Один-ко-Многим (одно перемещение, несколько примечаний)
+    if len(selected_moved) == 1 and len(selected_notes) >= 1:
+        main_moved_row = selected_moved.iloc[0]
+        main_moved_index = selected_moved.index[0]
+
+        if sum_notes > main_moved_row["Перемещено"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ошибка: Сумма примечаний ({sum_notes}) больше, чем количество в перемещении ({main_moved_row['Перемещено']}).",
+            )
+
+        for _, note_row in selected_notes.iterrows():
+            record = main_moved_row.to_dict()
+            record["Договор"] = note_row["Договор"]
+            record["Количество"] = note_row["Количество_в_примечании"]
+            record["Источник"] = "Ручное сопоставление"
+            newly_matched.append(record)
+
+        # Обновляем состояние
+        current_notes_df.drop(
+            match_input.selected_notes_indices, inplace=True
+        )  # Удаляем все выбранные примечания
+
+        remaining_qty = main_moved_row["Перемещено"] - sum_notes
+        if remaining_qty == 0:
+            current_moved_df.drop(
+                main_moved_index, inplace=True
+            )  # Удаляем перемещение, если оно исчерпано
+        else:
+            current_moved_df.loc[main_moved_index, "Перемещено"] = (
+                remaining_qty  # Уменьшаем количество
+            )
+
+    # Сценарий 2: Многие-к-Одному (несколько перемещений, одно примечание)
+    elif len(selected_moved) > 1 and len(selected_notes) == 1:
+        main_note_row = selected_notes.iloc[0]
+        main_note_index = selected_notes.index[0]
+
+        if sum_moved > main_note_row["Количество_в_примечании"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ошибка: Сумма перемещений ({sum_moved}) больше, чем количество в примечании ({main_note_row['Количество_в_примечании']}).",
+            )
+
+        for _, moved_row in selected_moved.iterrows():
+            record = moved_row.to_dict()
+            record["Договор"] = main_note_row["Договор"]
+            record["Количество"] = moved_row["Перемещено"]
+            record["Источник"] = "Ручное сопоставление"
+            newly_matched.append(record)
+
+        # Обновляем состояние
+        current_moved_df.drop(
+            match_input.selected_moved_indices, inplace=True
+        )  # Удаляем все выбранные перемещения
+
+        remaining_qty = main_note_row["Количество_в_примечании"] - sum_moved
+        if remaining_qty == 0:
+            current_notes_df.drop(
+                main_note_index, inplace=True
+            )  # Удаляем примечание, если оно исчерпано
+        else:
+            current_notes_df.loc[main_note_index, "Количество_в_примечании"] = (
+                remaining_qty  # Уменьшаем количество
+            )
+
+    # Сценарий 3: Один-к-Одному (может быть с разным количеством)
+    elif len(selected_moved) == 1 and len(selected_notes) == 1:
+        main_moved_row = selected_moved.iloc[0]
+        main_moved_index = selected_moved.index[0]
+        main_note_row = selected_notes.iloc[0]
+        main_note_index = selected_notes.index[0]
+
+        matched_qty = min(sum_moved, sum_notes)
+
+        record = main_moved_row.to_dict()
+        record["Договор"] = main_note_row["Договор"]
+        record["Количество"] = matched_qty
+        record["Источник"] = "Ручное сопоставление"
+        newly_matched.append(record)
+
+        # Обновляем состояние
+        rem_moved = sum_moved - matched_qty
+        rem_notes = sum_notes - matched_qty
+
+        if rem_moved == 0:
+            current_moved_df.drop(main_moved_index, inplace=True)
+        else:
+            current_moved_df.loc[main_moved_index, "Перемещено"] = rem_moved
+
+        if rem_notes == 0:
+            current_notes_df.drop(main_note_index, inplace=True)
+        else:
+            current_notes_df.loc[main_note_index, "Количество_в_примечании"] = rem_notes
+
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Неподдерживаемая комбинация. Поддерживаются только сопоставления 'Один-к-Одному', 'Один-ко-Многим' и 'Многие-к-Одному'.",
+        )
+
+    # --- КОНЕЦ ИСПРАВЛЕННОГО АЛГОРИТМА ---
+
+    session_data["matched_list"].extend(newly_matched)
+
+    if leftover_data["current_moved"].empty or leftover_data["current_notes"].empty:
+        del session_data["leftovers"][request_id]
+
+    return {
+        "message": "Ручное сопоставление успешно обработано",
+        "session_id": session_id,
+        "session_data": session_data,
+    }
+
+
+@app.get(
+    "/process/{session_id}/results",
+    response_model=models.ResultsResponse,
+    tags=["Processing"],
+)
+async def get_results(session_id: str):
+    if session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Сессия не найдена.")
+
+    session_data = sessions[session_id]
+
+    unmatched_by_request = {}
+    response_leftovers = processing.convert_numpy_types(session_data["leftovers"])
+    for req_id, data in response_leftovers.items():
+        unmatched_by_request[req_id] = {
+            "unmatched_moved": data["current_moved"].reset_index().to_dict("records"),
+            "unmatched_notes": data["current_notes"].reset_index().to_dict("records"),
+        }
+
+    return {
+        "matched_data": session_data["matched_list"],
+        "unmatched_by_request": unmatched_by_request,
+    }
+
+
+@app.post(
     "/upload-data",
     summary="Загрузить и обработать Excel-файлы",
     response_description="Статус загрузки данных и уведомление",
@@ -416,8 +633,9 @@ async def upload_data(
     free_stock: UploadFile = File(
         default=..., description="Файл с доступными остатками"
     ),
-    moved: UploadFile = File(default=..., description="Перемещено"),
-    ordered: UploadFile = File(default=..., description="Заказано"),
+    manual_matches_json: Optional[str] = Form(
+        None, description="JSON-строка с результатами ручного сопоставления"
+    ),
 ):
     """
     Принимает несколько Excel-файлов, обрабатывает их и загружает данные в базу данных.
@@ -434,8 +652,6 @@ async def upload_data(
         payment_content = await payment_file.read()
         moved_content = await moved_file.read()
         free_stock_content = await free_stock.read()
-        moved_raw = await moved.read()
-        ordered_raw = await ordered.read()
 
         # Запускаем синхронную функцию обработки и сохранения в базу данных
         # в отдельном потоке, чтобы не блокировать ASGI-сервер.
@@ -447,8 +663,7 @@ async def upload_data(
             payment_content,
             moved_content,
             free_stock_content,
-            moved_raw,
-            ordered_raw,
+            manual_matches_json,
         )
         background_tasks.add_task(
             send_message_to_managers

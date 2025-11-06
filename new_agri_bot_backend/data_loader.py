@@ -1,6 +1,7 @@
 # app/data_loader.py
 import asyncio
 import uuid
+import json
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 import numpy as np
@@ -71,8 +72,7 @@ async def save_processed_data_to_db(
     payment_content: bytes,
     moved_content: bytes,
     free_stock_content: bytes,
-    moved_raw: bytes,
-    ordered_raw: bytes,
+    manual_matches_json: str = None,
 ):
     """
     Асинхронная функция для обработки и сохранения данных в базу данных.
@@ -87,8 +87,6 @@ async def save_processed_data_to_db(
     df_payment = await run_in_threadpool(process_payment, payment_content)
     df_moved = await run_in_threadpool(process_moved_data, moved_content)
     df_free_stock = await run_in_threadpool(process_free_stock, free_stock_content)
-    df_moved_raw = await run_in_threadpool(process_moved_raw_data, moved_raw)
-    df_ordered_raw = await run_in_threadpool(process_ordered_raw_data, ordered_raw)
 
     print("Данные Excel обработаны в DataFrame. Начинаем сохранение в БД...")
 
@@ -269,183 +267,22 @@ async def save_processed_data_to_db(
     else:
         print("DataFrame для FreeStock пуст, пропускаем вставку.")
 
-    if not df_moved_raw.empty and not df_ordered_raw.empty:
-        merged_df = pd.merge(
-            df_ordered_raw,
-            df_moved_raw,
-            on=["Заявка на відвантаження", "Номенклатура"],
-            how="outer",
-            suffixes=("_ordered", "_moved"),
-        )
-
-        cols_to_coalesce = [
-            c.replace("_ordered", "")
-            for c in merged_df.columns
-            if c.endswith("_ordered")
-        ]
-
-        for col_base in cols_to_coalesce:
-            col_ordered = f"{col_base}_ordered"
-            col_moved = f"{col_base}_moved"
-
-            if col_ordered in merged_df.columns and col_moved in merged_df.columns:
-                merged_df[col_base] = np.where(
-                    pd.notna(merged_df[col_ordered]) & (merged_df[col_ordered] != ""),
-                    merged_df[col_ordered],
-                    merged_df[col_moved],
+    # Создаем DataFrame из данных ручного сопоставления, если они переданы
+    df_manual_matches = pd.DataFrame()
+    if manual_matches_json:
+        try:
+            manual_matches_list = json.loads(manual_matches_json)
+            if manual_matches_list:
+                df_manual_matches = pd.DataFrame(manual_matches_list["matched_data"])
+                print(
+                    f"Создан DataFrame 'df_manual_matches' из ручных сопоставлений, размер: {df_manual_matches.shape}."
                 )
-                merged_df.drop(columns=[col_ordered, col_moved], inplace=True)
-
-        test_data = merged_df.iloc[2970:].copy()
-
-        if "Примечание_перемещено" in test_data.columns:
-            test_data = test_data.drop(columns=["Примечание_перемещено"])
-
-        test_data["Товар"] = test_data.apply(
-            lambda row: f"{row.get('Номенклатура', '')} {row.get('Ознака партії', '')} {row.get('Сезон закупівлі', '')}".strip(),
-            axis=1,
-        )
-
-        test_data["Заказано"] = pd.to_numeric(test_data["Заказано"], errors="coerce")
-        test_data["Перемещено"] = pd.to_numeric(
-            test_data["Перемещено"], errors="coerce"
-        )
-        test_data.dropna(subset=["Перемещено", "Партія номенклатури"], inplace=True)
-        test_data = test_data[test_data["Партія номенклатури"] != ""].copy()
-        test_data["Перемещено"] = test_data["Перемещено"].astype(int)
-
-        # --- Этап 3: Автоматическая обработка и сопоставление ---
-        matched_list = []
-        leftovers = {}
-        all_requests = test_data["Заявка на відвантаження"].dropna().unique()
-
-        for request_id in all_requests:
-            request_df = test_data[
-                test_data["Заявка на відвантаження"] == request_id
-            ].copy()
-            if request_df.empty:
-                continue
-
-            total_ordered = request_df.groupby("Товар")["Заказано"].first().sum()
-            total_moved = request_df["Перемещено"].sum()
-            product = request_df["Товар"].iloc[0]
-            current_moved = request_df.copy()
-            current_notes = pd.DataFrame(columns=["Договор", "Количество_в_примечании"])
-            note_text = ""
-
-            if "Примечание_заказано" in current_moved.columns and not pd.isna(
-                current_moved["Примечание_заказано"].iloc[0]
-            ):
-                note_text = current_moved["Примечание_заказано"].iloc[0]
-                note_matches = re.findall(r"([А-Я]{2}-\d{8})-(\d+)", str(note_text))
-                if note_matches:
-                    current_notes = pd.DataFrame(
-                        note_matches, columns=["Договор", "Количество_в_примечании"]
-                    )
-                    current_notes["Количество_в_примечании"] = pd.to_numeric(
-                        current_notes["Количество_в_примечании"]
-                    )
-
-            if not current_moved.empty and not current_notes.empty:
-                moved_counts = current_moved["Перемещено"].value_counts()
-                notes_counts = current_notes["Количество_в_примечании"].value_counts()
-                unique_qtys = moved_counts[(moved_counts == 1)].index.intersection(
-                    notes_counts[(notes_counts == 1)].index
-                )
-
-                if not unique_qtys.empty:
-                    unique_moved = current_moved[
-                        current_moved["Перемещено"].isin(unique_qtys)
-                    ]
-                    unique_notes = current_notes[
-                        current_notes["Количество_в_примечании"].isin(unique_qtys)
-                    ]
-                    matches_df = pd.merge(
-                        unique_moved,
-                        unique_notes,
-                        left_on="Перемещено",
-                        right_on="Количество_в_примечании",
-                    )
-
-                    for _, match_row in matches_df.iterrows():
-                        matched_list.append(
-                            {
-                                "Договор": match_row["Договор"],
-                                "Товар": product,
-                                "Партия": match_row["Партія номенклатури"],
-                                "Количество": match_row["Перемещено"],
-                                "Вид деятельности": match_row["Вид діяльності"],
-                                "Источник": "Автоматически",
-                            }
-                        )
-
-                    current_moved = current_moved[
-                        ~current_moved["Перемещено"].isin(unique_qtys)
-                    ]
-                    current_notes = current_notes[
-                        ~current_notes["Количество_в_примечании"].isin(unique_qtys)
-                    ]
-
-            if not current_moved.empty and not current_notes.empty:
-                if len(current_moved) == 1:
-                    moved_qty = current_moved["Перемещено"].iloc[0]
-                    notes_sum = current_notes["Количество_в_примечании"].sum()
-                    if moved_qty == notes_sum:
-                        moved_row_main = current_moved.iloc[0]
-                        for _, note_row in current_notes.iterrows():
-                            matched_list.append(
-                                {
-                                    "Договор": note_row["Договор"],
-                                    "Товар": product,
-                                    "Партия": moved_row_main["Партія номенклатури"],
-                                    "Количество": note_row["Количество_в_примечании"],
-                                    "Вид деятельности": moved_row_main[
-                                        "Вид діяльності"
-                                    ],
-                                    "Источник": "Автоматически",
-                                }
-                            )
-                        current_moved = pd.DataFrame(columns=current_moved.columns)
-                        current_notes = pd.DataFrame(columns=current_notes.columns)
-
-                if len(current_notes) == 1 and not current_moved.empty:
-                    note_qty = current_notes["Количество_в_примечании"].iloc[0]
-                    moved_sum = current_moved["Перемещено"].sum()
-                    if note_qty == moved_sum:
-                        note_row_main = current_notes.iloc[0]
-                        for _, moved_row in current_moved.iterrows():
-                            matched_list.append(
-                                {
-                                    "Договор": note_row_main["Договор"],
-                                    "Товар": product,
-                                    "Партия": moved_row["Партія номенклатури"],
-                                    "Количество": moved_row["Перемещено"],
-                                    "Вид деятельности": moved_row["Вид діяльності"],
-                                    "Источник": "Автоматически",
-                                }
-                            )
-                        current_moved = pd.DataFrame(columns=current_moved.columns)
-                        current_notes = pd.DataFrame(columns=current_notes.columns)
-
-            if not current_moved.empty and not current_notes.empty:
-                leftovers[request_id] = {
-                    "product": product,
-                    "note_text": note_text,
-                    "total_ordered": total_ordered,
-                    "total_moved": total_moved,
-                    "current_moved": [
-                        dict(row, index=idx) for idx, row in current_moved.iterrows()
-                    ],
-                    "current_notes": [
-                        dict(row, index=idx) for idx, row in current_notes.iterrows()
-                    ],
-                }
-
-        session_id = "some_unique_session_id"
-
-        leftovers = convert_numpy_types(leftovers)
-        matched_list = convert_numpy_types(matched_list)
+                # Теперь вы можете работать с df_manual_matches дальше по коду.
+        except json.JSONDecodeError:
+            print("Ошибка: не удалось декодировать JSON из manual_matches_json.")
+        except Exception as e:
+            print(f"Ошибка при обработке ручных сопоставлений: {e}")
     else:
-        print("DataFrame для OrderedMoved пуст, пропускаем вставку.")
+        print("Данные для ручного сопоставления не предоставлены, пропускаем.")
 
     print("Все данные успешно сохранены в базу данных.")
