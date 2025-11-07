@@ -106,10 +106,10 @@ async def save_processed_data_to_db(
     ].rename(columns={"active_ingredient": "active_substance"})
     pr = pd.concat([av_stock_tmp, submissions_tmp, remains_tmp], ignore_index=True)
     product_guide = pr.drop_duplicates(["product"]).reset_index(drop=True)
-    
-    # --- НОРМАЛИЗАЦИЯ: Очищаем 'product' от лишних пробелов ---
+
+    # --- НОРМАЛИЗАЦИЯ: Очищаем 'product' от лишних пробелов перед сопоставлением ---
     product_guide["product"] = product_guide["product"].str.strip()
-    
+
     product_guide.insert(0, "id", product_guide.apply(lambda _: uuid.uuid4(), axis=1))
 
     # 3. Вставка новых данных из DataFrame в соответствующие таблицы Piccolo
@@ -289,6 +289,12 @@ async def save_processed_data_to_db(
                     manual_matches_list.get("matched_data")
                     or manual_matches_list.get("matched_list", [])
                 )
+                # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Явное преобразование колонки 'Дата' в datetime ---
+                if "Дата" in df_manual_matches.columns:
+                    df_manual_matches["Дата"] = pd.to_datetime(
+                        df_manual_matches["Дата"], errors="coerce"
+                    )
+
                 print(
                     f"Создан DataFrame 'df_manual_matches' из ручных сопоставлений, размер: {df_manual_matches.shape}."
                 )
@@ -325,6 +331,11 @@ async def save_processed_data_to_db(
             }
             df_matches = df_matches.rename(columns=rename_map)
 
+            # Приводим ключевые колонки к строковому типу для надежного сравнения
+            for col in ["product", "contract", "period"]:
+                if col in df_matches.columns:
+                    df_matches[col] = df_matches[col].astype(str).str.strip()
+
             # --- НОРМАЛИЗАЦИЯ: Очищаем 'product' от лишних пробелов перед сопоставлением ---
             df_matches["product"] = df_matches["product"].str.strip()
 
@@ -333,8 +344,81 @@ async def save_processed_data_to_db(
             product_id_map = product_guide.set_index("product")["id"]
             df_matches["product_id"] = df_matches["product"].map(product_id_map)
 
-            print("DataFrame df_matches после обработки и сопоставления:")
-            print(df_matches.head())
+            # 4. Заменяем product_id на id из product_guide
+            # df_matches["product"] = df_matches["product_id"]
+            # df_matches = df_matches.drop(columns=["product_id"])
+
+            # --- СВЕРКА С БАЗОЙ ДАННЫХ ---
+            # 1. Загружаем существующие данные из MovedData
+            existing_moved_data_list = await MovedData.select(
+                MovedData.product, MovedData.contract, MovedData.period
+            ).run()
+            df_moved_from_db = pd.DataFrame(existing_moved_data_list)
+
+            df_new_matches_to_add = pd.DataFrame()
+
+            if not df_moved_from_db.empty:
+                # 2. Создаем композитный ключ для сравнения
+                key_cols = ["product", "contract", "period"]
+                for col in key_cols:
+                    df_moved_from_db[col] = (
+                        df_moved_from_db[col].astype(str).str.strip()
+                    )
+
+                df_matches["composite_key"] = df_matches[key_cols].apply(
+                    lambda row: "_".join(row.values.astype(str)), axis=1
+                )
+                df_moved_from_db["composite_key"] = df_moved_from_db[key_cols].apply(
+                    lambda row: "_".join(row.values.astype(str)), axis=1
+                )
+
+                # 3. Находим записи, которых нет в БД
+                existing_keys = set(df_moved_from_db["composite_key"])
+                df_new_matches_to_add = df_matches[
+                    ~df_matches["composite_key"].isin(existing_keys)
+                ].copy()
+                df_new_matches_to_add.drop(columns=["composite_key"], inplace=True)
+
+            else:
+                # Если таблица в БД пуста, то все записи из df_matches являются новыми
+                df_new_matches_to_add = df_matches.copy()
+
+            # 4. Записываем в БД только новые записи
+            if not df_new_matches_to_add.empty:
+                print(
+                    f"Найдено {len(df_new_matches_to_add)} новых записей для добавления в MovedData."
+                )
+
+                # Заменяем NaN на None перед записью
+                df_new_matches_to_add = df_new_matches_to_add.replace({np.nan: None})
+
+                # --- НАДЕЖНОЕ ПРЕОБРАЗОВАНИЕ ТИПОВ В СТРОКУ ---
+                # Применяем функцию, которая корректно обрабатывает числа и None.
+                # Это необходимо, т.к. колонка типа 'object' может содержать int/float.
+                cols_to_str = [
+                    "qt_order", "qt_moved", "product_id", "order", 
+                    "party_sign", "period", "contract", "line_of_business"
+                ]
+                for col in cols_to_str:
+                    if col in df_new_matches_to_add.columns:
+                        df_new_matches_to_add[col] = df_new_matches_to_add[col].apply(
+                            lambda x: str(x) if pd.notna(x) else None
+                        )
+
+                records_to_add = df_new_matches_to_add.to_dict(orient="records")
+
+                # Убираем лишние ключи, которых нет в модели MovedData
+                # valid_columns = MovedData._meta.column_names
+                # cleaned_records = [{k: v for k, v in rec.items() if k in valid_columns} for rec in records_to_add]
+
+                await MovedData.insert(
+                    *[MovedData(**rec) for rec in records_to_add]
+                ).run()
+                print("Новые записи успешно добавлены в MovedData.")
+            else:
+                print("Новых записей для добавления в MovedData не найдено.")
+
+            # Теперь df_new_matches_to_add доступен для вашей дальнейшей обработки
 
         except Exception as e:
             print(f"Ошибка при финальной обработке df_manual_matches: {e}")
