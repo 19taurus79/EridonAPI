@@ -137,111 +137,115 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[str, Dict, List]:
     all_requests = test_data["Заявка на відвантаження"].dropna().unique()
 
     for request_id in all_requests:
-        request_df = test_data[
-            test_data["Заявка на відвантаження"] == request_id
-        ].copy()
-        if request_df.empty:
+        try:
+            request_df = test_data[
+                test_data["Заявка на відвантаження"] == request_id
+            ].copy()
+            if request_df.empty:
+                continue
+
+            total_ordered = request_df.groupby("Товар")["Заказано"].first().sum()
+            total_moved = request_df["Перемещено"].sum()
+            product = request_df["Товар"].iloc[0]
+            current_moved = request_df.copy()
+            current_notes = pd.DataFrame(columns=["Договор", "Количество_в_примечании"])
+            note_text = ""
+
+            if "Примечание_заказано" in current_moved.columns and not pd.isna(
+                current_moved["Примечание_заказано"].iloc[0]
+            ):
+                note_text = current_moved["Примечание_заказано"].iloc[0]
+                note_matches = re.findall(r"([А-Я]{2}-\d{8})-(\d+)", str(note_text))
+                if note_matches:
+                    current_notes = pd.DataFrame(
+                        note_matches, columns=["Договор", "Количество_в_примечании"]
+                    )
+                    current_notes["Количество_в_примечании"] = pd.to_numeric(
+                        current_notes["Количество_в_примечании"]
+                    )
+
+            if not current_moved.empty and not current_notes.empty:
+                moved_counts = current_moved["Перемещено"].value_counts()
+                notes_counts = current_notes["Количество_в_примечании"].value_counts()
+                unique_qtys = moved_counts[(moved_counts == 1)].index.intersection(
+                    notes_counts[(notes_counts == 1)].index
+                )
+
+                if not unique_qtys.empty:
+                    unique_moved = current_moved[
+                        current_moved["Перемещено"].isin(unique_qtys)
+                    ]
+                    unique_notes = current_notes[
+                        current_notes["Количество_в_примечании"].isin(unique_qtys)
+                    ]
+                    matches_df = pd.merge(
+                        unique_moved,
+                        unique_notes,
+                        left_on="Перемещено",
+                        right_on="Количество_в_примечании",
+                    )
+
+                    for _, match_row in matches_df.iterrows():
+                        record = match_row.to_dict()
+                        record["Количество"] = record["Перемещено"]
+                        record["Источник"] = "Автоматически"
+                        record.pop("Количество_в_примечании", None)
+                        matched_list.append(record)
+
+                    current_moved = current_moved[
+                        ~current_moved["Перемещено"].isin(unique_qtys)
+                    ]
+                    current_notes = current_notes[
+                        ~current_notes["Количество_в_примечании"].isin(unique_qtys)
+                    ]
+
+            if not current_moved.empty and not current_notes.empty:
+                if len(current_moved) == 1:
+                    moved_qty = current_moved["Перемещено"].iloc[0]
+                    notes_sum = current_notes["Количество_в_примечании"].sum()
+                    if moved_qty == notes_sum:
+                        moved_row_main = current_moved.iloc[0]
+                        for _, note_row in current_notes.iterrows():
+                            record = moved_row_main.to_dict()
+                            record["Договор"] = note_row["Договор"]
+                            record["Количество"] = note_row["Количество_в_примечании"]
+                            record["Источник"] = "Автоматически"
+                            matched_list.append(record)
+
+                        current_moved = pd.DataFrame(columns=current_moved.columns)
+                        current_notes = pd.DataFrame(columns=current_notes.columns)
+
+                if len(current_notes) == 1 and not current_moved.empty:
+                    note_qty = current_notes["Количество_в_примечании"].iloc[0]
+                    moved_sum = current_moved["Перемещено"].sum()
+                    if note_qty == moved_sum:
+                        note_row_main = current_notes.iloc[0]
+                        for _, moved_row in current_moved.iterrows():
+                            record = moved_row.to_dict()
+                            record["Договор"] = note_row_main["Договор"]
+                            record["Количество"] = moved_row["Перемещено"]
+                            record["Источник"] = "Автоматически"
+                            matched_list.append(record)
+
+                        current_moved = pd.DataFrame(columns=current_moved.columns)
+                        current_notes = pd.DataFrame(columns=current_notes.columns)
+
+            if not current_moved.empty and not current_notes.empty:
+                leftovers[request_id] = {
+                    "product": product,
+                    "note_text": note_text,
+                    "total_ordered": total_ordered,
+                    "total_moved": total_moved,
+                    "current_moved": [
+                        dict(row, index=idx) for idx, row in current_moved.iterrows()
+                    ],
+                    "current_notes": [
+                        dict(row, index=idx) for idx, row in current_notes.iterrows()
+                    ],
+                }
+        except Exception as e:
+            print(f"!!! Ошибка при автоматической обработке заявки {request_id}: {e}")
             continue
-
-        total_ordered = request_df.groupby("Товар")["Заказано"].first().sum()
-        total_moved = request_df["Перемещено"].sum()
-        product = request_df["Товар"].iloc[0]
-        current_moved = request_df.copy()
-        current_notes = pd.DataFrame(columns=["Договор", "Количество_в_примечании"])
-        note_text = ""
-
-        if "Примечание_заказано" in current_moved.columns and not pd.isna(
-            current_moved["Примечание_заказано"].iloc[0]
-        ):
-            note_text = current_moved["Примечание_заказано"].iloc[0]
-            note_matches = re.findall(r"([А-Я]{2}-\d{8})-(\d+)", str(note_text))
-            if note_matches:
-                current_notes = pd.DataFrame(
-                    note_matches, columns=["Договор", "Количество_в_примечании"]
-                )
-                current_notes["Количество_в_примечании"] = pd.to_numeric(
-                    current_notes["Количество_в_примечании"]
-                )
-
-        if not current_moved.empty and not current_notes.empty:
-            moved_counts = current_moved["Перемещено"].value_counts()
-            notes_counts = current_notes["Количество_в_примечании"].value_counts()
-            unique_qtys = moved_counts[(moved_counts == 1)].index.intersection(
-                notes_counts[(notes_counts == 1)].index
-            )
-
-            if not unique_qtys.empty:
-                unique_moved = current_moved[
-                    current_moved["Перемещено"].isin(unique_qtys)
-                ]
-                unique_notes = current_notes[
-                    current_notes["Количество_в_примечании"].isin(unique_qtys)
-                ]
-                matches_df = pd.merge(
-                    unique_moved,
-                    unique_notes,
-                    left_on="Перемещено",
-                    right_on="Количество_в_примечании",
-                )
-
-                for _, match_row in matches_df.iterrows():
-                    record = match_row.to_dict()
-                    record["Количество"] = record["Перемещено"]
-                    record["Источник"] = "Автоматически"
-                    record.pop("Количество_в_примечании", None)
-                    matched_list.append(record)
-
-                current_moved = current_moved[
-                    ~current_moved["Перемещено"].isin(unique_qtys)
-                ]
-                current_notes = current_notes[
-                    ~current_notes["Количество_в_примечании"].isin(unique_qtys)
-                ]
-
-        if not current_moved.empty and not current_notes.empty:
-            if len(current_moved) == 1:
-                moved_qty = current_moved["Перемещено"].iloc[0]
-                notes_sum = current_notes["Количество_в_примечании"].sum()
-                if moved_qty == notes_sum:
-                    moved_row_main = current_moved.iloc[0]
-                    for _, note_row in current_notes.iterrows():
-                        record = moved_row_main.to_dict()
-                        record["Договор"] = note_row["Договор"]
-                        record["Количество"] = note_row["Количество_в_примечании"]
-                        record["Источник"] = "Автоматически"
-                        matched_list.append(record)
-
-                    current_moved = pd.DataFrame(columns=current_moved.columns)
-                    current_notes = pd.DataFrame(columns=current_notes.columns)
-
-            if len(current_notes) == 1 and not current_moved.empty:
-                note_qty = current_notes["Количество_в_примечании"].iloc[0]
-                moved_sum = current_moved["Перемещено"].sum()
-                if note_qty == moved_sum:
-                    note_row_main = current_notes.iloc[0]
-                    for _, moved_row in current_moved.iterrows():
-                        record = moved_row.to_dict()
-                        record["Договор"] = note_row_main["Договор"]
-                        record["Количество"] = moved_row["Перемещено"]
-                        record["Источник"] = "Автоматически"
-                        matched_list.append(record)
-
-                    current_moved = pd.DataFrame(columns=current_moved.columns)
-                    current_notes = pd.DataFrame(columns=current_notes.columns)
-
-        if not current_moved.empty and not current_notes.empty:
-            leftovers[request_id] = {
-                "product": product,
-                "note_text": note_text,
-                "total_ordered": total_ordered,
-                "total_moved": total_moved,
-                "current_moved": [
-                    dict(row, index=idx) for idx, row in current_moved.iterrows()
-                ],
-                "current_notes": [
-                    dict(row, index=idx) for idx, row in current_notes.iterrows()
-                ],
-            }
 
     session_id = "some_unique_session_id"
 

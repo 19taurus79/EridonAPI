@@ -676,22 +676,25 @@ orders_list = test_df["contract"].unique().tolist()
 
 
 async def get_data_from_df(orders: list):
-    data = (
-        await Submissions.select(
-            Submissions.contract_supplement, Submissions.manager, Submissions.client
+    try:
+        data = (
+            await Submissions.select(
+                Submissions.contract_supplement, Submissions.manager, Submissions.client
+            )
+            .where(Submissions.contract_supplement.is_in(orders))
+            .run()
         )
-        .where(Submissions.contract_supplement.is_in(orders))
-        .run()
-    )
-    contract_data_map = {
-        item["contract_supplement"]: {
-            "manager": item["manager"],
-            "client": item["client"],
+        contract_data_map = {
+            item["contract_supplement"]: {
+                "manager": item["manager"],
+                "client": item["client"],
+            }
+            for item in data
         }
-        for item in data
-    }
-
-    return contract_data_map
+        return contract_data_map
+    except Exception as e:
+        print(f"!!! Ошибка при получении данных о менеджерах и клиентах из БД: {e}")
+        return {}
 
 
 async def notifications(bot: Bot):
@@ -767,18 +770,19 @@ async def notifications(bot: Bot):
                         )  # Разделитель для партий
 
         # Выводим сформированное сообщение (в дальнейшем здесь будет вызов send_notification)
-        # bot = Bot(token=TELEGRAM_BOT_TOKEN) # <-- Эту строку удаляем, бот будет передан
-        await send_notification(
-            bot=bot,
-            chat_ids=[
-                548019148,
-            ],
-            text=message_text,
-            # parse_mode="Markdown" # parse_mode уже по умолчанию Markdown
-        )
-        print(f"\n--- Сообщение для {manager_name} ---\n")
-        print(message_text)
-        print(f"\n--- Конец сообщения для {manager_name} ---\n")
+        try:
+            await send_notification(
+                bot=bot,
+                chat_ids=[
+                    548019148,
+                ],
+                text=message_text,
+            )
+            print(f"\n--- Сообщение для {manager_name} ---\n")
+            print(message_text)
+            print(f"\n--- Конец сообщения для {manager_name} ---\n")
+        except Exception as e:
+            print(f"!!! Ошибка при отправке уведомления менеджеру {manager_name}: {e}")
 
 
 async def main_notifications_runner():
