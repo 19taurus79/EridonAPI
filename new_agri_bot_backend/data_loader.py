@@ -158,6 +158,12 @@ async def save_processed_data_to_db(
         submissions_data = submissions_data.rename(
             columns={"line_of_business_av": "line_of_business"}
         )
+        submissions_data = pd.merge(
+            submissions_data,
+            df_payment[df_payment["contract_supplement", "order_status"]],
+            how="left",
+            on="contract_supplement",
+        )
         records_submissions = submissions_data.to_dict(orient="records")
         submissions_raw = [Submissions(**item) for item in records_submissions]
         for i in range(0, len(submissions_raw), BATCH_SIZE):

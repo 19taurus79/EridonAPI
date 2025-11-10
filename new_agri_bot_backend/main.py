@@ -44,6 +44,7 @@ from .telegram_auth import (
 from .data_retrieval import router as data_retrieval_router
 from .data_loader import save_processed_data_to_db
 from .bi import router as bi_router
+from .bi_pandas import router as bi_pandas_router
 from .utils import send_message_to_managers
 
 # Импорт TELEGRAM_BOT_TOKEN из config.py для инициализации бота
@@ -84,7 +85,6 @@ class DeliveryRequest(BaseModel):
     date: str  # ISO-формат строки
     comment: str
     orders: List[DeliveryOrder]
-
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -151,7 +151,6 @@ async def create_calendar_event(data: DeliveryRequest) -> Optional[str]:
     except Exception as e:
         print("Ошибка при добавлении в календарь:", e)
         return None
-
 
 
 def get_calendar_events(
@@ -299,6 +298,7 @@ app.add_middleware(
 app.include_router(telegram_auth_router)  # Подключаем маршруты из telegram_auth.py
 app.include_router(data_retrieval_router)
 app.include_router(bi_router)
+app.include_router(bi_pandas_router)
 app.mount("/admin", admin_router)
 
 
@@ -570,6 +570,5 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
         print("📅 Добавлено в календарь:", calendar_link)
     else:
         print("❌ Не удалось добавить в календарь")
-
 
     return {"status": "ok"}
