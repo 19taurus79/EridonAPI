@@ -195,6 +195,7 @@ def process_payment(content: bytes) -> pd.DataFrame:
     payment_col_name = [
         "contract_supplement",
         "contract_type",
+        "order_status",
         "prepayment_amount",
         "amount_of_credit",
         "prepayment_percentage",

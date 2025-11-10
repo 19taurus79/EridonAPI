@@ -205,6 +205,33 @@ async def save_processed_data_to_db(
             print(f"Вставлено {len(records_submissions)} записей в Submissions.")
         except Exception as e:
             print(f"!!! Ошибка при сохранении данных в Submissions: {e}")
+        await Submissions.delete(force=True).run()
+        # await Submissions.delete(force=True).run(node="DB_2")
+        submissions_data = df_submissions.merge(
+            product_guide, on="product", how="left", suffixes=("_av", "_guide")
+        )
+        submissions_data = submissions_data.drop(
+            ["product", "line_of_business_guide", "active_substance"], axis=1
+        )
+        submissions_data = submissions_data.rename(columns={"id": "product"})
+        submissions_data = submissions_data.rename(
+            columns={"line_of_business_av": "line_of_business"}
+        )
+        submissions_data = pd.merge(
+            submissions_data,
+            df_payment[df_payment["contract_supplement", "order_status"]],
+            how="left",
+            on="contract_supplement",
+        )
+        records_submissions = submissions_data.to_dict(orient="records")
+        submissions_raw = [Submissions(**item) for item in records_submissions]
+        for i in range(0, len(submissions_raw), BATCH_SIZE):
+            batch = submissions_raw[i : i + BATCH_SIZE]
+            rows = list(batch)
+            await Submissions.insert().add(*rows).run()
+            # await Submissions.insert().add(*rows).run(node="DB_2")
+        # await Submissions.insert(*[Submissions(**d) for d in records_submissions]).run()
+        print(f"Вставлено {len(records_submissions)} записей в Submissions.")
     else:
         print("DataFrame для Submissions пуст, пропускаем вставку.")
 
@@ -394,7 +421,7 @@ async def save_processed_data_to_db(
                 # Применяем функцию, которая корректно обрабатывает числа и None.
                 # Это необходимо, т.к. колонка типа 'object' может содержать int/float.
                 cols_to_str = [
-                    "qt_order", "qt_moved", "product_id", "order", 
+                    "qt_order", "qt_moved", "product_id", "order",
                     "party_sign", "period", "contract", "line_of_business"
                 ]
                 for col in cols_to_str:

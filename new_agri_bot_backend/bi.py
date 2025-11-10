@@ -12,7 +12,7 @@ from new_agri_bot_backend.tables import (
 )
 
 router = APIRouter(
-    prefix="/api",
+    prefix="/api/v2",
     tags=["api"],
 )
 

@@ -48,6 +48,7 @@ from .telegram_auth import (
 from .data_retrieval import router as data_retrieval_router
 from .data_loader import save_processed_data_to_db
 from .bi import router as bi_router
+from .bi_pandas import router as bi_pandas_router
 from .utils import send_message_to_managers
 
 # Импорт TELEGRAM_BOT_TOKEN из config.py для инициализации бота
@@ -303,6 +304,7 @@ app.add_middleware(
 app.include_router(telegram_auth_router)  # Подключаем маршруты из telegram_auth.py
 app.include_router(data_retrieval_router)
 app.include_router(bi_router)
+app.include_router(bi_pandas_router)
 app.mount("/admin", admin_router)
 
 
@@ -769,6 +771,7 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
 
     # Удаляем временный файл
     os.remove(tmp.name)
+
     calendar = await create_calendar_event(data)
     calendar_link = calendar["htmlLink"]
     date = datetime.fromisoformat(calendar["start"]["dateTime"]).date()
@@ -782,6 +785,7 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
             event=data.client,
         )
     ).run()
+
     if calendar_link:
         print("📅 Добавлено в календарь:", calendar_link)
     else:
