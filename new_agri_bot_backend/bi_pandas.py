@@ -120,9 +120,9 @@ async def combined_pandas_endpoint(
     )
     moved_data = (
         await MovedData.select(
-            MovedData.contract,
+            MovedData.contract.as_alias("contract_supplement"),
             MovedData.product,
-            Sum(Cast(MovedData.qt_moved, Float())),
+            Sum(Cast(MovedData.qt_moved, Float())).as_alias("moved_qty"),
         )
         .group_by(MovedData.contract, MovedData.product)
         .run()
@@ -160,6 +160,10 @@ async def combined_pandas_endpoint(
         #     df_orders, df_delivery_status, on="contract_supplement", how="left"
         # )
         # df_orders["order_status"] = df_orders["order_status"].fillna("Ні")
+        df_orders = pd.merge(
+            df_orders, df_moved, on=["contract_supplement", "product"], how="left"
+        )
+        df_orders["moved_qty"] = df_orders["moved_qty"].fillna(0)
         orders_grouped = (
             df_orders.groupby("product").apply(aggregate_rows_to_list).rename("orders")
         )
