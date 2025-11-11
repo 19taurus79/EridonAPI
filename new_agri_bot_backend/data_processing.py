@@ -5,10 +5,13 @@ import pandas as pd
 import io
 from .config import valid_line_of_business, valid_warehouse  # Импорт из config.py
 
+# Опция для будущего поведения Pandas
+pd.set_option("future.no_silent_downcasting", True)
+
 
 def read_excel_content(content: bytes, sheet_name=0) -> pd.DataFrame:
     """Вспомогательная функция для чтения содержимого Excel в DataFrame."""
-    return pd.read_excel(io.BytesIO(content), sheet_name=sheet_name)
+    return pd.read_excel(io.BytesIO(content), sheet_name=sheet_name, engine="openpyxl")
 
 
 def process_submissions(content: bytes) -> pd.DataFrame:
@@ -192,6 +195,7 @@ def process_payment(content: bytes) -> pd.DataFrame:
     payment_col_name = [
         "contract_supplement",
         "contract_type",
+        "order_status",
         "prepayment_amount",
         "amount_of_credit",
         "prepayment_percentage",
@@ -345,3 +349,47 @@ def process_free_stock(content: bytes) -> pd.DataFrame:
     # We keep rows where AT LEAST one of the specified columns is NOT 0
     file = file[(file[cols_to_check] != 0).any(axis=1)].reset_index(drop=True)
     return file
+
+
+def process_moved_raw_data(content: bytes) -> pd.DataFrame:
+    moved = read_excel_content(content)
+    moved = moved.drop(moved.index[0:3], axis=0)
+    moved.columns = moved.iloc[0]
+    moved = moved[1:].reset_index(drop=True)
+    moved = moved.dropna(axis=1, how="all").fillna("")
+    moved.columns = [
+        f"{col}_{i}" if moved.columns.duplicated()[i] else col
+        for i, col in enumerate(moved.columns)
+    ]
+    moved = moved.rename(
+        columns={"Примечание_8": "Примечание_перемещено", "Количество": "Перемещено"}
+    )
+    cols_to_drop_moved = [col for col in ["Примечание"] if col in moved.columns]
+    moved = moved.drop(columns=cols_to_drop_moved)
+    moved["Заявка на відвантаження"] = (
+        moved["Заявка на відвантаження"].astype(str).str.extract(r"([А-Я]{2}-\d{8})")
+    )
+    return moved
+
+
+def process_ordered_raw_data(content: bytes) -> pd.DataFrame:
+    ordered = read_excel_content(content)
+    ordered = ordered.drop(ordered.index[0:3], axis=0)
+    ordered.columns = ordered.iloc[0]
+    ordered = ordered[1:].reset_index(drop=True)
+    ordered = ordered.dropna(axis=1, how="all").fillna("")
+    ordered.columns = [
+        f"{col}_{i}" if ordered.columns.duplicated()[i] else col
+        for i, col in enumerate(ordered.columns)
+    ]
+    ordered = ordered.rename(
+        columns={"Примечание_8": "Примечание_заказано", "Кількість": "Заказано"}
+    )
+    cols_to_drop_ordered = [
+        col for col in ["Примечание", "Рік договору"] if col in ordered.columns
+    ]
+    ordered = ordered.drop(columns=cols_to_drop_ordered)
+    ordered["Заявка на відвантаження"] = (
+        ordered["Заявка на відвантаження"].astype(str).str.extract(r"([А-Я]{2}-\d{8})")
+    )
+    return ordered

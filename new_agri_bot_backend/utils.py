@@ -9,23 +9,35 @@ from .tables import Users
 
 load_dotenv()
 
+# Определяем режим работы: 'production' или 'development'. По умолчанию 'development'.
+APP_ENV = os.getenv("APP_ENV", "development")
+
 bot = Bot(TELEGRAM_BOT_TOKEN)
 
 
 async def send_message_to_managers():
-    """Отправляет сообщение всем менеджерам в Telegram."""
-    # user_tg_id = MANAGERS_ID.values()
-    user_tg_id = await Users.select().where(Users.is_allowed == True).run()
+    """Отправляет сообщение всем менеджерам в Telegram или выводит в консоль в зависимости от режима."""
+    user_tg_id_list = await Users.select().where(Users.is_allowed == True).run()
     now = datetime.now() + timedelta(hours=3)
-    # Убедитесь, что это правильное смещение часового пояса
     time_format = "%d-%m-%Y %H:%M:%S"
     message_text = (
-        f"Дані в боті оновлені.{chr(10)}І вони актуальні станом на… {now:{time_format}}"
+        f"Дані в боті оновлені.\nІ вони актуальні станом на… {now.strftime(time_format)}"
     )
 
-    for i in user_tg_id:
+    print(f"--- Running in {APP_ENV.upper()} mode ---")
+
+    for user in user_tg_id_list:
+        telegram_id = user.get("telegram_id")
+        if not telegram_id:
+            print(f"Skipping user due to missing telegram_id: {user}")
+            continue
+
         try:
-            await bot.send_message(chat_id=i["telegram_id"], text=message_text)
-            print(f"Sent message to manager ID: {i['telegram_id']}")
+            if APP_ENV == "production":
+                await bot.send_message(chat_id=telegram_id, text=message_text)
+                print(f"Successfully sent message to manager ID: {telegram_id}")
+            else:
+                # В режиме разработки просто выводим в консоль
+                print(f"DEV MODE: Would send to {telegram_id}: '{message_text}'")
         except Exception as e:
-            print(f"Failed to send message to manager ID {i['telegram_id']}: {e}")
+            print(f"Failed to send message to manager ID {telegram_id}: {e}")

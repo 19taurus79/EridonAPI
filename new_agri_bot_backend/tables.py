@@ -117,10 +117,12 @@ class MovedNot(Table):
     note = Varchar()
 
 
+# TODO: Зробити міграцію в тестовій, та робочій
 class Payment(Table):
     id = UUID(primary_key=True)
     contract_supplement = Varchar()
     contract_type = Varchar()
+    order_status = Varchar()
     prepayment_amount = DoublePrecision()
     amount_of_credit = DoublePrecision()
     prepayment_percentage = DoublePrecision()
