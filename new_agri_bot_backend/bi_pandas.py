@@ -1,13 +1,17 @@
 import pandas as pd
 from fastapi import APIRouter, Query
+from piccolo.columns import Integer, Float
 from piccolo.query import Sum
 from typing import List, Optional
+
+from piccolo.query.functions import Cast
 
 from new_agri_bot_backend.tables import (
     Remains,
     Submissions,
     FreeStock,
     Payment,
+    MovedData,
 )
 
 router = APIRouter(
@@ -114,14 +118,24 @@ async def combined_pandas_endpoint(
         )
         .run()
     )
-    delivery_status = await Payment.select(
-        Payment.contract_supplement, Payment.order_status
+    moved_data = (
+        await MovedData.select(
+            MovedData.contract,
+            MovedData.product,
+            Sum(Cast(MovedData.qt_moved, Float())),
+        )
+        .group_by(MovedData.contract, MovedData.product)
+        .run()
     )
+    # delivery_status = await Payment.select(
+    #     Payment.contract_supplement, Payment.order_status
+    # )
     # --- 2. ЗАГРУЗКА И ТРАНСФОРМАЦИЯ (Load & Transform) с Pandas ---
 
     df_demand = pd.DataFrame(demand_data)
     df_remains = pd.DataFrame(remains_data)
-    df_delivery_status = pd.DataFrame(delivery_status)
+    df_moved = pd.DataFrame(moved_data)
+    # df_delivery_status = pd.DataFrame(delivery_status)
 
     # "Соединяем" таблицы спроса и остатков (LEFT JOIN).
     df_analysis = pd.merge(df_demand, df_remains, on="product", how="left")
