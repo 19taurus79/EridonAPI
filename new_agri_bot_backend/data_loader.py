@@ -97,7 +97,6 @@ async def save_processed_data_to_db(
 
     print("Данные Excel обработаны в DataFrame. Начинаем сохранение в БД...")
 
-    # print("Старі дані з таблиць видалено. Починаємо вставку нових даних...")
     # 2.1 Создание справочника товаров
     av_stock_tmp = df_av_stock[["product", "line_of_business", "active_substance"]]
     remains_tmp = df_remains[["product", "line_of_business", "active_substance"]]
@@ -107,15 +106,9 @@ async def save_processed_data_to_db(
     pr = pd.concat([av_stock_tmp, submissions_tmp, remains_tmp], ignore_index=True)
     product_guide = pr.drop_duplicates(["product"]).reset_index(drop=True)
 
-    # --- НОРМАЛИЗАЦИЯ: Очищаем 'product' от лишних пробелов перед сопоставлением ---
     product_guide["product"] = product_guide["product"].str.strip()
-
     product_guide.insert(0, "id", product_guide.apply(lambda _: uuid.uuid4(), axis=1))
 
-    # 3. Вставка новых данных из DataFrame в соответствующие таблицы Piccolo
-    # Вам нужно будет преобразовать DataFrame в список словарей, где ключи -
-    # это имена колонок в базе данных, а значения - данные.
-    # Убедитесь, что имена колонок DataFrame соответствуют полям в вашей модели Piccolo.
     BATCH_SIZE = 1000
     if not product_guide.empty:
         try:
@@ -156,7 +149,6 @@ async def save_processed_data_to_db(
     else:
         print("DataFrame для AvailableStock пуст, пропускаем вставку.")
 
-    # Пример:
     if not df_remains.empty:
         try:
             await Remains.delete(force=True).run()
@@ -207,8 +199,10 @@ async def save_processed_data_to_db(
             submissions_data = submissions_data.rename(
                 columns={"order_status": "delivery_status"}
             )
-            ##TO:DO
-            submissions_data["delivery_status"].fillna("Ні", inplace=True)
+
+            submissions_data["delivery_status"] = submissions_data[
+                "delivery_status"
+            ].fillna("Ні")
             records_submissions = submissions_data.to_dict(orient="records")
             submissions_raw = [Submissions(**item) for item in records_submissions]
             for i in range(0, len(submissions_raw), BATCH_SIZE):
@@ -217,30 +211,8 @@ async def save_processed_data_to_db(
             print(f"Вставлено {len(records_submissions)} записей в Submissions.")
         except Exception as e:
             print(f"!!! Ошибка при сохранении данных в Submissions: {e}")
-        # await Submissions.delete(force=True).run()
-        # # await Submissions.delete(force=True).run(node="DB_2")
-        # submissions_data = df_submissions.merge(
-        #     product_guide, on="product", how="left", suffixes=("_av", "_guide")
-        # )
-        # submissions_data = submissions_data.drop(
-        #     ["product", "line_of_business_guide", "active_substance"], axis=1
-        # )
-        # submissions_data = submissions_data.rename(columns={"id": "product"})
-        # submissions_data = submissions_data.rename(
-        #     columns={"line_of_business_av": "line_of_business"}
-        # )
-
-    #     records_submissions = submissions_data.to_dict(orient="records")
-    #     submissions_raw = [Submissions(**item) for item in records_submissions]
-    #     for i in range(0, len(submissions_raw), BATCH_SIZE):
-    #         batch = submissions_raw[i : i + BATCH_SIZE]
-    #         rows = list(batch)
-    #         await Submissions.insert().add(*rows).run()
-    #         # await Submissions.insert().add(*rows).run(node="DB_2")
-    #     # await Submissions.insert(*[Submissions(**d) for d in records_submissions]).run()
-    #     print(f"Вставлено {len(records_submissions)} записей в Submissions.")
-    # else:
-    #     print("DataFrame для Submissions пуст, пропускаем вставку.")
+    else:
+        print("DataFrame для Submissions пуст, пропускаем вставку.")
 
     if not df_payment.empty:
         try:
@@ -310,33 +282,27 @@ async def save_processed_data_to_db(
     else:
         print("DataFrame для FreeStock пуст, пропускаем вставку.")
 
-    # Создаем DataFrame из данных ручного сопоставления, если они переданы
     df_manual_matches = pd.DataFrame()
     if manual_matches_json:
         try:
             manual_matches_list = json.loads(manual_matches_json)
             if manual_matches_list:
-                # Сначала создаем DataFrame
                 df_manual_matches = pd.DataFrame(
                     manual_matches_list.get("matched_data")
                     or manual_matches_list.get("matched_list", [])
                 )
-                # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Явное преобразование колонки 'Дата' в datetime ---
                 if "Дата" in df_manual_matches.columns:
                     df_manual_matches["Дата"] = pd.to_datetime(
                         df_manual_matches["Дата"], errors="coerce"
                     )
-
                 print(
                     f"Создан DataFrame 'df_manual_matches' из ручных сопоставлений, размер: {df_manual_matches.shape}."
                 )
         except (json.JSONDecodeError, AttributeError) as e:
             print(f"Ошибка при парсинге JSON из manual_matches_json: {e}")
 
-    # Теперь, когда df_manual_matches может быть заполнен, проверяем его
     if not df_manual_matches.empty:
         try:
-            # 1. Удаляем ненужные колонки
             columns_to_delete = [
                 "Номенклатура",
                 "Ознака партії",
@@ -349,11 +315,10 @@ async def save_processed_data_to_db(
                 columns=columns_to_delete, errors="ignore"
             )
 
-            # 2. Переименовываем колонки для соответствия таблице MovedData
             rename_map = {
                 "Заявка на відвантаження": "order",
                 "Заказано": "qt_order",
-                "Рік договору": "period",  # Пример, возможно нужно будет скорректировать
+                "Рік договору": "period",
                 "Партія номенклатури": "party_sign",
                 "Вид діяльності": "line_of_business",
                 "Дата": "date",
@@ -363,35 +328,24 @@ async def save_processed_data_to_db(
             }
             df_matches = df_matches.rename(columns=rename_map)
 
-            # Приводим ключевые колонки к строковому типу для надежного сравнения
             for col in ["product", "contract", "period"]:
                 if col in df_matches.columns:
                     df_matches[col] = df_matches[col].astype(str).str.strip()
 
-            # --- НОРМАЛИЗАЦИЯ: Очищаем 'product' от лишних пробелов перед сопоставлением ---
             df_matches["product"] = df_matches["product"].str.strip()
 
-            # 3. Сопоставляем с product_guide для получения product_id
-            # Создаем временный справочник для сопоставления
             product_id_map = product_guide.set_index("product")["id"]
             df_matches["product_id"] = df_matches["product"].map(product_id_map)
 
-            # 4. Заменяем product_id на id из product_guide
-            # df_matches["product"] = df_matches["product_id"]
-            # df_matches = df_matches.drop(columns=["product_id"])
-
-            # --- СВЕРКА С БАЗОЙ ДАННЫХ ---
-            # 1. Загружаем существующие данные из MovedData
             existing_moved_data_list = await MovedData.select(
-                MovedData.product, MovedData.contract, MovedData.period
+                MovedData.product_id, MovedData.contract, MovedData.period
             ).run()
             df_moved_from_db = pd.DataFrame(existing_moved_data_list)
 
             df_new_matches_to_add = pd.DataFrame()
 
             if not df_moved_from_db.empty:
-                # 2. Создаем композитный ключ для сравнения
-                key_cols = ["product", "contract", "period"]
+                key_cols = ["product_id", "contract", "period"]
                 for col in key_cols:
                     df_moved_from_db[col] = (
                         df_moved_from_db[col].astype(str).str.strip()
@@ -404,59 +358,45 @@ async def save_processed_data_to_db(
                     lambda row: "_".join(row.values.astype(str)), axis=1
                 )
 
-                # 3. Находим записи, которых нет в БД
                 existing_keys = set(df_moved_from_db["composite_key"])
                 df_new_matches_to_add = df_matches[
                     ~df_matches["composite_key"].isin(existing_keys)
                 ].copy()
                 df_new_matches_to_add.drop(columns=["composite_key"], inplace=True)
-
             else:
-                # Если таблица в БД пуста, то все записи из df_matches являются новыми
                 df_new_matches_to_add = df_matches.copy()
 
-            # 4. Записываем в БД только новые записи
             if not df_new_matches_to_add.empty:
                 print(
                     f"Найдено {len(df_new_matches_to_add)} новых записей для добавления в MovedData."
                 )
-
-                # Заменяем NaN на None перед записью
                 df_new_matches_to_add = df_new_matches_to_add.replace({np.nan: None})
 
-                # --- НАДЕЖНОЕ ПРЕОБРАЗОВАНИЕ ТИПОВ В СТРОКУ ---
-                # Применяем функцию, которая корректно обрабатывает числа и None.
-                # Это необходимо, т.к. колонка типа 'object' может содержать int/float.
-                cols_to_str = [
-                    "qt_order",
-                    "qt_moved",
-                    "product_id",
-                    "order",
-                    "party_sign",
-                    "period",
-                    "contract",
-                    "line_of_business",
-                ]
+                cols_to_str = ["qt_order", "qt_moved"]
                 for col in cols_to_str:
                     if col in df_new_matches_to_add.columns:
                         df_new_matches_to_add[col] = df_new_matches_to_add[col].apply(
-                            lambda x: str(x) if pd.notna(x) else None
+                            lambda x: (
+                                str(int(x))
+                                if pd.notna(x) and isinstance(x, (int, float))
+                                else (str(x) if pd.notna(x) else None)
+                            )
                         )
 
                 records_to_add = df_new_matches_to_add.to_dict(orient="records")
 
-                # Убираем лишние ключи, которых нет в модели MovedData
-                # valid_columns = MovedData._meta.column_names
-                # cleaned_records = [{k: v for k, v in rec.items() if k in valid_columns} for rec in records_to_add]
+                valid_columns = MovedData._meta.columns
+                cleaned_records = [
+                    {k: v for k, v in rec.items() if k in valid_columns}
+                    for rec in records_to_add
+                ]
 
                 await MovedData.insert(
-                    *[MovedData(**rec) for rec in records_to_add]
+                    *[MovedData(**rec) for rec in cleaned_records]
                 ).run()
                 print("Новые записи успешно добавлены в MovedData.")
             else:
                 print("Новых записей для добавления в MovedData не найдено.")
-
-            # Теперь df_new_matches_to_add доступен для вашей дальнейшей обработки
 
         except Exception as e:
             print(f"Ошибка при финальной обработке df_manual_matches: {e}")
