@@ -415,7 +415,7 @@ async def upload_and_process_files(
     moved_file: UploadFile = File(..., description="Файл 'Перемещено.xlsx'"),
 ):
     try:
-        _, leftovers, matched_list = processing.process_uploaded_files(
+        leftovers, matched_list = processing.process_uploaded_files(
             ordered_file.file, moved_file.file
         )
     except Exception as e:
@@ -475,111 +475,45 @@ async def manual_match(session_id: str, match_input: models.ManualMatchInput):
     sum_notes = selected_notes["Количество_в_примечании"].sum()
     newly_matched = []
     product = leftover_data["product"]
+    # --- НОВЫЙ УПРОЩЕННЫЙ АЛГОРИТМ ---
+    # Мы доверяем ручному выбору пользователя и не проводим строгих проверок по сумме.
+    # Просто создаем сопоставленные записи на основе выбора.
 
-    # --- ИСПРАВЛЕННЫЙ АЛГОРИТМ ---
+    if selected_moved.empty or selected_notes.empty:
+        raise HTTPException(
+            status_code=400,
+            detail="Необходимо выбрать хотя бы одну позицию из 'перемещено' и одну из 'примечаний'.",
+        )
 
-    # Сценарий 1: Один-ко-Многим (одно перемещение, несколько примечаний)
-    if len(selected_moved) == 1 and len(selected_notes) >= 1:
-        main_moved_row = selected_moved.iloc[0]
-        main_moved_index = selected_moved.index[0]
+    # Используем информацию из первого выбранного примечания (договор)
+    # для всех сопоставляемых перемещений.
+    main_note_row = selected_notes.iloc[0]
+    main_contract = main_note_row["Договор"]
 
-        if sum_notes > main_moved_row["Перемещено"]:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Ошибка: Сумма примечаний ({sum_notes}) больше, чем количество в перемещении ({main_moved_row['Перемещено']}).",
-            )
-
-        for _, note_row in selected_notes.iterrows():
-            record = main_moved_row.to_dict()
-            record["Договор"] = note_row["Договор"]
-            record["Количество"] = note_row["Количество_в_примечании"]
-            record["Источник"] = "Ручное сопоставление"
-            newly_matched.append(record)
-
-        # Обновляем состояние
-        current_notes_df.drop(
-            match_input.selected_notes_indices, inplace=True
-        )  # Удаляем все выбранные примечания
-
-        remaining_qty = main_moved_row["Перемещено"] - sum_notes
-        if remaining_qty == 0:
-            current_moved_df.drop(
-                main_moved_index, inplace=True
-            )  # Удаляем перемещение, если оно исчерпано
-        else:
-            current_moved_df.loc[main_moved_index, "Перемещено"] = (
-                remaining_qty  # Уменьшаем количество
-            )
-
-    # Сценарий 2: Многие-к-Одному (несколько перемещений, одно примечание)
-    elif len(selected_moved) > 1 and len(selected_notes) == 1:
-        main_note_row = selected_notes.iloc[0]
-        main_note_index = selected_notes.index[0]
-
-        if sum_moved > main_note_row["Количество_в_примечании"]:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Ошибка: Сумма перемещений ({sum_moved}) больше, чем количество в примечании ({main_note_row['Количество_в_примечании']}).",
-            )
-
-        for _, moved_row in selected_moved.iterrows():
-            record = moved_row.to_dict()
-            record["Договор"] = main_note_row["Договор"]
-            record["Количество"] = moved_row["Перемещено"]
-            record["Источник"] = "Ручное сопоставление"
-            newly_matched.append(record)
-
-        # Обновляем состояние
-        current_moved_df.drop(
-            match_input.selected_moved_indices, inplace=True
-        )  # Удаляем все выбранные перемещения
-
-        remaining_qty = main_note_row["Количество_в_примечании"] - sum_moved
-        if remaining_qty == 0:
-            current_notes_df.drop(
-                main_note_index, inplace=True
-            )  # Удаляем примечание, если оно исчерпано
-        else:
-            current_notes_df.loc[main_note_index, "Количество_в_примечании"] = (
-                remaining_qty  # Уменьшаем количество
-            )
-
-    # Сценарий 3: Один-к-Одному (может быть с разным количеством)
-    elif len(selected_moved) == 1 and len(selected_notes) == 1:
-        main_moved_row = selected_moved.iloc[0]
-        main_moved_index = selected_moved.index[0]
-        main_note_row = selected_notes.iloc[0]
-        main_note_index = selected_notes.index[0]
-
-        matched_qty = min(sum_moved, sum_notes)
-
-        record = main_moved_row.to_dict()
-        record["Договор"] = main_note_row["Договор"]
-        record["Количество"] = matched_qty
+    # Проходим по каждой выбранной "перемещенной" позиции
+    for _, moved_row in selected_moved.iterrows():
+        # Создаем новую сопоставленную запись
+        record = moved_row.to_dict()
+        record["Договор"] = main_contract
+        # Количество берем из "перемещено", так как это "факт"
+        record["Количество"] = moved_row["Перемещено"]
         record["Источник"] = "Ручное сопоставление"
         newly_matched.append(record)
 
-        # Обновляем состояние
-        rem_moved = sum_moved - matched_qty
-        rem_notes = sum_notes - matched_qty
-
-        if rem_moved == 0:
-            current_moved_df.drop(main_moved_index, inplace=True)
-        else:
-            current_moved_df.loc[main_moved_index, "Перемещено"] = rem_moved
-
-        if rem_notes == 0:
-            current_notes_df.drop(main_note_index, inplace=True)
-        else:
-            current_notes_df.loc[main_note_index, "Количество_в_примечании"] = rem_notes
-
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail="Неподдерживаемая комбинация. Поддерживаются только сопоставления 'Один-к-Одному', 'Один-ко-Многим' и 'Многие-к-Одному'.",
+    # Обновляем состояние сессии: удаляем все выбранные пользователем позиции
+    # из списков для дальнейшего сопоставления.
+    try:
+        current_moved_df.drop(match_input.selected_moved_indices, inplace=True)
+        current_notes_df.drop(match_input.selected_notes_indices, inplace=True)
+    except KeyError:
+        # Эта ошибка может возникнуть, если фронтенд отправит уже удаленные индексы.
+        # Мы можем ее проигнорировать или вернуть предупреждение.
+        print(
+            f"Предупреждение: Попытка удалить уже сопоставленные индексы для сессии {session_id}"
         )
+        pass
 
-    # --- КОНЕЦ ИСПРАВЛЕННОГО АЛГОРИТМА ---
+    # --- КОНЕЦ НОВОГО АЛГОРИТМА ---
 
     session_data["matched_list"].extend(newly_matched)
 
@@ -631,7 +565,7 @@ async def upload_data(
     remains_file: UploadFile = File(..., description="Файл с остатками"),
     submissions_file: UploadFile = File(..., description="Файл с заявками"),
     payment_file: UploadFile = File(..., description="Файл с оплатой"),
-    moved_file: UploadFile = File(..., description="Файл с перемещенными данными"),
+    # moved_file: UploadFile = File(..., description="Файл с перемещенными данными"),
     free_stock: UploadFile = File(
         default=..., description="Файл с доступными остатками"
     ),
@@ -652,7 +586,7 @@ async def upload_data(
         remains_content = await remains_file.read()
         submissions_content = await submissions_file.read()
         payment_content = await payment_file.read()
-        moved_content = await moved_file.read()
+        # moved_content = await moved_file.read()
         free_stock_content = await free_stock.read()
 
         # Запускаем синхронную функцию обработки и сохранения в базу данных
@@ -663,7 +597,7 @@ async def upload_data(
             remains_content,
             submissions_content,
             payment_content,
-            moved_content,
+            # moved_content,
             free_stock_content,
             manual_matches_json,
         )

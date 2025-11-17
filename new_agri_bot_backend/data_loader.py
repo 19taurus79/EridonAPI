@@ -70,7 +70,7 @@ async def save_processed_data_to_db(
     remains_content: bytes,
     submissions_content: bytes,
     payment_content: bytes,
-    moved_content: bytes,
+    # moved_content: bytes,
     free_stock_content: bytes,
     manual_matches_json: str = None,
 ):
@@ -85,14 +85,14 @@ async def save_processed_data_to_db(
     df_remains = await run_in_threadpool(process_remains_reg, remains_content)
     df_submissions = await run_in_threadpool(process_submissions, submissions_content)
     df_payment = await run_in_threadpool(process_payment, payment_content)
-    df_moved = await run_in_threadpool(process_moved_data, moved_content)
+    # df_moved = await run_in_threadpool(process_moved_data, moved_content)
     df_free_stock = await run_in_threadpool(process_free_stock, free_stock_content)
 
     # --- ГЛОБАЛЬНАЯ НОРМАЛИЗАЦИЯ: Очищаем 'product' во всех DataFrame ---
     df_av_stock["product"] = df_av_stock["product"].str.strip()
     df_remains["product"] = df_remains["product"].str.strip()
     df_submissions["product"] = df_submissions["product"].str.strip()
-    df_moved["product"] = df_moved["product"].str.strip()
+    # df_moved["product"] = df_moved["product"].str.strip()
     df_free_stock["product"] = df_free_stock["product"].str.strip()
 
     print("Данные Excel обработаны в DataFrame. Начинаем сохранение в БД...")
@@ -227,21 +227,32 @@ async def save_processed_data_to_db(
             print(f"!!! Ошибка при сохранении данных в Payment: {e}")
     else:
         print("DataFrame для Payment пуст, пропускаем вставку.")
-
+    moved = await MovedData.select().run()
+    df_moved = pd.DataFrame(moved)
+    df_moved = pd.merge(
+        product_guide[["product", "id"]],
+        df_moved,
+        on="product",
+        suffixes=["guide", "moved"],
+    )
+    df_moved["product_id"] = df_moved["idguide"]
+    df_moved["product_id"] = df_moved["product_id"].astype(str)
+    df_moved = df_moved.drop(columns=["idguide", "idmoved"])
     if not df_moved.empty:
         try:
             await MovedData.delete(force=True).run()
-            moved_data = df_moved.merge(
-                product_guide, on="product", how="left", suffixes=("_av", "_guide")
-            )
-            moved_data["id"] = moved_data["id"].astype(str)
-            moved_data = moved_data.drop(
-                ["line_of_business_guide", "active_substance"], axis=1
-            )
-            moved_data = moved_data.rename(
-                columns={"line_of_business_av": "line_of_business"}
-            )
-            moved_data = moved_data.rename(columns={"id": "product_id"})
+            # moved_data = df_moved.merge(
+            #     product_guide, on="product", how="left", suffixes=("_av", "_guide")
+            # )
+            # moved_data["id"] = moved_data["id"].astype(str)
+            # moved_data = moved_data.drop(
+            #     ["line_of_business_guide", "active_substance"], axis=1
+            # )
+            # moved_data = moved_data.rename(
+            #     columns={"line_of_business_av": "line_of_business"}
+            # )
+            # moved_data = moved_data.rename(columns={"id": "product_id"})
+            moved_data = df_moved.copy()
             records_moved = moved_data.to_dict(orient="records")
             moved_raw = [MovedData(**item) for item in records_moved]
             for i in range(0, len(moved_raw), BATCH_SIZE):
@@ -372,7 +383,13 @@ async def save_processed_data_to_db(
                 )
                 df_new_matches_to_add = df_new_matches_to_add.replace({np.nan: None})
 
-                cols_to_str = ["qt_order", "qt_moved"]
+                # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+                if "product_id" in df_new_matches_to_add.columns:
+                    df_new_matches_to_add["product_id"] = df_new_matches_to_add[
+                        "product_id"
+                    ].astype(str)
+
+                cols_to_str = ["qt_order", "qt_moved", "period", "party_sign"]
                 for col in cols_to_str:
                     if col in df_new_matches_to_add.columns:
                         df_new_matches_to_add[col] = df_new_matches_to_add[col].apply(

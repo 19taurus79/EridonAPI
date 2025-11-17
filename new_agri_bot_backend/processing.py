@@ -10,7 +10,8 @@ def convert_numpy_types(data):
     """
     Рекурсивно обходит вложенные словари и списки, преобразуя типы данных NumPy
     (например, numpy.int64) в стандартные типы Python (int, float).
-    Это необходимо, чтобы Pydantic мог корректно сериализовать данные в JSON.
+    Это необходимо, чтобы Pydantic/FastAPI могли корректно сериализовать
+    результаты в формат JSON, который не понимает типы NumPy.
     """
     if isinstance(data, dict):
         return {k: convert_numpy_types(v) for k, v in data.items()}
@@ -27,10 +28,17 @@ def convert_numpy_types(data):
 
 # --- Основная функция обработки ---
 
+moved_file = "../Перемещено.xlsx"
+ordered_file = "../Заказано.xlsx"
 
-def process_uploaded_files(ordered_file, moved_file) -> Tuple[str, Dict, List]:
+
+def process_uploaded_files(ordered_file, moved_file) -> Tuple[Dict, List]:
     """
-    Основная функция, которая выполняет всю логику обработки, взятую из Jupyter-ноутбука.
+    Основная функция, которая выполняет всю логику обработки файлов.
+    Принимает два файла, сопоставляет данные и возвращает два объекта:
+
+    1. leftovers: Словарь с данными, которые не удалось сопоставить автоматически.
+    2. matched_list: Список сопоставленных записей.
     """
 
     # --- Этап 1: Загрузка и предварительная очистка данных ---
@@ -61,6 +69,13 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[str, Dict, List]:
     ordered["Заявка на відвантаження"] = original_request_col_ordered.str.extract(
         r"([А-Я]{2}-\d{8})"
     )
+    ordered["Товар"] = (
+        ordered["Номенклатура"].astype(str)
+        + " "
+        + ordered["Ознака партії"].astype(str)
+        + " "
+        + ordered["Сезон закупівлі"].astype(str)
+    )
 
     moved = pd.read_excel(moved_file)
     moved = moved.drop(moved.index[0:3], axis=0)
@@ -89,24 +104,29 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[str, Dict, List]:
     moved["Заявка на відвантаження"] = original_request_col_moved.str.extract(
         r"([А-Я]{2}-\d{8})"
     )
+    moved["Товар"] = (
+        moved["Номенклатура"].astype(str)
+        + " "
+        + moved["Ознака партії"].astype(str)
+        + " "
+        + moved["Сезон закупівлі"].astype(str)
+    )
 
-    # --- Этап 2: Слияние и очистка дубликатов колонок ---
     merged_df = pd.merge(
         ordered,
         moved,
-        on=["Заявка на відвантаження", "Номенклатура"],
+        on=["Заявка на відвантаження", "Товар"],
         how="outer",
         suffixes=("_ordered", "_moved"),
     )
+    merged_df = merged_df.iloc[3015:]
 
     cols_to_coalesce = [
         c.replace("_ordered", "") for c in merged_df.columns if c.endswith("_ordered")
     ]
-
     for col_base in cols_to_coalesce:
         col_ordered = f"{col_base}_ordered"
         col_moved = f"{col_base}_moved"
-
         if col_ordered in merged_df.columns and col_moved in merged_df.columns:
             merged_df[col_base] = np.where(
                 pd.notna(merged_df[col_ordered]) & (merged_df[col_ordered] != ""),
@@ -120,18 +140,12 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[str, Dict, List]:
     if "Примечание_перемещено" in test_data.columns:
         test_data = test_data.drop(columns=["Примечание_перемещено"])
 
-    test_data["Товар"] = test_data.apply(
-        lambda row: f"{row.get('Номенклатура', '')} {row.get('Ознака партії', '')} {row.get('Сезон закупівлі', '')}".strip(),
-        axis=1,
-    )
-
     test_data["Заказано"] = pd.to_numeric(test_data["Заказано"], errors="coerce")
     test_data["Перемещено"] = pd.to_numeric(test_data["Перемещено"], errors="coerce")
     test_data.dropna(subset=["Перемещено", "Партія номенклатури"], inplace=True)
     test_data = test_data[test_data["Партія номенклатури"] != ""].copy()
     test_data["Перемещено"] = test_data["Перемещено"].astype(int)
 
-    # --- Этап 3: Автоматическая обработка и сопоставление ---
     matched_list = []
     leftovers = {}
     all_requests = test_data["Заявка на відвантаження"].dropna().unique()
@@ -165,6 +179,21 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[str, Dict, List]:
                     )
 
             if not current_moved.empty and not current_notes.empty:
+                # --- НОВЫЙ СЦЕНАРИЙ (ВЫСШИЙ ПРИОРИТЕТ): Если в примечании только один договор ---
+                if len(current_notes) == 1:
+                    note_row_main = current_notes.iloc[0]
+                    for _, moved_row in current_moved.iterrows():
+                        record = moved_row.to_dict()
+                        record["Договор"] = note_row_main["Договор"]
+                        record["Количество"] = moved_row["Перемещено"]
+                        record["Источник"] = "Автоматически (один договор)"
+                        matched_list.append(record)
+                    # Так как все сопоставлено, очищаем и переходим к следующей заявке
+                    current_moved = pd.DataFrame(columns=current_moved.columns)
+                    current_notes = pd.DataFrame(columns=current_notes.columns)
+                    continue # Переходим к следующему request_id
+
+                # --- Сценарий 1: Поиск однозначных совпадений по количеству ---
                 moved_counts = current_moved["Перемещено"].value_counts()
                 notes_counts = current_notes["Количество_в_примечании"].value_counts()
                 unique_qtys = moved_counts[(moved_counts == 1)].index.intersection(
@@ -200,6 +229,7 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[str, Dict, List]:
                     ]
 
             if not current_moved.empty and not current_notes.empty:
+                # --- Сценарий 2: Одно перемещение равно сумме примечаний ---
                 if len(current_moved) == 1:
                     moved_qty = current_moved["Перемещено"].iloc[0]
                     notes_sum = current_notes["Количество_в_примечании"].sum()
@@ -211,22 +241,6 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[str, Dict, List]:
                             record["Количество"] = note_row["Количество_в_примечании"]
                             record["Источник"] = "Автоматически"
                             matched_list.append(record)
-
-                        current_moved = pd.DataFrame(columns=current_moved.columns)
-                        current_notes = pd.DataFrame(columns=current_notes.columns)
-
-                if len(current_notes) == 1 and not current_moved.empty:
-                    note_qty = current_notes["Количество_в_примечании"].iloc[0]
-                    moved_sum = current_moved["Перемещено"].sum()
-                    if note_qty == moved_sum:
-                        note_row_main = current_notes.iloc[0]
-                        for _, moved_row in current_moved.iterrows():
-                            record = moved_row.to_dict()
-                            record["Договор"] = note_row_main["Договор"]
-                            record["Количество"] = moved_row["Перемещено"]
-                            record["Источник"] = "Автоматически"
-                            matched_list.append(record)
-
                         current_moved = pd.DataFrame(columns=current_moved.columns)
                         current_notes = pd.DataFrame(columns=current_notes.columns)
 
@@ -247,9 +261,11 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[str, Dict, List]:
             print(f"!!! Ошибка при автоматической обработке заявки {request_id}: {e}")
             continue
 
-    session_id = "some_unique_session_id"
-
     leftovers = convert_numpy_types(leftovers)
     matched_list = convert_numpy_types(matched_list)
 
-    return session_id, leftovers, matched_list
+    return leftovers, matched_list
+
+
+if __name__ == "__main__":
+    process_uploaded_files(ordered_file, moved_file)
