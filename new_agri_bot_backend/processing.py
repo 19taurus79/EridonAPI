@@ -119,7 +119,6 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[Dict, List]:
         how="outer",
         suffixes=("_ordered", "_moved"),
     )
-    merged_df = merged_df.iloc[3015:]
 
     cols_to_coalesce = [
         c.replace("_ordered", "") for c in merged_df.columns if c.endswith("_ordered")
@@ -191,7 +190,7 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[Dict, List]:
                     # Так как все сопоставлено, очищаем и переходим к следующей заявке
                     current_moved = pd.DataFrame(columns=current_moved.columns)
                     current_notes = pd.DataFrame(columns=current_notes.columns)
-                    continue # Переходим к следующему request_id
+                    continue  # Переходим к следующему request_id
 
                 # --- Сценарий 1: Поиск однозначных совпадений по количеству ---
                 moved_counts = current_moved["Перемещено"].value_counts()
