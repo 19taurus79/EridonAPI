@@ -52,7 +52,7 @@ from .bi_pandas import router as bi_pandas_router
 from .utils import send_message_to_managers
 
 # Импорт TELEGRAM_BOT_TOKEN из config.py для инициализации бота
-from .config import TELEGRAM_BOT_TOKEN
+from .config import TELEGRAM_BOT_TOKEN, bot
 
 # Инициализация Telegram Bot (используется в utils.py, но может быть нужен здесь для глобальной инициализации)
 from aiogram import Bot
@@ -61,9 +61,7 @@ from googleapiclient.discovery import build
 from pydantic import BaseModel
 from datetime import date
 
-bot = Bot(
-    TELEGRAM_BOT_TOKEN
-)  # Важно: если бот не используется напрямую в main, эту строку можно убрать
+# Важно: если бот не используется напрямую в main, эту строку можно убрать
 
 
 class ChangeDateRequest(BaseModel):
