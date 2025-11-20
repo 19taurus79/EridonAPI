@@ -2,6 +2,8 @@
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 from collections import defaultdict
+
+import pandas as pd
 import requests
 from fastapi import APIRouter, Query, HTTPException, status, Depends
 from piccolo.columns.defaults.timestamptz import TimestamptzNow
@@ -441,6 +443,81 @@ async def get_details_for_order(order: str):
     )
     result = group_products_with_parties(data)
     return result
+
+
+def clean_df_encoding(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Проходится по всем текстовым колонкам DataFrame и исправляет ошибки кодировки,
+    которые могут вызывать UnicodeDecodeError при сериализации в JSON.
+    """
+    # Создаем копию, чтобы избежать предупреждения SettingWithCopyWarning
+    df_copy = df.copy()
+    # Выбираем только колонки с текстовыми данными
+    for col in df_copy.select_dtypes(include=["object"]).columns:
+        # Применяем "магическую" формулу для исправления кодировки
+        df_copy[col] = df_copy[col].apply(
+            lambda x: (
+                x.encode("latin1", "ignore").decode("utf-8", "ignore")
+                if isinstance(x, str)
+                else x
+            )
+        )
+    return df_copy
+
+
+@router.get("/moved_products/{product_id}")
+async def get_moved_products(product_id: str):
+    orders = (
+        await Submissions.select()
+        .where((Submissions.product == product_id) & (Submissions.different > 0))
+        .run()
+    )
+    valid_sub = []
+    for order in orders:
+        valid_sub.append(order["contract_supplement"])
+    if valid_sub:
+        moved = (
+            await MovedData.select()
+            .where(
+                (MovedData.product_id == product_id)
+                & (MovedData.contract.is_in(valid_sub))
+            )
+            .run()
+        )
+    else:
+        return []
+    if moved:
+        orders_df = pd.DataFrame(orders)
+        moved_df = pd.DataFrame(moved)
+        moved_df["qt_moved"] = moved_df["qt_moved"].astype(float)
+        grouped_moved_df = (
+            moved_df.groupby(["contract", "product", "party_sign"])["qt_moved"]
+            .sum()
+            .reset_index()
+        )
+        response_df = pd.merge(
+            orders_df,
+            grouped_moved_df,
+            left_on="contract_supplement",
+            right_on="contract",
+        )
+        # cleaned_df = clean_df_encoding(response_df)
+        df_col = [
+            "manager",
+            "client",
+            "contract",
+            "party_sign_y",
+            "product_y",
+            "qt_moved",
+            "different",
+        ]
+        # json_output = response_df[df_col].to_json(
+        #     orient="records", indent=4, force_ascii=False
+        # )
+        dict_df = response_df[df_col].to_dict(orient="records")
+        return dict_df
+    else:
+        return []
 
 
 @router.get("/calendar_events")
