@@ -6,7 +6,7 @@ from pandas import Timestamp
 
 from new_agri_bot_backend.config import TELEGRAM_BOT_TOKEN
 from new_agri_bot_backend.services.send_telegram_notification import send_notification
-from new_agri_bot_backend.tables import Submissions
+from new_agri_bot_backend.tables import Submissions, Users
 
 test_dict = {
     "contract": [
@@ -675,7 +675,13 @@ test_df["contract"] = test_df["contract"].str.strip()
 orders_list = test_df["contract"].unique().tolist()
 
 
-async def get_data_from_df(orders: list):
+async def get_data_from_df(frame: pd.DataFrame):
+    """
+    Принимает DataFrame, извлекает из него уникальные номера контрактов
+    и запрашивает по ним данные о менеджерах и клиентах из БД.
+    """
+    # Извлекаем уникальные контракты прямо из DataFrame
+    orders = frame["contract"].unique().tolist()
     try:
         data = (
             await Submissions.select(
@@ -697,26 +703,26 @@ async def get_data_from_df(orders: list):
         return {}
 
 
-async def notifications(bot: Bot):
+async def notifications(bot: Bot, frame: pd.DataFrame):
     # 1. Получаем словарь { 'номер_контракта': 'имя_менеджера' }
-    contract_data_map = await get_data_from_df(orders_list)
+    contract_data_map = await get_data_from_df(frame)
     print("--- Словарь сопоставления Контракт -> Менеджер ---")
     print(contract_data_map)
 
     # 2. Добавляем колонку 'manager' в DataFrame, используя метод .map()
     # Создаем две новые колонки: 'manager' и 'client'
-    test_df["manager"] = test_df["contract"].map(
+    frame["manager"] = frame["contract"].map(
         lambda x: contract_data_map.get(x, {}).get("manager")
     )
-    test_df["client"] = test_df["contract"].map(
+    frame["client"] = frame["contract"].map(
         lambda x: contract_data_map.get(x, {}).get("client")
     )
     # Заполняем пропуски, если для какого-то контракта не нашелся менеджер
-    test_df["manager"] = test_df["manager"].fillna("Менеджер не определен")
-    test_df["client"] = test_df["client"].fillna("Клиент не определен")
+    frame["manager"] = frame["manager"].fillna("Менеджер не определен")
+    frame["client"] = frame["client"].fillna("Клиент не определен")
 
     # 3. Группируем DataFrame по новой колонке 'manager'
-    grouped_by_manager = test_df.groupby("manager")
+    grouped_by_manager = frame.groupby("manager")
 
     print("\n--- Данные, сгруппированные по менеджеру ---")
     # 4. Итерируемся по группам
@@ -727,7 +733,7 @@ async def notifications(bot: Bot):
         )
         # --- Формирование красивого сообщения для Telegram ---
         message_text = f"👋 Доброго дня, *{informal_manager_name}*!\n\n"
-        message_text += "🆕 У вас є нові записи для аналізу:\n"
+        message_text += "🆕 У Вас є нові дані по переміщенню товарів:\n"
 
         # Группируем записи по номеру заказа для более компактного вида
         for order_id, order_group in manager_group_df.groupby("order"):
@@ -765,29 +771,32 @@ async def notifications(bot: Bot):
                         # message_text += f"      📈 *Напрям:* {row.get('line_of_business', 'N/A')}\n"
                         # message_text += f"      🗓️ *Період:* {row.get('period', 'N/A')}\n"
                         # message_text += f"      📅 *Дата:* {formatted_date}\n"
-                        message_text += (
-                            "      " + "---" + "\n"
-                        )  # Разделитель для партий
+                        message_text += "-" * 40 + "\n"  # Разделитель для партий
 
         # Выводим сформированное сообщение (в дальнейшем здесь будет вызов send_notification)
+        telegram_id = (
+            await Users.select(Users.telegram_id)
+            .where(Users.full_name_for_orders == manager_name)
+            .run()
+        )
         try:
             await send_notification(
                 bot=bot,
                 chat_ids=[
-                    548019148,
+                    telegram_id,
                 ],
                 text=message_text,
             )
-            print(f"\n--- Сообщение для {manager_name} ---\n")
-            print(message_text)
-            print(f"\n--- Конец сообщения для {manager_name} ---\n")
+            # print(f"\n--- Сообщение для {manager_name} ---\n")
+            # print(message_text)
+            # print(f"\n--- Конец сообщения для {manager_name} ---\n")
         except Exception as e:
             print(f"!!! Ошибка при отправке уведомления менеджеру {manager_name}: {e}")
 
 
 async def main_notifications_runner():
     async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
-        await notifications(bot)
+        await notifications(bot, test_df)
 
 
 if __name__ == "__main__":

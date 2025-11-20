@@ -8,6 +8,9 @@ import numpy as np
 import re
 from typing import Dict, Any, Tuple, List
 
+from .config import bot
+from .services.ordered_moved_notifications import notifications
+
 # from piccolo_conf import DB
 
 # Импорты моделей Piccolo ORM
@@ -412,6 +415,7 @@ async def save_processed_data_to_db(
                     *[MovedData(**rec) for rec in cleaned_records]
                 ).run()
                 print("Новые записи успешно добавлены в MovedData.")
+                await notifications(bot=bot, frame=df_new_matches_to_add)
             else:
                 print("Новых записей для добавления в MovedData не найдено.")
 
