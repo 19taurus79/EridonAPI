@@ -14,7 +14,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from piccolo.columns.defaults import TimestampNow
 from . import models, processing
-from .tables import Remains, Events
+from .models import RegionResponse, AddressResponse
+from .tables import Remains, Events, AddressGuide
 from aiogram.types import FSInputFile, BufferedInputFile
 from fastapi import (
     FastAPI,
@@ -616,6 +617,65 @@ async def upload_data(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Ошибка обработки файлов: {e}",
         )
+
+
+# 1. Получение списка областей (и городов со спец. статусом)
+@app.get("/regions", response_model=List[RegionResponse])
+async def get_regions():
+    # Выбираем категории 'O' (Области) и 'K' (Киев, Севастополь)
+    # Сортируем по названию
+    regions = (
+        await AddressGuide.select(AddressGuide.level_1_id, AddressGuide.name)
+        .distinct()
+        .where(AddressGuide.category.is_in(["O"]))
+        .order_by(AddressGuide.name)
+        .run()
+    )
+
+    return regions
+
+
+# 2. Поиск населенного пункта в области
+@app.get("/addresses/search", response_model=List[AddressResponse])
+async def search_addresses(
+    q: str = Query(..., min_length=3, description="Название населенного пункта"),
+    region_id: str = Query(..., description="ID области (level_1_id)"),
+):
+    # Ищем только в конкретной области (level_1_id == region_id)
+    query = (
+        AddressGuide.select(
+            AddressGuide.name,
+            AddressGuide.category,
+            AddressGuide.level_1_id.name.as_alias("region"),
+            AddressGuide.level_2_id.name.as_alias("district"),
+            AddressGuide.level_3_id.name.as_alias("community"),
+        )
+        .where(
+            AddressGuide.name.ilike(f"%{q}%"),
+            AddressGuide.category.is_in(["M", "X", "C"]),  # Только населенные пункты
+            AddressGuide.level_1_id == region_id,  # Фильтр по области
+        )
+        .limit(20)
+    )
+    results = await query.run()
+
+    response = []
+    for row in results:
+        parts = [row.get("district"), row.get("community"), row.get("name")]
+        full_addr = ", ".join([p for p in parts if p])
+
+        response.append(
+            {
+                "name": row["name"],
+                "category": row["category"],
+                "full_address": full_addr,
+                "region": row.get("region"),
+                "district": row.get("district"),
+                "community": row.get("community"),
+            }
+        )
+
+    return response
 
 
 @app.post("/delivery/send")

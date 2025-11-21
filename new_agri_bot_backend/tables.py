@@ -243,3 +243,14 @@ class FreeStock(Table):
     free_qty = BigInt()
     buh_qty = BigInt()
     skl_qty = BigInt()
+
+
+class AddressGuide(Table):
+    id = Varchar(primary_key=True)
+    level_1_id = ForeignKey(references="AddressGuide")  # Область
+    level_2_id = ForeignKey(references="AddressGuide")  # Район
+    level_3_id = ForeignKey(references="AddressGuide")  # Громада
+    level_4_id = ForeignKey(references="AddressGuide")  # Населенный пункт
+    level_5_id = ForeignKey(references="AddressGuide")  # Район города
+    category = Varchar()  # O, K, P, H, M, X, C, B
+    name = Varchar()

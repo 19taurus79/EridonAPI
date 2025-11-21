@@ -1,12 +1,16 @@
 # app/data_loader.py
 import asyncio
+import csv
 import uuid
 import json
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 import numpy as np
 import re
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Optional
+
+from piccolo.query import Insert
 
 from .config import bot
 from .services.ordered_moved_notifications import notifications
@@ -22,6 +26,7 @@ from .tables import (
     MovedData,
     ProductGuide,
     FreeStock,
+    AddressGuide,
 )
 
 # Импорты функций обработки данных
