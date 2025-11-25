@@ -254,3 +254,17 @@ class AddressGuide(Table):
     level_5_id = ForeignKey(references="AddressGuide")  # Район города
     category = Varchar()  # O, K, P, H, M, X, C, B
     name = Varchar()
+
+
+class ClientAddress(Table):
+    manager = Varchar()
+    client = Varchar()
+    region = Varchar()
+    area = Varchar()
+    commune = Varchar()
+    city = Varchar()
+    latitude = DoublePrecision()
+    longitude = DoublePrecision()
+    representative = Varchar()
+    phone1 = Varchar()
+    phone2 = Varchar()

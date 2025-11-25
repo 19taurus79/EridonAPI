@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from piccolo.columns.defaults import TimestampNow
 from . import models, processing
 from .models import RegionResponse, AddressResponse
-from .tables import Remains, Events, AddressGuide
+from .tables import Remains, Events, AddressGuide, Submissions, ClientAddress
 from aiogram.types import FSInputFile, BufferedInputFile
 from fastapi import (
     FastAPI,
@@ -636,6 +636,13 @@ async def get_regions():
 
 
 # 2. Поиск населенного пункта в области
+@app.get("/get_all_orders_and_address")
+async def get_all_orders_and_address():
+    orders = await Submissions.select().where(Submissions.different > 0).run()
+    address = await ClientAddress.select().run()
+    return orders, address
+
+
 @app.get("/addresses/search", response_model=List[AddressResponse])
 async def search_addresses(
     q: str = Query(..., min_length=3, description="Название населенного пункта"),
