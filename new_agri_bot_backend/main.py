@@ -461,8 +461,13 @@ async def manual_match(session_id: str, match_input: models.ManualMatchInput):
     current_moved_df = leftover_data["current_moved"]
     current_notes_df = leftover_data["current_notes"]
 
+    # Извлекаем индексы из нового формата запроса
+    selected_moved_indices = [item.index for item in match_input.selected_moved_items]
+
     try:
-        selected_moved = current_moved_df.loc[match_input.selected_moved_indices]
+        # Проверяем наличие всех нужных строк перед началом обработки
+        # current_moved_df.loc[selected_moved_indices]
+        selected_moved = current_moved_df.loc[selected_moved_indices]
         selected_notes = current_notes_df.loc[match_input.selected_notes_indices]
     except KeyError:
         raise HTTPException(
@@ -470,8 +475,6 @@ async def manual_match(session_id: str, match_input: models.ManualMatchInput):
             detail="Ошибка: одна или несколько выбранных позиций уже были сопоставлены ранее.",
         )
 
-    sum_moved = selected_moved["Перемещено"].sum()
-    sum_notes = selected_notes["Количество_в_примечании"].sum()
     newly_matched = []
     product = leftover_data["product"]
     # --- НОВЫЙ УПРОЩЕННЫЙ АЛГОРИТМ ---
@@ -489,20 +492,41 @@ async def manual_match(session_id: str, match_input: models.ManualMatchInput):
     main_note_row = selected_notes.iloc[0]
     main_contract = main_note_row["Договор"]
 
-    # Проходим по каждой выбранной "перемещенной" позиции
-    for _, moved_row in selected_moved.iterrows():
+    # Проходим по каждому элементу, который выбрал пользователь
+    for selected_item in match_input.selected_moved_items:
+        moved_index = selected_item.index
+        requested_qty = selected_item.quantity
+
+        # Получаем строку из DataFrame по индексу
+        moved_row = current_moved_df.loc[moved_index]
+        available_qty = moved_row["Перемещено"]
+
+        # Проверка, что запрошенное количество не превышает доступное
+        if requested_qty > available_qty:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ошибка: Попытка списать {requested_qty} по позиции с индексом {moved_index}, но доступно только {available_qty}.",
+            )
+
         # Создаем новую сопоставленную запись
         record = moved_row.to_dict()
         record["Договор"] = main_contract
-        # Количество берем из "перемещено", так как это "факт"
-        record["Количество"] = moved_row["Перемещено"]
+        # Количество берем из запроса, а не всю доступную сумму
+        record["Количество"] = requested_qty
         record["Источник"] = "Ручное сопоставление"
         newly_matched.append(record)
 
-    # Обновляем состояние сессии: удаляем все выбранные пользователем позиции
-    # из списков для дальнейшего сопоставления.
+        # --- Логика списания ---
+        remaining_qty = available_qty - requested_qty
+        if remaining_qty > 0:
+            # Частичное списание: обновляем остаток
+            current_moved_df.loc[moved_index, "Перемещено"] = remaining_qty
+        else:
+            # Полное списание: удаляем строку
+            current_moved_df.drop(moved_index, inplace=True)
+
+    # Обновляем состояние "примечаний" (удаляем выбранные)
     try:
-        current_moved_df.drop(match_input.selected_moved_indices, inplace=True)
         current_notes_df.drop(match_input.selected_notes_indices, inplace=True)
     except KeyError:
         # Эта ошибка может возникнуть, если фронтенд отправит уже удаленные индексы.

@@ -97,6 +97,13 @@ async def save_processed_data_to_db(
     df_free_stock = await run_in_threadpool(process_free_stock, free_stock_content)
 
     # --- ГЛОБАЛЬНАЯ НОРМАЛИЗАЦИЯ: Очищаем 'product' во всех DataFrame ---
+    # --- ИСПРАВЛЕНИЕ: Преобразуем поля количества в float для df_free_stock ---
+    for col in ["free_qty", "buh_qty", "skl_qty"]:
+        if col in df_free_stock.columns:
+            # Преобразуем в числовой тип, нечисловые значения станут NaN, затем заменяем NaN на 0.0
+            df_free_stock[col] = pd.to_numeric(df_free_stock[col], errors='coerce').fillna(0.0).astype(float)
+    # ---------------------------------------------------------------------
+
     df_av_stock["product"] = df_av_stock["product"].str.strip()
     df_remains["product"] = df_remains["product"].str.strip()
     df_submissions["product"] = df_submissions["product"].str.strip()
