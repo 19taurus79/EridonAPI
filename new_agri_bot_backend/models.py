@@ -5,6 +5,9 @@ from typing import List, Dict, Any, Optional
 # Pydantic-модели используются для валидации данных,
 # которые приложение получает и отправляет.
 # Это обеспечивает надежность и предсказуемость API.
+class SelectedMovedItem(BaseModel):
+    index: int
+    quantity: float
 
 
 class ManualMatchInput(BaseModel):
@@ -15,7 +18,8 @@ class ManualMatchInput(BaseModel):
     """
 
     request_id: str
-    selected_moved_indices: List[int]
+    # selected_moved_indices: List[int]
+    selected_moved_items: List[SelectedMovedItem]
     selected_notes_indices: List[int]
 
 
