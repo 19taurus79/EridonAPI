@@ -116,7 +116,9 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
                         message_text += "-" * 40 + "\n"  # Разделитель для партий
 
         # --- ИСПРАВЛЕНИЕ: Добавляем секцию менеджера в отчет ОДИН РАЗ после формирования ---
-        admin_report_parts.append(f"\n\n👤 *Менеджер:* `{manager_name}`\n" + "-" * 20 + "\n")
+        admin_report_parts.append(
+            f"\n\n👤 *Менеджер:* `{manager_name}`\n" + "-" * 20 + "\n"
+        )
         # Убираем личное приветствие из админской версии
         admin_report_parts.append(message_text.split("\n\n", 1)[-1])
 
@@ -128,7 +130,7 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
         )
         try:
             if telegram_id:
-                if app_env == "prod":
+                if app_env == "production":
                     await send_notification(
                         bot=bot,
                         chat_ids=[telegram_id],
@@ -162,7 +164,9 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
                     parsed_ids = json.loads(ADMINS_ID)
                     admin_chat_ids = [int(admin_id) for admin_id in parsed_ids]
                 except (json.JSONDecodeError, TypeError):
-                    print(f"!!! Помилка: Не вдалося розпарсити ADMINS_ID. Перевірте формат у .env файлі. Очікується формат [\"id1\", \"id2\"].")
+                    print(
+                        f'!!! Помилка: Не вдалося розпарсити ADMINS_ID. Перевірте формат у .env файлі. Очікується формат ["id1", "id2"].'
+                    )
 
             try:
                 # print(
@@ -181,7 +185,7 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
                     return
 
                 admin_full_report = "".join(admin_report_parts).strip()
-                if app_env == "prod":
+                if app_env == "production":
                     print(
                         f"\n--- Відправка зведеного звіту адміністраторам ({', '.join(map(str, admin_chat_ids))}) ---"
                     )
