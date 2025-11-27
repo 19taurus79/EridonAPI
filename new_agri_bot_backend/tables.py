@@ -240,9 +240,9 @@ class FreeStock(Table):
     warehouse = Varchar()
     date_in_co = Varchar()
     line_of_business = Varchar()
-    free_qty = BigInt()
-    buh_qty = BigInt()
-    skl_qty = BigInt()
+    free_qty = DoublePrecision()
+    buh_qty = DoublePrecision()
+    skl_qty = DoublePrecision()
 
 
 class AddressGuide(Table):
