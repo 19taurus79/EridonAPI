@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from piccolo.columns.defaults import TimestampNow
 from . import models, processing
 from .models import RegionResponse, AddressResponse
-from .tables import Remains, Events, AddressGuide, Submissions, ClientAddress
+from .tables import Remains, Events, AddressGuide, Submissions, ClientAddress, MovedData
 from aiogram.types import FSInputFile, BufferedInputFile
 from fastapi import (
     FastAPI,
@@ -50,7 +50,7 @@ from .data_retrieval import router as data_retrieval_router
 from .data_loader import save_processed_data_to_db
 from .bi import router as bi_router
 from .bi_pandas import router as bi_pandas_router
-from .utils import send_message_to_managers
+from .utils import send_message_to_managers, create_composite_key_from_dict
 
 # Импорт TELEGRAM_BOT_TOKEN из config.py для инициализации бота
 from .config import TELEGRAM_BOT_TOKEN, bot
@@ -419,6 +419,48 @@ async def upload_and_process_files(
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Ошибка при обработке файлов: {e}")
+
+    # --- НОВОВВЕДЕНИЕ: Фильтрация уже сопоставленных данных ---
+    try:
+        # 1. Получаем все ранее сопоставленные записи из БД
+        existing_moved_records = await MovedData.select(
+            MovedData.order, MovedData.product, MovedData.party_sign, MovedData.qt_moved
+        ).run()
+
+        # 2. Создаем множество уникальных ключей для быстрой проверки
+        existing_keys: Set[str] = {
+            create_composite_key_from_dict(
+                rec, ["order", "product", "party_sign", "qt_moved"]
+            )
+            for rec in existing_moved_records
+        }
+
+        # 3. Фильтруем 'leftovers', удаляя уже существующие записи
+        filtered_leftovers = {}
+        for leftover_id, leftover_data in leftovers.items():
+            moved_item = leftover_data["current_moved"][
+                0
+            ]  # В каждой задаче только одно перемещение
+            # Названия колонок в 'moved_item' из Excel
+            item_key = create_composite_key_from_dict(
+                moved_item,
+                [
+                    "Заявка на відвантаження",
+                    "Товар",
+                    "Партія номенклатури",
+                    "Перемещено",
+                ],
+            )
+            if item_key not in existing_keys:
+                filtered_leftovers[leftover_id] = leftover_data
+        leftovers = (
+            filtered_leftovers  # Заменяем оригинальные leftovers отфильтрованными
+        )
+    except Exception as e:
+        print(
+            f"!!! Предупреждение: не удалось отфильтровать исторические данные. Ошибка: {e}"
+        )
+    # ---------------------------------------------------------
 
     session_id = str(uuid.uuid4())
 

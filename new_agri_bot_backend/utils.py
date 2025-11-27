@@ -20,9 +20,7 @@ async def send_message_to_managers():
     user_tg_id_list = await Users.select().where(Users.is_allowed == True).run()
     now = datetime.now() + timedelta(hours=3)
     time_format = "%d-%m-%Y %H:%M:%S"
-    message_text = (
-        f"Дані в боті оновлені.\nІ вони актуальні станом на… {now.strftime(time_format)}"
-    )
+    message_text = f"Дані в боті оновлені.\nІ вони актуальні станом на… {now.strftime(time_format)}"
 
     print(f"--- Running in {APP_ENV.upper()} mode ---")
 
@@ -41,3 +39,14 @@ async def send_message_to_managers():
                 print(f"DEV MODE: Would send to {telegram_id}: '{message_text}'")
         except Exception as e:
             print(f"Failed to send message to manager ID {telegram_id}: {e}")
+
+
+def create_composite_key_from_dict(item: dict, keys: list) -> str:
+    """
+    Создает стандартизированный композитный ключ из словаря.
+    """
+    key_parts = []
+    for key in keys:
+        value = item.get(key)
+        key_parts.append(str(value).strip() if value is not None else "")
+    return "_".join(key_parts)
