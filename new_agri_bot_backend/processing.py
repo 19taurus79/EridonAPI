@@ -56,6 +56,7 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[Dict, List]:
     )
     cols_to_drop_ordered = [col for col in ["Примечание"] if col in ordered.columns]
     ordered = ordered.drop(columns=cols_to_drop_ordered)
+    ordered["Заказано"] = ordered["Заказано"].replace(["", " "], 0)
 
     if not ordered.empty:
         ordered = ordered.iloc[:-1]
