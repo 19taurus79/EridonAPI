@@ -172,6 +172,18 @@ async def get_product_by_id(
     return product
 
 
+@router.get("/managers")
+async def get_managers():
+    managers = (
+        await Submissions.select(Submissions.manager)
+        .where(Submissions.different > 0)
+        .distinct()
+        .order_by(Submissions.manager)
+        .run()
+    )
+    return managers
+
+
 @router.get(
     "/clients",
     summary="отримати клієнтів по менеджеру, якщо адмін то усіх ",
