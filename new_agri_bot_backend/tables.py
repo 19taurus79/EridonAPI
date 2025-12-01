@@ -117,7 +117,7 @@ class MovedNot(Table):
     note = Varchar()
 
 
-# TODO: Зробити міграцію в тестовій, та робочій
+
 class Payment(Table):
     id = UUID(primary_key=True)
     contract_supplement = Varchar()

@@ -36,13 +36,13 @@ def check_telegram_auth(init_data: str) -> dict:
             "TELEGRAM_BOT_TOKEN не установлен. Проверьте config.py или переменные окружения."
         )
 
-    print("\n--- НАЧАЛО ДЕТАЛЬНОЙ ОТЛАДКИ check_telegram_auth ---")
-    print(f"1. Получена init_data: '{init_data}'")
-    print(f"2. Длина init_data: {len(init_data)}")
-    print(
-        f"3. TELEGRAM_BOT_TOKEN (обрезан): '{TELEGRAM_BOT_TOKEN[:5]}...{TELEGRAM_BOT_TOKEN[-5:]}'"
-    )
-    print(f"4. Длина TELEGRAM_BOT_TOKEN: {len(TELEGRAM_BOT_TOKEN)}")
+    # print("\n--- НАЧАЛО ДЕТАЛЬНОЙ ОТЛАДКИ check_telegram_auth ---")
+    # print(f"1. Получена init_data: '{init_data}'")
+    # print(f"2. Длина init_data: {len(init_data)}")
+    # print(
+    #     f"3. TELEGRAM_BOT_TOKEN (обрезан): '{TELEGRAM_BOT_TOKEN[:5]}...{TELEGRAM_BOT_TOKEN[-5:]}'"
+    # )
+    # print(f"4. Длина TELEGRAM_BOT_TOKEN: {len(TELEGRAM_BOT_TOKEN)}")
 
     parsed = dict(parse_qsl(init_data))
     hash_ = parsed.pop("hash", None)
@@ -52,9 +52,9 @@ def check_telegram_auth(init_data: str) -> dict:
             detail="Отсутствует 'hash' в данных инициализации Telegram.",
         )
 
-    print(f"5. Извлечен 'hash_': '{hash_}'")
-    print(f"6. Распарсенные данные (после удаления 'hash'): {parsed}")
-    print(f"7. Количество полей для проверки: {len(parsed)}")
+    # print(f"5. Извлечен 'hash_': '{hash_}'")
+    # print(f"6. Распарсенные данные (после удаления 'hash'): {parsed}")
+    # print(f"7. Количество полей для проверки: {len(parsed)}")
 
     sorted_items = sorted(parsed.items())
     data_check_string_parts = []
@@ -64,10 +64,10 @@ def check_telegram_auth(init_data: str) -> dict:
 
     data_check_string = "\n".join(data_check_string_parts)
 
-    print(f"8. Сформированная data_check_string (длина {len(data_check_string)}):")
-    print("--- НАЧАЛО data_check_string ---")
-    print(data_check_string)
-    print("--- КОНЕЦ data_check_string ---")
+    # print(f"8. Сформированная data_check_string (длина {len(data_check_string)}):")
+    # print("--- НАЧАЛО data_check_string ---")
+    # print(data_check_string)
+    # print("--- КОНЕЦ data_check_string ---")
 
     secret_key_intermediate = hmac.new(
         key=b"WebAppData",
@@ -75,9 +75,9 @@ def check_telegram_auth(init_data: str) -> dict:
         digestmod=hashlib.sha256,
     ).digest()
 
-    print(
-        f"9. Промежуточный секретный ключ (HMAC(WebAppData, bot_token)) (hex): {secret_key_intermediate.hex()}"
-    )
+    # print(
+    #     f"9. Промежуточный секретный ключ (HMAC(WebAppData, bot_token)) (hex): {secret_key_intermediate.hex()}"
+    # )
 
     calculated_hash = hmac.new(
         key=secret_key_intermediate,
@@ -85,9 +85,9 @@ def check_telegram_auth(init_data: str) -> dict:
         digestmod=hashlib.sha256,
     ).hexdigest()
 
-    print(f"10. Вычисленный финальный хэш: '{calculated_hash}'")
-    print(f"11. Хэши совпадают? (Calculated == Received) : {calculated_hash == hash_}")
-    print("--- КОНЕЦ ДЕТАЛЬНОЙ ОТЛАДКИ check_telegram_auth ---\n")
+    # print(f"10. Вычисленный финальный хэш: '{calculated_hash}'")
+    # print(f"11. Хэши совпадают? (Calculated == Received) : {calculated_hash == hash_}")
+    # print("--- КОНЕЦ ДЕТАЛЬНОЙ ОТЛАДКИ check_telegram_auth ---\n")
 
     if calculated_hash != hash_:
         raise HTTPException(

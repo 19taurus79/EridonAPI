@@ -25,9 +25,7 @@ async def send_notification(
 
     for chat_id in chat_ids:
         try:
-            await bot.send_message(
-                chat_id=chat_id[0]["telegram_id"], text=text, parse_mode=parse_mode
-            )
+            await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
             logger.info(f"Сообщение успешно отправлено в чат {chat_id}")
         except TelegramAPIError as e:
             # Обрабатываем ошибки, если пользователь заблокировал бота, чат не найден и т.д.

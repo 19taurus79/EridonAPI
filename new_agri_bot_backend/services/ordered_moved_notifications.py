@@ -123,17 +123,23 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
         admin_report_parts.append(message_text.split("\n\n", 1)[-1])
 
         # Выводим сформированное сообщение (в дальнейшем здесь будет вызов send_notification)
-        telegram_id = (
+        telegram_id_result = (
             await Users.select(Users.telegram_id)
             .where(Users.full_name_for_orders == manager_name)
             .run()
         )
+        # --- ИСПРАВЛЕНИЕ: Правильно извлекаем ID из результата ---
+        # .run() возвращает список словарей, нам нужно первое значение.
+        telegram_id = (
+            telegram_id_result[0]["telegram_id"] if telegram_id_result else None
+        )
+
         try:
             if telegram_id:
                 if app_env == "production":
                     await send_notification(
                         bot=bot,
-                        chat_ids=[telegram_id],
+                        chat_ids=[telegram_id],  # Передаем ID в списке
                         text=message_text,
                     )
                 else:
@@ -185,13 +191,14 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
                     return
 
                 admin_full_report = "".join(admin_report_parts).strip()
+
                 if app_env == "production":
                     print(
                         f"\n--- Відправка зведеного звіту адміністраторам ({', '.join(map(str, admin_chat_ids))}) ---"
                     )
                     await send_notification(
                         bot=bot,
-                        chat_ids=admin_chat_ids,
+                        chat_ids=admin_chat_ids,  # Передаем список ID напрямую
                         text=admin_full_report,
                     )
                     print("✅ Зведений звіт успішно відправлено.")
