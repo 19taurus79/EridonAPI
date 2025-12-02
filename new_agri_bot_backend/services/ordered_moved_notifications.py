@@ -159,57 +159,59 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
             # print(f"\n--- Конец сообщения для {manager_name} ---\n")
         except Exception as e:
             print(f"!!! Ошибка при отправке уведомления менеджеру {manager_name}: {e}")
-        if len(admin_report_parts) > 1:  # Отправляем, только если были данные
-            # admin_full_report = "".join(admin_report_parts)
 
-            # --- ИСПРАВЛЕНИЕ: Парсим ID администраторов из JSON-строки ---
-            admin_chat_ids = []
-            if ADMINS_ID and isinstance(ADMINS_ID, str):
-                try:
-                    # Пытаемся распарсить строку как JSON-массив
-                    parsed_ids = json.loads(ADMINS_ID)
-                    admin_chat_ids = [int(admin_id) for admin_id in parsed_ids]
-                except (json.JSONDecodeError, TypeError):
-                    print(
-                        f'!!! Помилка: Не вдалося розпарсити ADMINS_ID. Перевірте формат у .env файлі. Очікується формат ["id1", "id2"].'
-                    )
+    # --- ИСПРАВЛЕНИЕ: Отправляем сводный отчет ОДИН РАЗ после завершения цикла по менеджерам ---
+    if len(admin_report_parts) > 1:  # Отправляем, только если были данные
+        # admin_full_report = "".join(admin_report_parts)
 
+        # --- ИСПРАВЛЕНИЕ: Парсим ID администраторов из JSON-строки ---
+        admin_chat_ids = []
+        if ADMINS_ID and isinstance(ADMINS_ID, str):
             try:
-                # print(
-                #     f"\n--- Відправка зведеного звіту адміністратору ({ADMIN_CHAT_ID}) ---"
-                # )
-                # await send_notification(
-                #     bot=bot,
-                #     chat_ids=[ADMIN_CHAT_ID],
-                #     text=admin_full_report,
-                # )
-                # print("✅ Зведений звіт успішно відправлено.")
-                if not admin_chat_ids:
-                    print(
-                        "!!! Увага: Не знайдено жодного адміністратора для відправки звіту."
-                    )
-                    return
+                # Пытаемся распарсить строку как JSON-массив
+                parsed_ids = json.loads(ADMINS_ID)
+                admin_chat_ids = [int(admin_id) for admin_id in parsed_ids]
+            except (json.JSONDecodeError, TypeError):
+                print(
+                    f'!!! Помилка: Не вдалося розпарсити ADMINS_ID. Перевірте формат у .env файлі. Очікується формат ["id1", "id2"].'
+                )
 
-                admin_full_report = "".join(admin_report_parts).strip()
+        try:
+            # print(
+            #     f"\n--- Відправка зведеного звіту адміністратору ({ADMIN_CHAT_ID}) ---"
+            # )
+            # await send_notification(
+            #     bot=bot,
+            #     chat_ids=[ADMIN_CHAT_ID],
+            #     text=admin_full_report,
+            # )
+            # print("✅ Зведений звіт успішно відправлено.")
+            if not admin_chat_ids:
+                print(
+                    "!!! Увага: Не знайдено жодного адміністратора для відправки звіту."
+                )
+                return
 
-                if app_env == "production":
-                    print(
-                        f"\n--- Відправка зведеного звіту адміністраторам ({', '.join(map(str, admin_chat_ids))}) ---"
-                    )
-                    await send_notification(
-                        bot=bot,
-                        chat_ids=admin_chat_ids,  # Передаем список ID напрямую
-                        text=admin_full_report,
-                    )
-                    print("✅ Зведений звіт успішно відправлено.")
-                else:
-                    print(
-                        f"\n--- [DEV] Зведений звіт для адміністраторів ({', '.join(map(str, admin_chat_ids))}) ---"
-                    )
-                    print(admin_full_report)
-                    print(f"--- [DEV] Кінець зведеного звіту ---\n")
-            except Exception as e:
-                print(f"!!! Помилка при відправці зведеного звіту адміністратору: {e}")
+            admin_full_report = "".join(admin_report_parts).strip()
+
+            if app_env == "production":
+                print(
+                    f"\n--- Відправка зведеного звіту адміністраторам ({', '.join(map(str, admin_chat_ids))}) ---"
+                )
+                await send_notification(
+                    bot=bot,
+                    chat_ids=admin_chat_ids,  # Передаем список ID напрямую
+                    text=admin_full_report,
+                )
+                print("✅ Зведений звіт успішно відправлено.")
+            else:
+                print(
+                    f"\n--- [DEV] Зведений звіт для адміністраторів ({', '.join(map(str, admin_chat_ids))}) ---"
+                )
+                print(admin_full_report)
+                print(f"--- [DEV] Кінець зведеного звіту ---\n")
+        except Exception as e:
+            print(f"!!! Помилка при відправці зведеного звіту адміністратору: {e}")
 
 
 #
