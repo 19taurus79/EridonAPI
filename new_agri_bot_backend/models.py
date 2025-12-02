@@ -74,3 +74,15 @@ class AddressResponse(BaseModel):
     region: Optional[str] = None
     district: Optional[str] = None
     community: Optional[str] = None
+
+
+class AddressCreate(BaseModel):
+
+    client: str
+    manager: str
+    representative: str
+    phone1: str
+    phone2: Optional[str] = None
+    address: str
+    latitude: float
+    longitude: float

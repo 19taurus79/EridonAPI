@@ -12,9 +12,10 @@ import uvicorn
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
+from asyncpg import UniqueViolationError
 from piccolo.columns.defaults import TimestampNow
 from . import models, processing
-from .models import RegionResponse, AddressResponse
+from .models import RegionResponse, AddressResponse, AddressCreate
 from .tables import Remains, Events, AddressGuide, Submissions, ClientAddress, MovedData
 from aiogram.types import FSInputFile, BufferedInputFile
 from fastapi import (
@@ -707,6 +708,79 @@ async def get_all_orders_and_address():
     orders = await Submissions.select().where(Submissions.different > 0).run()
     address = await ClientAddress.select().run()
     return orders, address
+
+
+@app.put("/update_address_for_client/{id}")
+async def update_address_for_client(address_data: AddressCreate, id: int):
+    obj = await ClientAddress.objects().get(where=(ClientAddress.id == id))
+    data_dict = address_data.dict()
+    full_address_str = data_dict.pop("address", None)
+    if not full_address_str:
+        raise HTTPException(
+            status_code=400, detail="Поле 'full_address' обязательно для заполнения."
+        )
+
+    # 2. Разбираем строку адреса на части
+    address_parts = [part.strip() for part in full_address_str.split(",")]
+
+    data_dict["region"] = address_parts[0].split()[0]
+    data_dict["area"] = address_parts[1].split()[0]
+    data_dict["commune"] = address_parts[2].split()[0]
+    data_dict["city"] = address_parts[3]
+    # Обновляем поля из словаря data
+    obj.client = data_dict.get("client", obj.client)
+    obj.manager = data_dict.get("manager", obj.manager)
+    obj.representative = data_dict.get("representative", obj.representative)
+    obj.phone1 = data_dict.get("phone1", obj.phone1)
+    obj.phone2 = data_dict.get("phone2", obj.phone2)
+    obj.region = data_dict.get("region", obj.region)
+    obj.area = data_dict.get("area", obj.area)
+    obj.commune = data_dict.get("commune", obj.commune)
+    obj.city = data_dict.get("city", obj.city)
+    obj.latitude = data_dict.get("latitude", obj.latitude)
+    obj.longitude = data_dict.get("longitude", obj.longitude)
+
+    # Сохраняем изменения
+    await obj.save()
+
+
+@app.post("/add_address_for_client")
+async def create_address_for_client(address_data: AddressCreate):
+    """
+    Создает новый адрес для клиента, "умно" разбирая строку полного адреса.
+    """
+    # 1. Преобразуем входные данные в словарь
+    data_dict = address_data.dict()
+    full_address_str = data_dict.pop("address", None)
+
+    if not full_address_str:
+        raise HTTPException(
+            status_code=400, detail="Поле 'full_address' обязательно для заполнения."
+        )
+
+    # 2. Разбираем строку адреса на части
+    address_parts = [part.strip() for part in full_address_str.split(",")]
+
+    data_dict["region"] = address_parts[3].split()[0]
+    data_dict["area"] = address_parts[2].split()[0]
+    data_dict["commune"] = address_parts[1].split()[0]
+    data_dict["city"] = address_parts[0]
+
+    # 4. Создаем и сохраняем объект ClientAddress с разобранными данными
+    try:
+        new_address = ClientAddress(**data_dict)
+        await new_address.save().run()
+        return {"status": "ok", "message": "Адрес успешно создан."}
+    except UniqueViolationError:
+        raise HTTPException(
+            status_code=409,  # 409 Conflict - стандартный код для таких случаев
+            detail="Така адреса для цього клієнта вже існує.",
+        )
+    except Exception as e:
+        # Обработка ошибок, если не хватает обязательных полей в ClientAddress
+        raise HTTPException(
+            status_code=500, detail=f"Ошибка при сохранении адреса: {e}"
+        )
 
 
 @app.get("/addresses/search", response_model=List[AddressResponse])
