@@ -252,6 +252,7 @@ async def get_contracts(client):
             Submissions.contract_supplement,
             Submissions.line_of_business,
             Submissions.document_status,
+            Submissions.delivery_status,
         )
         .where(
             (Submissions.different > 0)
@@ -261,6 +262,7 @@ async def get_contracts(client):
             Submissions.contract_supplement,
             Submissions.line_of_business,
             Submissions.document_status,
+            Submissions.delivery_status,
         )
         .order_by(Submissions.contract_supplement)
         .run()
