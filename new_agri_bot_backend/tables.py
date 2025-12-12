@@ -49,6 +49,7 @@ class Remains(Table):
     buh = DoublePrecision()
     skl = DoublePrecision()
     weight = Varchar(null=True)
+    storage = DoublePrecision()
     product = ForeignKey(references=ProductGuide)
 
 
@@ -115,7 +116,6 @@ class MovedNot(Table):
     quantity = Varchar()
     contract = Varchar()
     note = Varchar()
-
 
 
 class Payment(Table):

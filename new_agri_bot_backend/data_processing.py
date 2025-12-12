@@ -2,6 +2,7 @@
 import uuid
 
 import pandas as pd
+import numpy as np
 import io
 from .config import valid_line_of_business, valid_warehouse  # Импорт из config.py
 
@@ -152,9 +153,12 @@ def process_remains_reg(content: bytes) -> pd.DataFrame:
         "storage",
     ]
     remains.columns = remains_col_name
-    remains.drop(columns=["storage"], inplace=True)
-    for col in ["buh", "skl"]:
+    # remains.drop(columns=["storage"], inplace=True)
+    for col in ["buh", "skl", "storage"]:
         remains[col] = pd.to_numeric(remains[col], errors="coerce").fillna(0)
+    remains["storage"] = np.where(
+        remains["storage"] < 0, remains["storage"] * -1, remains["storage"]
+    )
     text_columns = [
         "line_of_business",
         "warehouse",
