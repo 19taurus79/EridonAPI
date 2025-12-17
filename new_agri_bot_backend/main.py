@@ -70,9 +70,15 @@ class ChangeDateRequest(BaseModel):
     new_date: date
 
 
+class Party(BaseModel):
+    moved_q: float
+    party: str
+
+
 class DeliveryItem(BaseModel):
     product: str
     quantity: float
+    parties: List[Party]
 
 
 class DeliveryOrder(BaseModel):
@@ -847,7 +853,15 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
     for order in data.orders:
         message_lines.append(f"📦 *Доповнення:* <code>{order.order}</code>")
         for item in order.items:
-            message_lines.append(f" • <code>{item.product}</code> — {item.quantity}")
+            message_lines.append(
+                f" • <code>{item.product}</code> — {item.quantity} шт."
+            )
+            # Добавляем детализацию по партиям
+            if item.parties[0].moved_q > 0:
+                for party in item.parties:
+                    message_lines.append(
+                        f"   - Партія: <code>{party.party}</code>, К-ть: {party.moved_q}"
+                    )
         message_lines.append("")
 
     message = "\n".join(message_lines)
@@ -865,11 +879,17 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
     ws.append(["Дата", data.date])
     ws.append(["Коментар", data.comment])
     ws.append([])
+    # ws.append(["Доповнення", "Товар", "Загальна к-ть", "Партія", "К-ть по партії"])
     ws.append(["Доповнення", "Товар", "Кількість"])
 
     for order in data.orders:
         for item in order.items:
-            ws.append([order.order, item.product, item.quantity])
+            ws.append([order.order, item.product, item.quantity])  # Основная строка
+            if item.parties[0].moved_q > 0:
+                for party in item.parties:
+                    ws.append(
+                        ["", party.party, party.moved_q]
+                    )  # Детализация по партиям
 
         # Сохраняем Excel во временный файл
     # Название файла с именем менеджера
