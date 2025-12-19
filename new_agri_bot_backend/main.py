@@ -38,8 +38,11 @@ from datetime import datetime, timezone, timedelta
 from piccolo_admin.endpoints import create_admin
 
 from openpyxl import Workbook
-from openpyxl.utils import get_column_letter
+
+# from openpyxl.utils import get_column_letter
 from pydantic import BaseModel
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from openpyxl.utils import get_column_letter
 
 # Импорты из ваших новых модулей
 from .telegram_auth import (
@@ -70,9 +73,15 @@ class ChangeDateRequest(BaseModel):
     new_date: date
 
 
+class Party(BaseModel):
+    moved_q: float
+    party: str
+
+
 class DeliveryItem(BaseModel):
     product: str
     quantity: float
+    parties: List[Party]
 
 
 class DeliveryOrder(BaseModel):
@@ -844,48 +853,228 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
         "",
     ]
 
+    # for order in data.orders:
+    #     message_lines.append(f"📦 *Доповнення:* <code>{order.order}</code>")
+    #     for item in order.items:
+    #         message_lines.append(
+    #             f" • <code>{item.product}</code> — {item.quantity} шт."
+    #         )
+    #         # Добавляем детализацию по партиям
+    #         if item.parties[0].moved_q > 0:
+    #             for party in item.parties:
+    #                 message_lines.append(
+    #                     f"   - Партія: <code>{party.party}</code>, К-ть: {party.moved_q}"
+    #                 )
+    #     message_lines.append("")
+    #
+    # message = "\n".join(message_lines)
+    # Обязательно используй parse_mode='HTML' при отправке
+
     for order in data.orders:
-        message_lines.append(f"📦 *Доповнення:* <code>{order.order}</code>")
+        message_lines.append(f"📦 <b>Замовлення</b> <code>{order.order}</code>")
+        message_lines.append("─" * 20)
+
         for item in order.items:
-            message_lines.append(f" • <code>{item.product}</code> — {item.quantity}")
+            message_lines.append(f"🔹 <b>{item.product}</b>")
+            message_lines.append(f"   │ <i>Кількість:</i> {item.quantity} шт.")
+            # Обрати внимание: я заменил "└" на "│" у товара,
+            # чтобы визуально связать его с партиями ниже, если они есть.
+            # Если партий нет — это можно подправить, но пока оставим так для связности.
+
+            # Отбираем только партии с движением
+            active_parties = [p for p in item.parties if p.moved_q > 0]
+
+            # Считаем сколько их всего
+            count = len(active_parties)
+
+            if count > 0:
+                for i, party in enumerate(active_parties):
+                    # Проверяем: это последняя партия в списке?
+                    is_last = i == count - 1
+
+                    # Если последняя - ставим "уголок" (└), иначе "тройник" (├)
+                    branch_symbol = "└" if is_last else "├"
+
+                    message_lines.append(
+                        f"   {branch_symbol} 🔖 <code>{party.party}</code>: {party.moved_q} шт."
+                    )
+            else:
+                # Если партий нет, закрываем ветку товара красиво (опционально)
+                pass
+
+            message_lines.append("")
+
+        message_lines.append("════════════════════")
         message_lines.append("")
+        message = "\n".join(message_lines)
+    # # 🧾 Генерируем Excel
+    # wb = Workbook()
+    # ws = wb.active
+    # ws.title = "Доставка"
+    #
+    # ws.append(["Менеджер", data.manager])
+    # ws.append(["Контрагент", data.client])
+    # ws.append(["Адреса", data.address])
+    # ws.append(["Контакт", data.contact])
+    # ws.append(["Телефон", data.phone])
+    # ws.append(["Дата", data.date])
+    # ws.append(["Коментар", data.comment])
+    # ws.append([])
+    # # ws.append(["Доповнення", "Товар", "Загальна к-ть", "Партія", "К-ть по партії"])
+    # ws.append(["Доповнення", "Товар", "Кількість"])
+    #
+    # for order in data.orders:
+    #     for item in order.items:
+    #         ws.append([order.order, item.product, item.quantity])  # Основная строка
+    #         if item.parties[0].moved_q > 0:
+    #             for party in item.parties:
+    #                 ws.append(
+    #                     ["", party.party, party.moved_q]
+    #                 )  # Детализация по партиям
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill
+    from openpyxl.utils import get_column_letter
 
-    message = "\n".join(message_lines)
-
-    # 🧾 Генерируем Excel
     wb = Workbook()
     ws = wb.active
     ws.title = "Доставка"
 
+    # Заголовок документа (жирный, по центру)
+    header_font = Font(bold=True, size=14)
     ws.append(["Менеджер", data.manager])
-    ws.append(["Контрагент", data.client])
-    ws.append(["Адреса", data.address])
-    ws.append(["Контакт", data.contact])
-    ws.append(["Телефон", data.phone])
-    ws.append(["Дата", data.date])
-    ws.append(["Коментар", data.comment])
-    ws.append([])
-    ws.append(["Доповнення", "Товар", "Кількість"])
+    ws["A1"].font = header_font
+    ws["B1"].font = Font(bold=True)
 
+    ws.append(["Контрагент", data.client])
+    ws["A2"].font = header_font
+    ws["B2"].font = Font(bold=True)
+
+    ws.append(["Адреса", data.address])
+    ws["A3"].font = header_font
+    ws["B3"].font = Font(bold=True)
+
+    ws.append(["Контакт", data.contact])
+    ws["A4"].font = header_font
+    ws["B4"].font = Font(bold=True)
+
+    ws.append(["Телефон", data.phone])
+    ws["A5"].font = header_font
+    ws["B5"].font = Font(bold=True)
+
+    ws.append(["Дата", data.date])
+    ws["A6"].font = header_font
+    ws["B6"].font = Font(bold=True)
+
+    ws.append(["Коментар", data.comment or ""])
+    ws["A7"].font = header_font
+    ws["B7"].font = Font(bold=True)
+
+    # Пустая строка
+    ws.append([])
+
+    # Заголовок таблицы (с сеткой)
+    header_fill = PatternFill(start_color="DDEBF7", fill_type="solid")
+    title_font = Font(bold=True, size=12)
+    thin_border = Border(
+        left=Side(style="thin"),
+        right=Side(style="thin"),
+        top=Side(style="thin"),
+        bottom=Side(style="thin"),
+    )
+
+    ws.append(["Доповнення", "Товар", "Кількість"])
+    row = ws.max_row
+    for col in range(1, 4):
+        cell = ws.cell(row=row, column=col)
+        cell.font = title_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+        cell.border = thin_border
+
+    # Таблица товаров
     for order in data.orders:
         for item in order.items:
+            # ОСНОВНАЯ СТРОКА - ВСЕ ЖИРНОЕ, количество ВПРАВО
             ws.append([order.order, item.product, item.quantity])
+            main_row = ws.max_row
 
-        # Сохраняем Excel во временный файл
+            # Стили основной строки
+            main_bold_font = Font(bold=True)
+            ws[f"A{main_row}"].font = main_bold_font
+            ws[f"A{main_row}"].alignment = Alignment(horizontal="left")
+
+            ws[f"B{main_row}"].font = main_bold_font
+            ws[f"B{main_row}"].alignment = Alignment(horizontal="left")
+
+            ws[f"C{main_row}"].font = main_bold_font
+            ws[f"C{main_row}"].alignment = Alignment(
+                horizontal="right"
+            )  # Количество ВПРАВО
+
+            # Границы основной строки
+            for col in range(1, 4):
+                ws.cell(row=main_row, column=col).border = thin_border
+
+            # Подстроки партий - обычный шрифт, количество ВЛЕВО
+            if item.parties and item.parties[0].moved_q > 0:
+                for party in item.parties:
+                    ws.append(["", f"  ↳ {party.party}", party.moved_q])
+                    party_row = ws.max_row
+
+                    # Партия: обычный шрифт, ВЛЕВО
+                    party_font = Font(italic=True, size=11)
+                    ws[f"B{party_row}"].font = party_font
+                    ws[f"B{party_row}"].alignment = Alignment(horizontal="left")
+
+                    ws[f"C{party_row}"].font = party_font  # НЕ жирный, как название
+                    ws[f"C{party_row}"].alignment = Alignment(
+                        horizontal="left"
+                    )  # ВЛЕВО
+
+                    # Границы партии
+                    for col in range(1, 4):
+                        ws.cell(row=party_row, column=col).border = thin_border
+
+    # Двойная линия снизу таблицы
+    last_row = ws.max_row
+    for col in range(1, 4):
+        ws.cell(row=last_row, column=col).border = Border(
+            left=Side(style="thin"),
+            right=Side(style="thin"),
+            top=Side(style="thin"),
+            bottom=Side(style="double"),
+        )
+
+    # Автоподбор ширины
+    for column in ws.columns:
+        max_length = 0
+        column_letter = get_column_letter(column[0].column)
+        for cell in column:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        adjusted_width = min(max_length + 2, 50)
+        ws.column_dimensions[column_letter].width = adjusted_width
+
+    # wb.save("доставка.xlsx")
+
+    # Сохраняем Excel во временный файл
     # Название файла с именем менеджера
     safe_manager = data.manager.replace(" ", "_")
     filename = (
         f"Доставка_{safe_manager}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     )
     # 📐 Устанавливаем автоширину колонок
-    for column_cells in ws.columns:
-        max_length = 0
-        column = column_cells[0].column
-        col_letter = get_column_letter(column)
-        for cell in column_cells:
-            if cell.value:
-                max_length = max(max_length, len(str(cell.value)))
-        ws.column_dimensions[col_letter].width = max_length + 2
+    # for column_cells in ws.columns:
+    #     max_length = 0
+    #     column = column_cells[0].column
+    #     col_letter = get_column_letter(column)
+    #     for cell in column_cells:
+    #         if cell.value:
+    #             max_length = max(max_length, len(str(cell.value)))
+    #     ws.column_dimensions[col_letter].width = max_length + 2
 
     with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
         # Сохраняем Excel
