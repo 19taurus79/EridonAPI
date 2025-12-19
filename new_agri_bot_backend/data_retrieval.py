@@ -154,6 +154,24 @@ async def get_products(category: Optional[str] = None, name_part: Optional[str] 
     return product
 
 
+@router.get("/all_products")
+async def get_all_product_by_guide(
+    category: Optional[str] = None, name_part: Optional[str] = None
+):
+    query = ProductGuide.select()
+
+    if category:
+        query = query.where(ProductGuide.line_of_business == category)
+
+    if name_part:
+        # Використовуємо .ilike() для регістронезалежного пошуку по частині рядка
+        # Якщо ваша ORM/БД не підтримує .ilike(), можливо, знадобиться інший підхід
+        query = query.where(ProductGuide.product.ilike(f"%{name_part}%"))
+
+    product = await query.run()
+    return product
+
+
 @router.get("/product/{product_id}", summary="Отримати інформацію про продукт за ID")
 async def get_product_by_id(
     product_id: str,
