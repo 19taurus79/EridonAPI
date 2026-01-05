@@ -11,12 +11,23 @@ import pandas as pd
 import uvicorn
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, PatternFill
+from openpyxl.utils import get_column_letter
 from asyncpg import UniqueViolationError
 from piccolo.columns.defaults import TimestampNow
 from . import models, processing
 from .models import RegionResponse, AddressResponse, AddressCreate
-from .tables import Remains, Events, AddressGuide, Submissions, ClientAddress, MovedData
+from .tables import (
+    Remains,
+    Events,
+    AddressGuide,
+    Submissions,
+    ClientAddress,
+    MovedData,
+    Deliveries,
+    DeliveryItems,
+)
 from aiogram.types import FSInputFile, BufferedInputFile
 from fastapi import (
     FastAPI,
@@ -40,7 +51,7 @@ from piccolo_admin.endpoints import create_admin
 from openpyxl import Workbook
 
 # from openpyxl.utils import get_column_letter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
@@ -81,6 +92,7 @@ class Party(BaseModel):
 class DeliveryItem(BaseModel):
     product: str
     quantity: float
+    weight: float
     parties: List[Party]
 
 
@@ -97,7 +109,33 @@ class DeliveryRequest(BaseModel):
     phone: str
     date: str  # ISO-формат строки
     comment: str
+    is_custom_address: bool
+    latitude: float
+    longitude: float
+    total_weight: float
     orders: List[DeliveryOrder]
+
+
+class UpdateParty(BaseModel):
+    party: str
+    moved_q: float
+
+
+class UpdateItem(BaseModel):
+    product: str
+    nomenclature: str
+    quantity: float
+    manager: str
+    client: str
+    order_ref: Optional[str] = Field(None, alias="orderRef")
+    weight: float
+    parties: List[UpdateParty]
+
+
+class UpdateDeliveryRequest(BaseModel):
+    delivery_id: int
+    status: str
+    items: List[UpdateItem]
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -834,6 +872,60 @@ async def search_addresses(
     return response
 
 
+@app.get("/delivery/get_data_for_delivery")
+async def get_data_for_delivery(X_Telegram_Init_Data: str = Header()):
+    parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
+    if not parsed_init_data:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # 1. Получаем все доставки и их товарные позиции
+    deliveries_list = (
+        await Deliveries.select().order_by(Deliveries.id, ascending=False).run()
+    )
+    items_list = await DeliveryItems.select().run()
+
+    # 2. Создаем "карту" доставок для быстрой сборки
+    deliveries_map = {
+        delivery["id"]: {**delivery, "items": []} for delivery in deliveries_list
+    }
+
+    # 3. Группируем товарные позиции по доставкам и продуктам
+    # { delivery_id: { (order_ref, product_name): { ... } } }
+    grouped_items = {}
+    for item in items_list:
+        delivery_id = item["delivery"]
+        product_name = item["product"]
+        order_ref = item["order_ref"]
+        # Создаем уникальный ключ для группировки по заказу и продукту
+        grouping_key = (order_ref, product_name)
+
+        # Инициализируем словари, если их еще нет
+        if delivery_id not in grouped_items:
+            grouped_items[delivery_id] = {}
+        if grouping_key not in grouped_items[delivery_id]:
+            grouped_items[delivery_id][grouping_key] = {
+                "order_ref": order_ref,  # Возвращаем order_ref
+                "product": product_name,
+                "quantity": item["quantity"],  # Общее количество для продукта
+                "parties": [],
+            }
+
+        # Добавляем информацию о партии
+        grouped_items[delivery_id][grouping_key]["parties"].append(
+            {"party": item["party"], "party_quantity": item["party_quantity"]}
+        )
+
+    # 4. Собираем финальный результат
+    for delivery_id, delivery_data in deliveries_map.items():
+        if delivery_id in grouped_items:
+            # Преобразуем словарь продуктов в список
+            delivery_data["items"] = list(grouped_items[delivery_id].values())
+
+    combined_data = list(deliveries_map.values())
+
+    return combined_data
+
+
 @app.post("/delivery/send")
 async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Header()):
     parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
@@ -931,9 +1023,6 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
     #                 ws.append(
     #                     ["", party.party, party.moved_q]
     #                 )  # Детализация по партиям
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, PatternFill
-    from openpyxl.utils import get_column_letter
 
     wb = Workbook()
     ws = wb.active
@@ -1081,42 +1170,166 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
         wb.save(tmp.name)
         tmp.flush()
 
-        # Готовим файл к отправке
-        excel_file = FSInputFile(tmp.name, filename=filename)
+        # Проверяем окружение. Если не 'prod', выводим в консоль вместо отправки.
+        app_env = os.getenv("APP_ENV", "dev")
 
-        # Отправка сообщения
-        # admins = ["548019148", "1060393824", "7953178333"]
-        # admins = ["548019148", "1060393824"]
-        admins_json = os.getenv("ADMINS", "[]")
-        admins = json.loads(admins_json)
-        for admin in admins:
-            await bot.send_message(chat_id=admin, text=message, parse_mode="HTML")
-            await bot.send_document(chat_id=admin, document=excel_file)
-        await bot.send_message(
-            chat_id=telegram_id, text="Ви відправили такі данні для доставки :"
-        )
-        await bot.send_message(chat_id=telegram_id, text=message, parse_mode="HTML")
+        # --- ШАГ 1: Сохранение данных в БД (ВРЕМЕННО ВЫНЕСЕНО ДЛЯ ТЕСТА) ---
+        try:
+            # 1.1 Создаем основную запись о доставке
+            new_delivery = Deliveries(
+                client=data.client,
+                manager=data.manager,
+                address=data.address,
+                contact=data.contact,
+                phone=data.phone,
+                delivery_date=datetime.strptime(data.date, "%Y-%m-%d").date(),
+                comment=data.comment,
+                is_custom_address=data.is_custom_address,
+                latitude=data.latitude,
+                longitude=data.longitude,
+                total_weight=data.total_weight,
+                created_by=telegram_id,
+            )
+            await new_delivery.save().run()
+            print(f"✅ Основна інформація по доставці ID: {new_delivery.id} збережена.")
+
+            # 1.2 Готовим список товаров для массовой вставки
+            items_to_insert = []
+            for order in data.orders:
+                for item in order.items:
+                    # Проверяем, есть ли вообще партии для этого товара
+                    if item.parties:
+                        for party in item.parties:
+                            # Добавляем только те партии, где есть движение
+                            if party.moved_q > 0:
+                                items_to_insert.append(
+                                    DeliveryItems(
+                                        delivery=new_delivery.id,  # Связь с основной записью
+                                        order_ref=order.order,
+                                        product=item.product,
+                                        quantity=item.quantity,
+                                        party=party.party,
+                                        party_quantity=party.moved_q,
+                                    )
+                                )
+            # 1.3 Сохраняем все товары одним запросом
+            if items_to_insert:
+                await DeliveryItems.insert(*items_to_insert).run()
+                print(f"✅ {len(items_to_insert)} позицій по доставці збережено.")
+
+        except Exception as e:
+            print(f"❌ Помилка збереження доставки в БД: {e}")
+            raise HTTPException(status_code=500, detail=f"Помилка збереження в БД: {e}")
+
+        if app_env == "production":
+            # Готовим файл к отправке
+            excel_file = FSInputFile(tmp.name, filename=filename)
+
+            # Отправка сообщения администраторам
+            admins_json = os.getenv("ADMINS", "[]")
+            admins = json.loads(admins_json)
+            for admin in admins:
+                await bot.send_message(chat_id=admin, text=message, parse_mode="HTML")
+                await bot.send_document(chat_id=admin, document=excel_file)
+
+            # Отправка сообщения пользователю
+            await bot.send_message(
+                chat_id=telegram_id, text="Ви відправили такі данні для доставки:"
+            )
+            await bot.send_message(chat_id=telegram_id, text=message, parse_mode="HTML")
+
+            # Создание события в календаре
+            calendar = await create_calendar_event(data)
+            if calendar:
+                calendar_link = calendar.get("htmlLink")
+                date = datetime.fromisoformat(calendar["start"]["dateTime"]).date()
+                await Events.insert(
+                    Events(
+                        event_id=calendar["id"],
+                        event_creator=telegram_id,
+                        event_creator_name=data.manager,
+                        event_status=0,
+                        start_event=date,
+                        event=data.client,
+                    )
+                ).run()
+                print("📅 Добавлено в календарь:", calendar_link)
+            else:
+                print("❌ Не удалось добавить в календарь")
+
+        else:
+            # Режим разработки: выводим все в консоль
+            print("\n--- [DEV] РЕЖИМ: ВІДПРАВКА ПОВІДОМЛЕННЯ ПРО ДОСТАВКУ ---")
+            print(f"--- [DEV] Одержувачі (адміни): {os.getenv('ADMINS', '[]')}")
+            print(f"--- [DEV] Одержувач (користувач): {telegram_id}")
+            print("--- [DEV] Текст повідомлення: ---")
+            print(message)
+            print(f"--- [DEV] Excel-файл '{filename}' було б надіслано. ---")
+            print("--- [DEV] Створення події в календарі пропущено. ---")
 
     # Удаляем временный файл
     os.remove(tmp.name)
 
-    calendar = await create_calendar_event(data)
-    calendar_link = calendar["htmlLink"]
-    date = datetime.fromisoformat(calendar["start"]["dateTime"]).date()
-    await Events.insert(
-        Events(
-            event_id=calendar["id"],
-            event_creator=telegram_id,
-            event_creator_name=data.manager,
-            event_status=0,
-            start_event=date,
-            event=data.client,
-        )
-    ).run()
-
-    if calendar_link:
-        print("📅 Добавлено в календарь:", calendar_link)
-    else:
-        print("❌ Не удалось добавить в календарь")
-
     return {"status": "ok"}
+
+
+@app.post("/delivery/update", tags=["Delivery"])
+async def update_delivery(data: UpdateDeliveryRequest):
+    """
+    Updates a delivery by completely replacing its items in a single transaction.
+    """
+    try:
+        # Start a transaction to ensure atomicity
+        async with Deliveries._meta.db.transaction():
+            # 1. Update the delivery status
+            await Deliveries.update({Deliveries.status: data.status}).where(
+                Deliveries.id == data.delivery_id
+            ).run()
+            print(f"✅ Статус доставки ID: {data.delivery_id} оновлено на '{data.status}'.")
+
+            # 2. Delete all existing items for this delivery
+            await DeliveryItems.delete().where(
+                DeliveryItems.delivery == data.delivery_id
+            ).run()
+
+            # 3. Prepare new items for bulk insertion
+            items_to_insert = []
+            for item in data.items:
+                if item.parties:
+                    for party in item.parties:
+                        # Add an item for each party
+                        if party.moved_q > 0:
+                            items_to_insert.append(
+                                DeliveryItems(
+                                    delivery=data.delivery_id,
+                                    order_ref=item.order_ref,
+                                    product=item.product,
+                                    quantity=item.quantity,
+                                    party=party.party,
+                                    party_quantity=party.moved_q,
+                                )
+                            )
+                else:
+                    # Handle items without parties, if necessary
+                    items_to_insert.append(
+                        DeliveryItems(
+                            delivery=data.delivery_id,
+                            order_ref=item.order_ref,
+                            product=item.product,
+                            quantity=item.quantity,
+                        )
+                    )
+
+            # 4. Perform a single bulk insert for all new items
+            if items_to_insert:
+                await DeliveryItems.insert(*items_to_insert).run()
+
+    except Exception as e:
+        # If any step fails, the transaction will be rolled back automatically.
+        print(f"❌ Error updating delivery: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update delivery items: {e}",
+        )
+
+    return {"status": "ok", "message": "Delivery items updated successfully."}

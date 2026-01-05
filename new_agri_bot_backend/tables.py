@@ -15,6 +15,10 @@ from piccolo.columns import (
     Numeric,
     Integer,
     Timestamp,
+    Text,
+    Real,
+    JSONB,
+    OnDelete,
 )
 
 
@@ -268,3 +272,31 @@ class ClientAddress(Table):
     representative = Varchar()
     phone1 = Varchar()
     phone2 = Varchar()
+
+
+# Таблица доставок
+class Deliveries(Table):
+    client = Varchar(length=255)
+    manager = Varchar(length=255, null=True)
+    address = Text(null=True)
+    contact = Varchar(length=255, null=True)
+    phone = Varchar(length=50, null=True)
+    delivery_date = Date(null=True)
+    comment = Text(null=True)
+    total_weight = Real(null=True)
+    is_custom_address = Boolean(default=False)
+    latitude = Real(null=True)
+    longitude = Real(null=True)
+    created_by = BigInt(null=True)
+    status = Varchar(length=50, default="Створено")
+    created_at = Timestamp(default=TimestampNow())
+
+
+# Таблица товаров в доставке
+class DeliveryItems(Table):
+    delivery = ForeignKey(references=Deliveries, on_delete=OnDelete.cascade)
+    order_ref = Varchar(length=255, null=True)
+    product = Varchar(length=255)
+    quantity = Real()
+    party = Varchar(length=255, null=True)
+    party_quantity = Real(null=True)

@@ -11,6 +11,44 @@ from new_agri_bot_backend.services.send_telegram_notification import send_notifi
 from new_agri_bot_backend.tables import Submissions, Users
 
 
+async def split_message_into_chunks(
+    text: str, chunk_size: int = 4000
+) -> list[str]:
+    """
+    Разбивает длинный текст на несколько частей, не разрывая строки.
+    """
+    if len(text) <= chunk_size:
+        return [text]
+
+    chunks = []
+    current_chunk = ""
+    for line in text.split("\n"):
+        # Если строка сама по себе длиннее лимита, ее нужно принудительно разбить
+        if len(line) > chunk_size:
+            # Добавляем текущий накопленный чанк, если он есть
+            if current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = ""
+            # Разбиваем слишком длинную строку
+            for i in range(0, len(line), chunk_size):
+                chunks.append(line[i : i + chunk_size])
+            continue
+
+        # Проверяем, поместится ли следующая строка в текущий чанк
+        if len(current_chunk) + len(line) + 1 > chunk_size:
+            chunks.append(current_chunk)
+            current_chunk = line
+        else:
+            if current_chunk:  # Добавляем перенос строки, если чанк не пустой
+                current_chunk += "\n"
+            current_chunk += line
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks
+
+
 async def get_data_from_df(frame: pd.DataFrame):
     """
     Принимает DataFrame, извлекает из него уникальные номера контрактов
@@ -136,39 +174,34 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
 
         try:
             if telegram_id:
-                if app_env == "production":
-                    await send_notification(
-                        bot=bot,
-                        chat_ids=[telegram_id],  # Передаем ID в списке
-                        text=message_text,
-                    )
-                else:
-                    # В режиме разработки просто выводим в консоль
-                    print(
-                        f"\n--- [DEV] Сообщение для {manager_name} (ID: {telegram_id}) ---"
-                    )
-                    print(message_text)
-                    print(f"--- [DEV] Конец сообщения для {manager_name} ---\n")
+                message_chunks = await split_message_into_chunks(message_text)
+                for chunk in message_chunks:
+                    if app_env == "production":
+                        await send_notification(
+                            bot=bot,
+                            chat_ids=[telegram_id],  # Передаем ID в списке
+                            text=chunk,
+                        )
+                    else:
+                        # В режиме разработки просто выводим в консоль
+                        print(
+                            f"\n--- [DEV] Сообщение для {manager_name} (ID: {telegram_id}) ---"
+                        )
+                        print(chunk)
+                        print(f"--- [DEV] Конец сообщения для {manager_name} ---\n")
             else:
                 print(
                     f"!!! Увага: Telegram ID для менеджера '{manager_name}' не знайдено. Сповіщення не відправлено."
                 )
 
-            # print(f"\n--- Сообщение для {manager_name} ---\n")
-            # print(message_text)
-            # print(f"\n--- Конец сообщения для {manager_name} ---\n")
         except Exception as e:
             print(f"!!! Ошибка при отправке уведомления менеджеру {manager_name}: {e}")
 
     # --- ИСПРАВЛЕНИЕ: Отправляем сводный отчет ОДИН РАЗ после завершения цикла по менеджерам ---
     if len(admin_report_parts) > 1:  # Отправляем, только если были данные
-        # admin_full_report = "".join(admin_report_parts)
-
-        # --- ИСПРАВЛЕНИЕ: Парсим ID администраторов из JSON-строки ---
         admin_chat_ids = []
         if ADMINS_ID and isinstance(ADMINS_ID, str):
             try:
-                # Пытаемся распарсить строку как JSON-массив
                 parsed_ids = json.loads(ADMINS_ID)
                 admin_chat_ids = [int(admin_id) for admin_id in parsed_ids]
             except (json.JSONDecodeError, TypeError):
@@ -177,15 +210,6 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
                 )
 
         try:
-            # print(
-            #     f"\n--- Відправка зведеного звіту адміністратору ({ADMIN_CHAT_ID}) ---"
-            # )
-            # await send_notification(
-            #     bot=bot,
-            #     chat_ids=[ADMIN_CHAT_ID],
-            #     text=admin_full_report,
-            # )
-            # print("✅ Зведений звіт успішно відправлено.")
             if not admin_chat_ids:
                 print(
                     "!!! Увага: Не знайдено жодного адміністратора для відправки звіту."
@@ -193,32 +217,24 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
                 return
 
             admin_full_report = "".join(admin_report_parts).strip()
+            report_chunks = await split_message_into_chunks(admin_full_report)
 
-            if app_env == "production":
-                print(
-                    f"\n--- Відправка зведеного звіту адміністраторам ({', '.join(map(str, admin_chat_ids))}) ---"
-                )
-                await send_notification(
-                    bot=bot,
-                    chat_ids=admin_chat_ids,  # Передаем список ID напрямую
-                    text=admin_full_report,
-                )
-                print("✅ Зведений звіт успішно відправлено.")
-            else:
-                print(
-                    f"\n--- [DEV] Зведений звіт для адміністраторів ({', '.join(map(str, admin_chat_ids))}) ---"
-                )
-                print(admin_full_report)
-                print(f"--- [DEV] Кінець зведеного звіту ---\n")
+            for chunk in report_chunks:
+                if app_env == "production":
+                    print(
+                        f"\n--- Відправка зведеного звіту адміністраторам ({', '.join(map(str, admin_chat_ids))}) ---"
+                    )
+                    await send_notification(
+                        bot=bot,
+                        chat_ids=admin_chat_ids,  # Передаем список ID напрямую
+                        text=chunk,
+                    )
+                    print("✅ Частину зведеного звіту успішно відправлено.")
+                else:
+                    print(
+                        f"\n--- [DEV] Зведений звіт для адміністраторів ({', '.join(map(str, admin_chat_ids))}) ---"
+                    )
+                    print(chunk)
+                    print(f"--- [DEV] Кінець зведеного звіту ---\n")
         except Exception as e:
             print(f"!!! Помилка при відправці зведеного звіту адміністратору: {e}")
-
-
-#
-# async def main_notifications_runner():
-#     async with Bot(token=TELEGRAM_BOT_TOKEN) as bot:
-#         await notifications(bot, test_df)
-#
-#
-# if __name__ == "__main__":
-#     asyncio.run(main_notifications_runner())

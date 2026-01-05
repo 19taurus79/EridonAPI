@@ -92,6 +92,27 @@ async def get_remains_by_product(
 
 
 @router.get(
+    "/remains_by_product/{product}", summary="Отримати залишки за конкретним продуктом"
+)
+async def get_remains_by_product(
+    product: str,
+):  # Використовуємо product_id для ясності
+
+    product_id = (
+        await ProductGuide.select(ProductGuide.id)
+        .where(ProductGuide.product == product)
+        .run()
+    )
+    remains = await Remains.select().where(Remains.product == product_id[0]["id"]).run()
+    if not remains:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Залишки для продукту з ID '{product_id}' не знайдено.",
+        )
+    return remains
+
+
+@router.get(
     "/remains_group/{product_id}",
     summary="Отримати залишки за конкретним продуктом, згруповані по партії ",
 )
@@ -374,18 +395,38 @@ async def get_products_for_all_orders():
 
 
 @router.get("/party_data")
-async def get_party_data(party: str):
-    data = (
-        await Remains.select(
-            Remains.crop_year,
-            Remains.germination,
-            Remains.mtn,
-            Remains.origin_country,
-            Remains.weight,
+async def get_party_data(
+    id: Optional[str] = Query(None, description="Унікальний ID партії в базі даних"),
+    party: Optional[str] = Query(None, description="Номер серії номенклатури (партія)"),
+):
+    """
+    Отримує дані по партії. Пошук можливий або по ID, або по номеру партії.
+    Якщо вказано обидва параметри, пріоритет надається ID.
+    """
+    if not id and not party:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Необхідно вказати або 'id', або 'party' для пошуку.",
         )
-        .where(Remains.id == party)
-        .run()
+
+    query = Remains.select(
+        Remains.crop_year,
+        Remains.germination,
+        Remains.mtn,
+        Remains.origin_country,
+        Remains.weight,
     )
+
+    if id:
+        query = query.where(Remains.id == id)
+    elif party:
+        query = query.where(Remains.nomenclature_series == party)
+
+    data = await query.run()
+    if not data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Дані по партії не знайдено."
+        )
     return data
 
 
