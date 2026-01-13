@@ -148,6 +148,33 @@ admin_router = create_admin([Remains], allowed_hosts=["localhost"])
 sessions = {}
 
 
+def get_fallback_weight(line_of_business: str, nomenclature: str) -> float:
+    """
+    Вычисляет резервный вес на основе бизнес-логики, если вес отсутствует в Remains.
+    """
+    # Карта для простых случаев
+    LOB_WEIGHT_MAP = {
+        "Власне виробництво насіння": 1.0,
+        "ЗЗР": 1.2,
+        "Міндобрива (основні)": 1000.0,
+    }
+
+    if line_of_business in LOB_WEIGHT_MAP:
+        return LOB_WEIGHT_MAP[line_of_business]
+
+    # Сложный случай для "Насіння"
+    if line_of_business == "Насіння":
+        if "(150К)" in nomenclature:
+            return 10.0
+        if "(50К)" in nomenclature:
+            return 15.0
+        if "(80К)" in nomenclature:
+            return 20.0
+
+    # Если ни одно из правил не подошло, возвращаем 0
+    return 0.0
+
+
 async def create_calendar_event(data: DeliveryRequest) -> Optional[str]:
     try:
         credentials = service_account.Credentials.from_service_account_file(
@@ -752,9 +779,69 @@ async def get_regions():
 # 2. Поиск населенного пункта в области
 @app.get("/get_all_orders_and_address")
 async def get_all_orders_and_address():
-    orders = await Submissions.select().where(Submissions.different > 0).run()
+    """
+    Возвращает список заказов с вычисленным общим весом и список адресов.
+    Применяет резервную логику расчета веса, если он отсутствует в остатках.
+    """
+    # Шаг 1: Агрегируем средний вес из Remains
+    weight_map = {}
+    try:
+        avg_weight_query = """
+            SELECT
+                product,
+                AVG(CAST(NULLIF(weight, '') AS NUMERIC)) as avg_weight
+            FROM
+                remains
+            WHERE
+                weight IS NOT NULL AND weight != '' AND product IS NOT NULL
+            GROUP BY
+                product
+        """
+        avg_weights_list = await Remains.raw(avg_weight_query)
+        weight_map = {
+            item["product"]: float(item["avg_weight"] or 0) for item in avg_weights_list
+        }
+    except Exception as e:
+        print(f"--- Ошибка при запросе среднего веса: {e} ---")
+
+    # Шаг 2: Получаем все заказы
+    orders_list = await Submissions.select().where(Submissions.different > 0).run()
+
+    # Шаг 3: Обогащаем заказы данными о весе с резервной логикой
+    for order in orders_list:
+        product_id = order.get("product")
+        # Пытаемся получить вес из остатков
+        weight_from_remains = weight_map.get(product_id)
+
+        final_weight = 0.0
+        if weight_from_remains and weight_from_remains > 0:
+            # Если вес в остатках есть и он больше нуля, используем его
+            final_weight = weight_from_remains
+        else:
+            # Иначе — применяем резервную логику
+            line_of_business = order.get("line_of_business", "")
+            nomenclature = order.get("nomenclature", "")
+            final_weight = get_fallback_weight(line_of_business, nomenclature)
+
+        quantity = order.get("different", 0)
+        order["total_weight"] = quantity * final_weight
+
+    # Запрос адресов остается без изменений
     address = await ClientAddress.select().run()
-    return orders, address
+
+    return orders_list, address
+
+
+@app.get("/get_all_addresses")
+async def get_all_addresses():
+    address = await ClientAddress.select().run()
+    return address
+
+
+@app.get("/get_address_by_client/{client}")
+async def get_address_by_client(client):
+    address = await ClientAddress.select().where(ClientAddress.client == client).run()
+    return address
 
 
 @app.put("/update_address_for_client/{id}")
@@ -933,6 +1020,7 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
     user_data = json.loads(user_info_str)
     telegram_id = user_data.get("id")
     # 📝 Формируем текст для Telegram
+
     print(X_Telegram_Init_Data)
     message_lines = [
         f"👤 Менеджер: {data.manager}",
@@ -1285,7 +1373,9 @@ async def update_delivery(data: UpdateDeliveryRequest):
             await Deliveries.update({Deliveries.status: data.status}).where(
                 Deliveries.id == data.delivery_id
             ).run()
-            print(f"✅ Статус доставки ID: {data.delivery_id} оновлено на '{data.status}'.")
+            print(
+                f"✅ Статус доставки ID: {data.delivery_id} оновлено на '{data.status}'."
+            )
 
             # 2. Delete all existing items for this delivery
             await DeliveryItems.delete().where(
@@ -1323,6 +1413,16 @@ async def update_delivery(data: UpdateDeliveryRequest):
             # 4. Perform a single bulk insert for all new items
             if items_to_insert:
                 await DeliveryItems.insert(*items_to_insert).run()
+            else:
+                # Если товаров нет, удаляем саму доставку
+                await Deliveries.delete().where(Deliveries.id == data.delivery_id).run()
+                print(
+                    f"🗑️ Доставка ID: {data.delivery_id} видалена, бо в ній не залишилось товарів."
+                )
+                return {
+                    "status": "ok",
+                    "message": "Delivery deleted as it became empty.",
+                }
 
     except Exception as e:
         # If any step fails, the transaction will be rolled back automatically.
