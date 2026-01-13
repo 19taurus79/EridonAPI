@@ -838,6 +838,12 @@ async def get_all_addresses():
     return address
 
 
+@app.get("/get_address_by_client/{client}")
+async def get_address_by_client(client):
+    address = await ClientAddress.select().where(ClientAddress.client == client).run()
+    return address
+
+
 @app.put("/update_address_for_client/{id}")
 async def update_address_for_client(address_data: AddressCreate, id: int):
     obj = await ClientAddress.objects().get(where=(ClientAddress.id == id))
