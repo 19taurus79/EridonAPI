@@ -290,6 +290,7 @@ class Deliveries(Table):
     created_by = BigInt(null=True)
     status = Varchar(length=50, default="Створено")
     created_at = Timestamp(default=TimestampNow())
+    calendar_id = Varchar(null=True)
 
 
 # Таблица товаров в доставке
