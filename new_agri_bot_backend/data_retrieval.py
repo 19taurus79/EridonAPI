@@ -14,6 +14,7 @@ from .calendar_utils import (
     changed_color_calendar_events_by_id,
     changed_date_calendar_events_by_id,
 )
+from .config import bot
 
 # from .main import get_calendar_events
 
@@ -697,6 +698,11 @@ async def event_in_progress(event_id, user=Depends(get_current_telegram_user)):
         }
     ).where(Events.event_id == event_id).run()
     changed_color_calendar_events_by_id(event_id, 1)
+    telegram_data = await Events.select().where(Events.event_id == event_id)
+    await bot.send_message(
+        chat_id=telegram_data[0]["event_creator"],
+        text=f"Вашу доставку для {telegram_data[0]['event']} взято в роботу. Виконавець {telegram_data[0]['event_who_changed_name']}",
+    )
 
 
 @router.patch("/event_completed")
@@ -710,6 +716,11 @@ async def event_completed(event_id, user=Depends(get_current_telegram_user)):
         force=True,
     ).where(Events.event_id == event_id).run()
     changed_color_calendar_events_by_id(event_id, 2)
+    telegram_data = await Events.select().where(Events.event_id == event_id)
+    await bot.send_message(
+        chat_id=telegram_data[0]["event_creator"],
+        text=f"Ваша доставка для {telegram_data[0]['event']} передана для підготовки документів, та для комплектації. Виконавець {telegram_data[0]['event_who_changed_name']}",
+    )
 
 
 @router.patch("/event_changed_date")
@@ -724,6 +735,11 @@ async def event_changed_date(
         }
     ).where(Events.event_id == event_id).run()
     changed_date_calendar_events_by_id(id=event_id, new_date=new_date.new_date)
+    telegram_data = await Events.select().where(Events.event_id == event_id)
+    await bot.send_message(
+        chat_id=telegram_data[0]["event_creator"],
+        text=f"Для доставки {telegram_data[0]['event']} змінена дата доставки, на {new_date.new_date.day}.{new_date.new_date.month}.{new_date.new_date.year}. Виконавець {telegram_data[0]['event_who_changed_name']}",
+    )
 
 
 @router.get("/get_task_status")

@@ -17,6 +17,7 @@ from openpyxl.utils import get_column_letter
 from asyncpg import UniqueViolationError
 from piccolo.columns.defaults import TimestampNow
 from . import models, processing
+from .calendar_utils import changed_color_calendar_events_by_id
 from .models import RegionResponse, AddressResponse, AddressCreate
 from .tables import (
     Remains,
@@ -1019,8 +1020,8 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
     user_info_str = parsed_init_data.get("user")
     user_data = json.loads(user_info_str)
     telegram_id = user_data.get("id")
+    # ----------------------------Сообщение для Телеграм-----------------------
     # 📝 Формируем текст для Telegram
-
     print(X_Telegram_Init_Data)
     message_lines = [
         f"👤 Менеджер: {data.manager}",
@@ -1032,23 +1033,6 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
         f"💬 Коментар: {data.comment}",
         "",
     ]
-
-    # for order in data.orders:
-    #     message_lines.append(f"📦 *Доповнення:* <code>{order.order}</code>")
-    #     for item in order.items:
-    #         message_lines.append(
-    #             f" • <code>{item.product}</code> — {item.quantity} шт."
-    #         )
-    #         # Добавляем детализацию по партиям
-    #         if item.parties[0].moved_q > 0:
-    #             for party in item.parties:
-    #                 message_lines.append(
-    #                     f"   - Партія: <code>{party.party}</code>, К-ть: {party.moved_q}"
-    #                 )
-    #     message_lines.append("")
-    #
-    # message = "\n".join(message_lines)
-    # Обязательно используй parse_mode='HTML' при отправке
 
     for order in data.orders:
         message_lines.append(f"📦 <b>Замовлення</b> <code>{order.order}</code>")
@@ -1087,31 +1071,9 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
         message_lines.append("════════════════════")
         message_lines.append("")
         message = "\n".join(message_lines)
-    # # 🧾 Генерируем Excel
-    # wb = Workbook()
-    # ws = wb.active
-    # ws.title = "Доставка"
-    #
-    # ws.append(["Менеджер", data.manager])
-    # ws.append(["Контрагент", data.client])
-    # ws.append(["Адреса", data.address])
-    # ws.append(["Контакт", data.contact])
-    # ws.append(["Телефон", data.phone])
-    # ws.append(["Дата", data.date])
-    # ws.append(["Коментар", data.comment])
-    # ws.append([])
-    # # ws.append(["Доповнення", "Товар", "Загальна к-ть", "Партія", "К-ть по партії"])
-    # ws.append(["Доповнення", "Товар", "Кількість"])
-    #
-    # for order in data.orders:
-    #     for item in order.items:
-    #         ws.append([order.order, item.product, item.quantity])  # Основная строка
-    #         if item.parties[0].moved_q > 0:
-    #             for party in item.parties:
-    #                 ws.append(
-    #                     ["", party.party, party.moved_q]
-    #                 )  # Детализация по партиям
+    # ------------------------------------------------------------------------------
 
+    # ---------------------Формирование файла Excel---------------------------------
     wb = Workbook()
     ws = wb.active
     ws.title = "Доставка"
@@ -1243,15 +1205,6 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
     filename = (
         f"Доставка_{safe_manager}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     )
-    # 📐 Устанавливаем автоширину колонок
-    # for column_cells in ws.columns:
-    #     max_length = 0
-    #     column = column_cells[0].column
-    #     col_letter = get_column_letter(column)
-    #     for cell in column_cells:
-    #         if cell.value:
-    #             max_length = max(max_length, len(str(cell.value)))
-    #     ws.column_dimensions[col_letter].width = max_length + 2
 
     with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
         # Сохраняем Excel
@@ -1261,6 +1214,25 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
         # Проверяем окружение. Если не 'prod', выводим в консоль вместо отправки.
         app_env = os.getenv("APP_ENV", "dev")
 
+        calendar = await create_calendar_event(data)
+        # Создание события в календаре
+        # calendar = await create_calendar_event(data)
+        if calendar:
+            calendar_link = calendar.get("htmlLink")
+            date = datetime.fromisoformat(calendar["start"]["dateTime"]).date()
+            await Events.insert(
+                Events(
+                    event_id=calendar["id"],
+                    event_creator=telegram_id,
+                    event_creator_name=data.manager,
+                    event_status=0,
+                    start_event=date,
+                    event=data.client,
+                )
+            ).run()
+            print("📅 Добавлено в календарь:", calendar_link)
+        else:
+            print("❌ Не удалось добавить в календарь")
         # --- ШАГ 1: Сохранение данных в БД (ВРЕМЕННО ВЫНЕСЕНО ДЛЯ ТЕСТА) ---
         try:
             # 1.1 Создаем основную запись о доставке
@@ -1277,6 +1249,7 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
                 longitude=data.longitude,
                 total_weight=data.total_weight,
                 created_by=telegram_id,
+                calendar_id=calendar["id"],
             )
             await new_delivery.save().run()
             print(f"✅ Основна інформація по доставці ID: {new_delivery.id} збережена.")
@@ -1327,23 +1300,23 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
             await bot.send_message(chat_id=telegram_id, text=message, parse_mode="HTML")
 
             # Создание события в календаре
-            calendar = await create_calendar_event(data)
-            if calendar:
-                calendar_link = calendar.get("htmlLink")
-                date = datetime.fromisoformat(calendar["start"]["dateTime"]).date()
-                await Events.insert(
-                    Events(
-                        event_id=calendar["id"],
-                        event_creator=telegram_id,
-                        event_creator_name=data.manager,
-                        event_status=0,
-                        start_event=date,
-                        event=data.client,
-                    )
-                ).run()
-                print("📅 Добавлено в календарь:", calendar_link)
-            else:
-                print("❌ Не удалось добавить в календарь")
+            # calendar = await create_calendar_event(data)
+            # if calendar:
+            #     calendar_link = calendar.get("htmlLink")
+            #     date = datetime.fromisoformat(calendar["start"]["dateTime"]).date()
+            #     await Events.insert(
+            #         Events(
+            #             event_id=calendar["id"],
+            #             event_creator=telegram_id,
+            #             event_creator_name=data.manager,
+            #             event_status=0,
+            #             start_event=date,
+            #             event=data.client,
+            #         )
+            #     ).run()
+            #     print("📅 Добавлено в календарь:", calendar_link)
+            # else:
+            #     print("❌ Не удалось добавить в календарь")
 
         else:
             # Режим разработки: выводим все в консоль
@@ -1370,13 +1343,70 @@ async def update_delivery(data: UpdateDeliveryRequest):
         # Start a transaction to ensure atomicity
         async with Deliveries._meta.db.transaction():
             # 1. Update the delivery status
-            await Deliveries.update({Deliveries.status: data.status}).where(
-                Deliveries.id == data.delivery_id
-            ).run()
+
+            # await Deliveries.update({Deliveries.status: data.status}).where(
+            #     Deliveries.id == data.delivery_id
+            # ).run()
+            delivery_data = (
+                await Deliveries.select().where(Deliveries.id == data.delivery_id).run()
+            )
+            try:
+                calendar_data = get_calendar_events_by_id(
+                    delivery_data[0]["calendar_id"]
+                )
+            except:
+                print("У календарі нема інформації по цій доставці")
+            # await bot.send_message()
+            calendar_date = datetime.fromisoformat(
+                calendar_data["start"]["dateTime"]
+            ).date()
+            delivery_data_date = delivery_data[0]["delivery_date"]
             print(
                 f"✅ Статус доставки ID: {data.delivery_id} оновлено на '{data.status}'."
             )
+            if data.status == "В роботі" and delivery_data[0]["status"] == "Створено":
+                # await bot.send_message(
+                #     chat_id=delivery_data[0]["created_by"],
+                #     text=f"Заявка на доставку, по контрагенту {delivery_data[0]['client']}, передана для підготовки документів, та на комплектацію",
+                # )
+                client_name = delivery_data[0]["client"]
 
+                message_text = (
+                    f"✅ <b>Заявку на доставку прийнято в роботу</b>\n\n"
+                    f"👤 Контрагент: <b>{client_name}</b>\n"
+                    f"📄 Статус: <i>Підготовка документів та комплектація</i>\n\n"
+                )
+
+                await bot.send_message(
+                    chat_id=delivery_data[0]["created_by"],
+                    text=message_text,
+                    parse_mode="HTML",
+                )
+                changed_color_calendar_events_by_id(delivery_data[0]["calendar_id"], 1)
+                await Deliveries.update({Deliveries.status: data.status}).where(
+                    Deliveries.id == data.delivery_id
+                ).run()
+                await Events.update({Events.event_status: 1}).where(
+                    Events.event_id == delivery_data[0]["calendar_id"]
+                ).run()
+            if data.status == "Виконано" and delivery_data[0]["status"] == "В роботі":
+
+                await bot.send_message(
+                    chat_id=delivery_data[0]["created_by"],
+                    text=(
+                        f"✅ <b>Заявку на доставку виконано успішно!</b>\n\n"
+                        f"👤 Контрагент: <b>{delivery_data[0]['client']}</b>\n"
+                        f"🏁 Статус: <i>Завершено</i>"
+                    ),
+                    parse_mode="HTML",
+                )
+                changed_color_calendar_events_by_id(delivery_data[0]["calendar_id"], 2)
+                await Deliveries.update({Deliveries.status: data.status}).where(
+                    Deliveries.id == data.delivery_id
+                ).run()
+                await Events.update({Events.event_status: 2}).where(
+                    Events.event_id == delivery_data[0]["calendar_id"]
+                ).run()
             # 2. Delete all existing items for this delivery
             await DeliveryItems.delete().where(
                 DeliveryItems.delivery == data.delivery_id
