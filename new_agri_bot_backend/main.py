@@ -481,6 +481,18 @@ async def send_telegram_message(
         return {"status": "error", "details": str(e)}
 
 
+class TelegramMessage(BaseModel):  # ← ДОБАВЬ ЭТО
+    chat_id: int  # ← ТВОИ поля из RN
+    text: str
+
+
+@app.post("/send_telegram_message_by_event")
+async def message(message: TelegramMessage):
+    await bot.send_message(
+        text=message.text, chat_id=message.chat_id, parse_mode="HTML"
+    )
+
+
 # --- Маршрут для загрузки и обработки данных ---
 @app.post(
     "/upload_ordered_moved", response_model=models.UploadResponse, tags=["Processing"]
@@ -958,6 +970,17 @@ async def search_addresses(
         )
 
     return response
+
+
+@app.get("/delivery/get_telegram_id_from_delivery_by_id/{id}")
+async def get_telegram_id(id):
+    try:
+        telegram_id = (
+            await Deliveries.objects().where(Deliveries.calendar_id == str(id)).first()
+        )
+        return telegram_id.created_by
+    except:
+        return
 
 
 @app.get("/delivery/get_data_for_delivery")
