@@ -1,12 +1,15 @@
 # app/telegram_auth.py
 import hmac, hashlib, json
 from urllib.parse import parse_qsl
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 from fastapi import HTTPException, status, APIRouter, Header, Depends
+from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
+from jose import JWTError, jwt
 
 from .tables import Users  # Импорт вашей модели Users
 from .config import (
@@ -15,15 +18,45 @@ from .config import (
 
 load_dotenv()
 
-# Если TELEGRAM_BOT_TOKEN также загружается здесь, убедитесь, что он один источник истины,
-# либо просто импортируйте из config.py
-# TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") # Лучше брать из config.py
+# Конфигурация JWT
+SECRET_KEY = os.getenv(
+    "SECRET_KEY", "your-secret-key-change-it-in-production"
+)  # Замените на надежный ключ
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # Токен валиден 7 дней
 
 router = APIRouter(tags=["Аутентифікація"])
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login-widget", auto_error=False)
 
 
 class InitDataModel(BaseModel):
     initData: str
+
+
+class TelegramLoginWidgetData(BaseModel):
+    id: int
+    first_name: str
+    last_name: Optional[str] = None
+    username: Optional[str] = None
+    photo_url: Optional[str] = None
+    auth_date: int
+    hash: str
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
 
 
 def check_telegram_auth(init_data: str) -> dict:
@@ -36,14 +69,6 @@ def check_telegram_auth(init_data: str) -> dict:
             "TELEGRAM_BOT_TOKEN не установлен. Проверьте config.py или переменные окружения."
         )
 
-    # print("\n--- НАЧАЛО ДЕТАЛЬНОЙ ОТЛАДКИ check_telegram_auth ---")
-    # print(f"1. Получена init_data: '{init_data}'")
-    # print(f"2. Длина init_data: {len(init_data)}")
-    # print(
-    #     f"3. TELEGRAM_BOT_TOKEN (обрезан): '{TELEGRAM_BOT_TOKEN[:5]}...{TELEGRAM_BOT_TOKEN[-5:]}'"
-    # )
-    # print(f"4. Длина TELEGRAM_BOT_TOKEN: {len(TELEGRAM_BOT_TOKEN)}")
-
     parsed = dict(parse_qsl(init_data))
     hash_ = parsed.pop("hash", None)
     if not hash_:
@@ -51,10 +76,6 @@ def check_telegram_auth(init_data: str) -> dict:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Отсутствует 'hash' в данных инициализации Telegram.",
         )
-
-    # print(f"5. Извлечен 'hash_': '{hash_}'")
-    # print(f"6. Распарсенные данные (после удаления 'hash'): {parsed}")
-    # print(f"7. Количество полей для проверки: {len(parsed)}")
 
     sorted_items = sorted(parsed.items())
     data_check_string_parts = []
@@ -64,30 +85,17 @@ def check_telegram_auth(init_data: str) -> dict:
 
     data_check_string = "\n".join(data_check_string_parts)
 
-    # print(f"8. Сформированная data_check_string (длина {len(data_check_string)}):")
-    # print("--- НАЧАЛО data_check_string ---")
-    # print(data_check_string)
-    # print("--- КОНЕЦ data_check_string ---")
-
     secret_key_intermediate = hmac.new(
         key=b"WebAppData",
         msg=TELEGRAM_BOT_TOKEN.encode("utf-8"),
         digestmod=hashlib.sha256,
     ).digest()
 
-    # print(
-    #     f"9. Промежуточный секретный ключ (HMAC(WebAppData, bot_token)) (hex): {secret_key_intermediate.hex()}"
-    # )
-
     calculated_hash = hmac.new(
         key=secret_key_intermediate,
         msg=data_check_string.encode("utf-8"),
         digestmod=hashlib.sha256,
     ).hexdigest()
-
-    # print(f"10. Вычисленный финальный хэш: '{calculated_hash}'")
-    # print(f"11. Хэши совпадают? (Calculated == Received) : {calculated_hash == hash_}")
-    # print("--- КОНЕЦ ДЕТАЛЬНОЙ ОТЛАДКИ check_telegram_auth ---\n")
 
     if calculated_hash != hash_:
         raise HTTPException(
@@ -97,32 +105,50 @@ def check_telegram_auth(init_data: str) -> dict:
     return parsed
 
 
+def check_telegram_login_widget(data: dict) -> bool:
+    """
+    Проверяет данные от Telegram Login Widget.
+    Алгоритм отличается от Web App (initData).
+    """
+    if not TELEGRAM_BOT_TOKEN:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN не установлен.")
+
+    received_hash = data.pop("hash", None)
+    if not received_hash:
+        return False
+
+    # 1. Сортируем и собираем строку data-check-string
+    data_check_arr = []
+    for key, value in sorted(data.items()):
+        if value is not None:  # Важно: пропускаем None
+            data_check_arr.append(f"{key}={value}")
+    data_check_string = "\n".join(data_check_arr)
+
+    # 2. Вычисляем секретный ключ: SHA256 от токена бота
+    secret_key = hashlib.sha256(TELEGRAM_BOT_TOKEN.encode("utf-8")).digest()
+
+    # 3. Вычисляем HMAC-SHA256
+    calculated_hash = hmac.new(
+        key=secret_key,
+        msg=data_check_string.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).hexdigest()
+
+    # 4. Сравниваем
+    if calculated_hash != received_hash:
+        return False
+
+    # 5. Проверка времени (опционально, но рекомендуется)
+    # if (datetime.now().timestamp() - data["auth_date"]) > 86400:
+    #     return False
+
+    return True
+
+
 @router.post("/auth", summary="Аутентификация пользователя Telegram Mini App")
 async def auth(data: InitDataModel):
     """
     Эндпоинт для аутентификации пользователей Telegram Mini App.
-
-    1. Проверяет подлинность данных `initData` от Telegram.
-    2. Извлекает `telegram_id` и другие данные пользователя.
-    3. Находит пользователя в базе данных `Users` по `telegram_id`.
-       - Если пользователь не найден: возвращает ошибку 403 Forbidden, так как доступ ему закрыт.
-       - Если пользователь найден: обновляет его `username`, `first_name`, `last_name`
-         и `last_activity_date`.
-    4. Возвращает основные данные пользователя из вашей БД.
-
-    Возвращает:
-    - `telegram_id`: Уникальный ID пользователя Telegram.
-    - `username`: Имя пользователя Telegram (если есть).
-    - `first_name`: Имя пользователя Telegram.
-    - `last_name`: Фамилия пользователя Telegram.
-    - `is_allowed`: Статус разрешения доступа в вашей системе.
-    - `message`: Сообщение о статусе операции.
-
-    Выбрасывает HTTPException:
-    - 401 Unauthorized: Если `initData` недействительна (например, подделана или истекла).
-    - 400 Bad Request: Если `initData` отсутствует или имеет некорректный формат.
-    - **403 Forbidden**: Если пользователь с данным `telegram_id` не найден в вашей базе данных `Users`.
-    - 500 Internal Server Error: При внутренних ошибках сервера.
     """
     print(
         f"[{datetime.now(timezone.utc)}] Получены RAW INIT DATA: {data.initData[:100]}..."
@@ -220,21 +246,65 @@ async def auth(data: InitDataModel):
     }
 
 
+@router.post("/auth/login-widget", summary="Аутентификация через Telegram Login Widget")
+async def auth_login_widget(data: TelegramLoginWidgetData):
+    """
+    Эндпоинт для входа через виджет Telegram на сайте.
+    Возвращает JWT токен для доступа к API.
+    """
+    # 1. Преобразуем Pydantic модель в dict, исключая None
+    data_dict = data.dict(exclude_none=True)
+
+    # 2. Проверяем подпись
+    if not check_telegram_login_widget(data_dict.copy()):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Telegram Widget data signature",
+        )
+
+    # 3. Ищем пользователя в БД
+    user = await Users.objects().where(Users.telegram_id == data.id).first().run()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not found in database",
+        )
+
+    if not user.is_allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
+        )
+
+    # 4. Генерируем JWT токен
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": str(user.telegram_id)}, expires_delta=access_token_expires
+    )
+
+    return {
+        "status": "ok",
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": user.telegram_id,
+            "username": user.username,
+            "first_name": user.first_name,
+            "is_admin": user.is_admin,
+        },
+    }
+
+
 @router.get("/get_user")
-# НОВА ФУНКЦІЯ ЗАЛЕЖНОСТІ
 async def get_current_telegram_user(
-    # Припускаємо, що фронтенд відправлятиме initData як кастомний хедер "X-Telegram-Init-Data"
     x_telegram_init_data: str = Header(
         ...,
         alias="X-Telegram-Init-Data",
         description="Дані ініціалізації Telegram Mini App",
     )
-    # x_telegram_init_data: str = "user=%7B%22id%22%3A548019148%2C%22first_name%22%3A%22%D0%A1%D0%B5%D1%80%D0%B3%D0%B5%D0%B9%22%2C%22last_name%22%3A%22%D0%9E%D0%BD%D0%B8%D1%89%D0%B5%D0%BD%D0%BA%D0%BE%22%2C%22username%22%3A%22OnyshchenkoSergey%22%2C%22language_code%22%3A%22uk%22%2C%22allows_write_to_pm%22%3Atrue%2C%22photo_url%22%3A%22https%3A%5C%2F%5C%2Ft.me%5C%2Fi%5C%2Fuserpic%5C%2F320%5C%2Fqf0qiya3lYZumE5ExiC55ONcmy-5vzP6pZzzBMV92vw.svg%22%7D&chat_instance=1925380814121275371&chat_type=channel&auth_date=1755268382&signature=-Wek8bfSlr6OOwIVIFYV_5bsXA9Krzzw_I51BXxoIZxn4L0qvcU48b7sgZOPf-AjiQaW1Q5BOkFGG8ekj6ycAw&hash=add338a30c8ad8606d1d303d0a99eb25f95bcf3f4a7a58b34e61f37111215853",
 ):
     """
     Залежність, яка перевіряє Telegram initData з хедера запиту.
-    Якщо дані валідні та користувач знайдений/дозволений у БД, повертає об'єкт користувача з БД.
-    Інакше - викидає HTTPException.
     """
     if not x_telegram_init_data:
         raise HTTPException(
@@ -245,7 +315,6 @@ async def get_current_telegram_user(
     try:
         parsed_init_data = check_telegram_auth(x_telegram_init_data)
     except HTTPException as e:
-        # Перехоплюємо та перевикидаємо помилки, вже визначені в check_telegram_auth
         raise e
     except Exception as e:
         print(
@@ -278,7 +347,6 @@ async def get_current_telegram_user(
             detail="Невірний формат Telegram ID користувача.",
         )
 
-    # Перевіряємо, чи користувач існує в нашій базі даних і чи має він доступ
     user_in_db = (
         await Users.objects().where(Users.telegram_id == telegram_id).first().run()
     )
@@ -289,4 +357,63 @@ async def get_current_telegram_user(
             detail="Доступ заборонено. Користувач не зареєстрований або не має дозволу.",
         )
 
-    return user_in_db  # Повертаємо об'єкт користувача з БД
+    return user_in_db
+
+
+async def get_current_user_jwt(token: str = Depends(oauth2_scheme)):
+    """
+    Зависимость для получения пользователя из JWT токена.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        # sub в JWT обычно строка, но у нас ID - int. Приводим к int.
+        telegram_id_str = payload.get("sub")
+        if telegram_id_str is None:
+            raise credentials_exception
+        telegram_id = int(telegram_id_str)
+    except (JWTError, ValueError):
+        raise credentials_exception
+
+    user = await Users.objects().where(Users.telegram_id == telegram_id).first().run()
+    if user is None:
+        raise credentials_exception
+    if not user.is_allowed:
+        raise HTTPException(status_code=403, detail="Access denied")
+    return user
+
+
+async def get_current_user_universal(
+    x_telegram_init_data: Optional[str] = Header(
+        None, alias="X-Telegram-Init-Data"
+    ),
+    token: Optional[str] = Depends(oauth2_scheme),
+):
+    """
+    Универсальная зависимость:
+    1. Пробует аутентифицировать через JWT (Bearer Token).
+    2. Если токена нет, пробует через X-Telegram-Init-Data.
+    """
+    # 1. Попытка через JWT
+    if token:
+        try:
+            return await get_current_user_jwt(token)
+        except HTTPException:
+            # Если токен невалиден, но есть initData, попробуем её.
+            # Если initData нет, то ошибка JWT будет финальной.
+            if not x_telegram_init_data:
+                raise
+
+    # 2. Попытка через InitData
+    if x_telegram_init_data:
+        return await get_current_telegram_user(x_telegram_init_data)
+
+    # 3. Если ничего нет
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Not authenticated. Provide either 'Authorization: Bearer ...' or 'X-Telegram-Init-Data' header.",
+    )

@@ -34,7 +34,7 @@ from .tables import (
     Tasks,
     Events,
 )
-from .telegram_auth import get_current_telegram_user
+from .telegram_auth import get_current_user_universal
 from .test import (
     get_all_tasks,
     create_task,
@@ -53,7 +53,7 @@ class ChangeDateRequest(BaseModel):
 router = APIRouter(
     prefix="/data",  # Всі едпоінти в цьому роутері починатимуться з /data
     tags=["Отримання даних"],  # Тег для Swagger UI
-    # dependencies=[Depends(get_current_telegram_user)],
+    # dependencies=[Depends(get_current_user_universal)],
 )
 
 
@@ -227,10 +227,10 @@ async def get_managers():
 @router.get(
     "/clients",
     summary="отримати клієнтів по менеджеру, якщо адмін то усіх ",
-    dependencies=[Depends(get_current_telegram_user)],
+    dependencies=[Depends(get_current_user_universal)],
 )
 async def get_clients(
-    manager: dict = Depends(get_current_telegram_user), name_part: Optional[str] = None
+    manager: dict = Depends(get_current_user_universal), name_part: Optional[str] = None
 ):
     if manager["is_admin"]:
         query = ClientManagerGuide.select()
@@ -247,7 +247,7 @@ async def get_clients(
 @router.get(
     "/product_on_warehouse",
     summary="Отримати товари, по яким є залишки на складі, з опціональними фільтрами",
-    dependencies=[Depends(get_current_telegram_user)],
+    dependencies=[Depends(get_current_user_universal)],
 )
 async def get_product_on_warehouse(
     category: Optional[str] = None, name_part: Optional[str] = None
@@ -611,7 +611,7 @@ async def get_calendar_event_by_id(id: str):
 
 
 @router.get("/calendar_events_by_user")
-async def get_events_by_user(user=Depends(get_current_telegram_user)):
+async def get_events_by_user(user=Depends(get_current_user_universal)):
     three_days_ago = datetime.now() - timedelta(days=3)
     if user.is_admin:
         data = (
@@ -632,7 +632,7 @@ async def get_events_by_user(user=Depends(get_current_telegram_user)):
 
 
 @router.get("/get_all_tasks")
-async def get_tasks(user=Depends(get_current_telegram_user)):
+async def get_tasks(user=Depends(get_current_user_universal)):
     data = await get_all_tasks(user)
     return data
 
@@ -644,7 +644,7 @@ class TaskCreate(BaseModel):
 
 
 @router.post("/add_task")
-async def add_task(task_data: TaskCreate, user=Depends(get_current_telegram_user)):
+async def add_task(task_data: TaskCreate, user=Depends(get_current_user_universal)):
     date_iso = (
         task_data.date.astimezone(timezone.utc).isoformat()
         if task_data.date
@@ -663,7 +663,7 @@ def get_task(task_id):
 
 
 @router.patch("/task_in_progress")
-async def task_in_progress(task_id, user=Depends(get_current_telegram_user)):
+async def task_in_progress(task_id, user=Depends(get_current_user_universal)):
     await Tasks.update(
         {
             Tasks.task_status: 1,
@@ -676,7 +676,7 @@ async def task_in_progress(task_id, user=Depends(get_current_telegram_user)):
 
 
 @router.patch("/task_completed")
-async def task_completed(task_id, user=Depends(get_current_telegram_user)):
+async def task_completed(task_id, user=Depends(get_current_user_universal)):
     await Tasks.update(
         {
             Tasks.task_status: 2,
@@ -689,7 +689,7 @@ async def task_completed(task_id, user=Depends(get_current_telegram_user)):
 
 
 @router.patch("/event_in_progress")
-async def event_in_progress(event_id, user=Depends(get_current_telegram_user)):
+async def event_in_progress(event_id, user=Depends(get_current_user_universal)):
     await Events.update(
         {
             Events.event_status: 1,
@@ -706,7 +706,7 @@ async def event_in_progress(event_id, user=Depends(get_current_telegram_user)):
 
 
 @router.patch("/event_completed")
-async def event_completed(event_id, user=Depends(get_current_telegram_user)):
+async def event_completed(event_id, user=Depends(get_current_user_universal)):
     await Events.update(
         {
             Events.event_status: 2,
@@ -725,7 +725,7 @@ async def event_completed(event_id, user=Depends(get_current_telegram_user)):
 
 @router.patch("/event_changed_date")
 async def event_changed_date(
-    event_id: str, new_date: ChangeDateRequest, user=Depends(get_current_telegram_user)
+    event_id: str, new_date: ChangeDateRequest, user=Depends(get_current_user_universal)
 ):
     await Events.update(
         {

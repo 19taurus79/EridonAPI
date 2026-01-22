@@ -28,6 +28,7 @@ from .tables import (
     MovedData,
     Deliveries,
     DeliveryItems,
+    Users,
 )
 from aiogram.types import FSInputFile, BufferedInputFile
 from fastapi import (
@@ -61,6 +62,7 @@ from .telegram_auth import (
     router as telegram_auth_router,
     InitDataModel,
     check_telegram_auth,
+    get_current_user_universal,
 )
 from .data_retrieval import router as data_retrieval_router
 from .data_loader import save_processed_data_to_db
@@ -365,6 +367,8 @@ origins = [
     "http://127.0.0.1:3000",
     "https://telegram-mini-app-six-inky.vercel.app",
     "https://geocode-six.vercel.app",
+    "https://paravail-aubrianna-noncrystalline.ngrok-free.dev",
+    "http://eridon-dev.local",
 ]
 
 app.add_middleware(
@@ -479,18 +483,6 @@ async def send_telegram_message(
         return {"status": "ok", "message": "Сообщение и CSV файл отправлены"}
     except Exception as e:
         return {"status": "error", "details": str(e)}
-
-
-class TelegramMessage(BaseModel):  # ← ДОБАВЬ ЭТО
-    chat_id: int  # ← ТВОИ поля из RN
-    text: str
-
-
-@app.post("/send_telegram_message_by_event")
-async def message(message: TelegramMessage):
-    await bot.send_message(
-        text=message.text, chat_id=message.chat_id, parse_mode="HTML"
-    )
 
 
 # --- Маршрут для загрузки и обработки данных ---
@@ -799,10 +791,11 @@ async def get_all_orders_and_address():
     # Шаг 1: Агрегируем средний вес из Remains
     weight_map = {}
     try:
+        # Используем REPLACE для замены запятой на точку, чтобы корректно преобразовать в число
         avg_weight_query = """
             SELECT
                 product,
-                AVG(CAST(NULLIF(weight, '') AS NUMERIC)) as avg_weight
+                AVG(CAST(REPLACE(NULLIF(weight, ''), ',', '.') AS NUMERIC)) as avg_weight
             FROM
                 remains
             WHERE
@@ -832,8 +825,9 @@ async def get_all_orders_and_address():
             final_weight = weight_from_remains
         else:
             # Иначе — применяем резервную логику
-            line_of_business = order.get("line_of_business", "")
-            nomenclature = order.get("nomenclature", "")
+            # Используем 'or ""' чтобы гарантировать строку, даже если в базе None
+            line_of_business = order.get("line_of_business") or ""
+            nomenclature = order.get("nomenclature") or ""
             final_weight = get_fallback_weight(line_of_business, nomenclature)
 
         quantity = order.get("different", 0)
@@ -984,11 +978,7 @@ async def get_telegram_id(id):
 
 
 @app.get("/delivery/get_data_for_delivery")
-async def get_data_for_delivery(X_Telegram_Init_Data: str = Header()):
-    parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
-    if not parsed_init_data:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
+async def get_data_for_delivery(user: Users = Depends(get_current_user_universal)):
     # 1. Получаем все доставки и их товарные позиции
     deliveries_list = (
         await Deliveries.select().order_by(Deliveries.id, ascending=False).run()
@@ -1038,14 +1028,13 @@ async def get_data_for_delivery(X_Telegram_Init_Data: str = Header()):
 
 
 @app.post("/delivery/send")
-async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Header()):
-    parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
-    user_info_str = parsed_init_data.get("user")
-    user_data = json.loads(user_info_str)
-    telegram_id = user_data.get("id")
+async def send_delivery(
+    data: DeliveryRequest, user: Users = Depends(get_current_user_universal)
+):
+    telegram_id = user.telegram_id
     # ----------------------------Сообщение для Телеграм-----------------------
     # 📝 Формируем текст для Telegram
-    print(X_Telegram_Init_Data)
+    # print(X_Telegram_Init_Data) # Убрали, так как теперь это не строка
     message_lines = [
         f"👤 Менеджер: {data.manager}",
         f"🚚 Контрагент: <code>{data.client}</code>",
@@ -1366,70 +1355,13 @@ async def update_delivery(data: UpdateDeliveryRequest):
         # Start a transaction to ensure atomicity
         async with Deliveries._meta.db.transaction():
             # 1. Update the delivery status
-
-            # await Deliveries.update({Deliveries.status: data.status}).where(
-            #     Deliveries.id == data.delivery_id
-            # ).run()
-            delivery_data = (
-                await Deliveries.select().where(Deliveries.id == data.delivery_id).run()
-            )
-            try:
-                calendar_data = get_calendar_events_by_id(
-                    delivery_data[0]["calendar_id"]
-                )
-            except:
-                print("У календарі нема інформації по цій доставці")
-            # await bot.send_message()
-            calendar_date = datetime.fromisoformat(
-                calendar_data["start"]["dateTime"]
-            ).date()
-            delivery_data_date = delivery_data[0]["delivery_date"]
+            await Deliveries.update({Deliveries.status: data.status}).where(
+                Deliveries.id == data.delivery_id
+            ).run()
             print(
                 f"✅ Статус доставки ID: {data.delivery_id} оновлено на '{data.status}'."
             )
-            if data.status == "В роботі" and delivery_data[0]["status"] == "Створено":
-                # await bot.send_message(
-                #     chat_id=delivery_data[0]["created_by"],
-                #     text=f"Заявка на доставку, по контрагенту {delivery_data[0]['client']}, передана для підготовки документів, та на комплектацію",
-                # )
-                client_name = delivery_data[0]["client"]
 
-                message_text = (
-                    f"✅ <b>Заявку на доставку прийнято в роботу</b>\n\n"
-                    f"👤 Контрагент: <b>{client_name}</b>\n"
-                    f"📄 Статус: <i>Підготовка документів та комплектація</i>\n\n"
-                )
-
-                await bot.send_message(
-                    chat_id=delivery_data[0]["created_by"],
-                    text=message_text,
-                    parse_mode="HTML",
-                )
-                changed_color_calendar_events_by_id(delivery_data[0]["calendar_id"], 1)
-                await Deliveries.update({Deliveries.status: data.status}).where(
-                    Deliveries.id == data.delivery_id
-                ).run()
-                await Events.update({Events.event_status: 1}).where(
-                    Events.event_id == delivery_data[0]["calendar_id"]
-                ).run()
-            if data.status == "Виконано" and delivery_data[0]["status"] == "В роботі":
-
-                await bot.send_message(
-                    chat_id=delivery_data[0]["created_by"],
-                    text=(
-                        f"✅ <b>Заявку на доставку виконано успішно!</b>\n\n"
-                        f"👤 Контрагент: <b>{delivery_data[0]['client']}</b>\n"
-                        f"🏁 Статус: <i>Завершено</i>"
-                    ),
-                    parse_mode="HTML",
-                )
-                changed_color_calendar_events_by_id(delivery_data[0]["calendar_id"], 2)
-                await Deliveries.update({Deliveries.status: data.status}).where(
-                    Deliveries.id == data.delivery_id
-                ).run()
-                await Events.update({Events.event_status: 2}).where(
-                    Events.event_id == delivery_data[0]["calendar_id"]
-                ).run()
             # 2. Delete all existing items for this delivery
             await DeliveryItems.delete().where(
                 DeliveryItems.delivery == data.delivery_id
