@@ -295,7 +295,7 @@ async def auth_login_widget(data: TelegramLoginWidgetData):
     }
 
 
-@router.get("/get_user")
+# Вспомогательная функция, НЕ эндпоинт
 async def get_current_telegram_user(
     x_telegram_init_data: str = Header(
         ...,
@@ -371,7 +371,6 @@ async def get_current_user_jwt(token: str = Depends(oauth2_scheme)):
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        # sub в JWT обычно строка, но у нас ID - int. Приводим к int.
         telegram_id_str = payload.get("sub")
         if telegram_id_str is None:
             raise credentials_exception
@@ -417,3 +416,13 @@ async def get_current_user_universal(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Not authenticated. Provide either 'Authorization: Bearer ...' or 'X-Telegram-Init-Data' header.",
     )
+
+
+# НОВЫЙ ЭНДПОИНТ, который использует универсальную зависимость
+@router.get("/get_user")
+async def get_user_endpoint(user: Users = Depends(get_current_user_universal)):
+    """
+    Возвращает данные текущего пользователя.
+    Работает и с initData (Mini App), и с JWT (Browser).
+    """
+    return user
