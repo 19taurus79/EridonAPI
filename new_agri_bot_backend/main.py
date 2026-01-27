@@ -102,6 +102,10 @@ class DeliveryOrder(BaseModel):
     items: List[DeliveryItem]
 
 
+class DeleteDeliveryRequest(BaseModel):
+    delivery_id: int
+
+
 class DeliveryRequest(BaseModel):
     client: str
     manager: str
@@ -1355,6 +1359,25 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
     os.remove(tmp.name)
 
     return {"status": "ok"}
+
+
+@app.delete("/delivery/delete", tags=["Delivery"])
+async def delete_delivery(deliveryId: DeleteDeliveryRequest):
+    data = (
+        await Deliveries.objects()
+        .where(Deliveries.id == deliveryId.delivery_id)
+        .first()
+    )
+    await bot.send_message(
+        chat_id=data.created_by,
+        text=(
+            f"❌ <b>Доставку скасовано</b>\n\n"
+            f"👤 Клієнт: <b>{data.client}</b>\n"
+            f"🗑 <i>Дані про доставку видалено з бази.</i>"
+        ),
+        parse_mode="HTML",
+    )
+    await Deliveries.delete().where(Deliveries.id == deliveryId.delivery_id).run()
 
 
 @app.post("/delivery/update", tags=["Delivery"])
