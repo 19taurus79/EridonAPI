@@ -385,7 +385,9 @@ async def get_sum_order_products(product):
 
 @router.get("/moved_products_for_order/{order}")
 async def get_moved_products_for_order(order: str):
-    data = await MovedData.select().where(MovedData.contract == order)
+    data = await MovedData.select().where(
+        (MovedData.contract == order) & (MovedData.is_active == True)
+    )
     return data
 
 
@@ -555,6 +557,7 @@ async def get_moved_products(product_id: str):
             .where(
                 (MovedData.product_id == product_id)
                 & (MovedData.contract.is_in(valid_sub))
+                & (MovedData.is_active == True)
             )
             .run()
         )

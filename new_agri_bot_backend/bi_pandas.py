@@ -124,6 +124,7 @@ async def combined_pandas_endpoint(
             MovedData.product,
             Sum(Cast(MovedData.qt_moved, Float())).as_alias("moved_qty"),
         )
+        .where(MovedData.is_active == True)
         .group_by(MovedData.contract, MovedData.product)
         .run()
     )

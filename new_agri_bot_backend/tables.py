@@ -112,6 +112,7 @@ class MovedData(Table):
     period = Varchar()
     order = Varchar()
     product_id = Varchar()
+    is_active = Boolean(default=True)
 
 
 class MovedNot(Table):
