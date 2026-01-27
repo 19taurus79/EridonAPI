@@ -17,7 +17,10 @@ from openpyxl.utils import get_column_letter
 from asyncpg import UniqueViolationError
 from piccolo.columns.defaults import TimestampNow
 from . import models, processing
-from .calendar_utils import changed_color_calendar_events_by_id
+from .calendar_utils import (
+    changed_color_calendar_events_by_id,
+    delete_calendar_event_by_id,
+)
 from .models import RegionResponse, AddressResponse, AddressCreate
 from .tables import (
     Remains,
@@ -1378,6 +1381,7 @@ async def delete_delivery(deliveryId: DeleteDeliveryRequest):
         parse_mode="HTML",
     )
     await Deliveries.delete().where(Deliveries.id == deliveryId.delivery_id).run()
+    delete_calendar_event_by_id(event_id=data.calendar_id)
 
 
 @app.post("/delivery/update", tags=["Delivery"])

@@ -99,3 +99,31 @@ def changed_date_calendar_events_by_id(id: str, new_date):
     except Exception as e:
         print("Ошибка при получении событий из календаря:", e)
         return None
+
+
+def delete_calendar_event_by_id(event_id: str):
+    """
+    Удаляет событие из Google Calendar по его ID
+
+    Args:
+        event_id: ID события для удаления
+
+    Returns:
+        True если удаление успешно, False в случае ошибки
+    """
+    try:
+        # Подключение к API
+        credentials = service_account.Credentials.from_service_account_file(
+            SERVICE_ACCOUNT_FILE, scopes=SCOPES
+        )
+        service = build("calendar", "v3", credentials=credentials)
+
+        # Удаление события
+        service.events().delete(calendarId=CALENDAR_ID, eventId=event_id).execute()
+
+        print(f"Событие {event_id} успешно удалено")
+        return True
+
+    except Exception as e:
+        print(f"Ошибка при удалении события {event_id}:", e)
+        return False
