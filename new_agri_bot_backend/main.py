@@ -1400,16 +1400,15 @@ async def update_delivery(data: UpdateDeliveryRequest):
             delivery_data = (
                 await Deliveries.select().where(Deliveries.id == data.delivery_id).run()
             )
-            try:
-                calendar_data = get_calendar_events_by_id(
-                    delivery_data[0]["calendar_id"]
-                )
-            except:
-                print("У календарі нема інформації по цій доставці")
-            # await bot.send_message()
-            calendar_date = datetime.fromisoformat(
-                calendar_data["start"]["dateTime"]
-            ).date()
+            
+            calendar_id = delivery_data[0].get("calendar_id")
+            calendar_data = None
+            if calendar_id:
+                try:
+                    calendar_data = get_calendar_events_by_id(calendar_id)
+                except Exception as e:
+                    print(f"У календарі нема інформації по цій доставці: {e}")
+
             delivery_data_date = delivery_data[0]["delivery_date"]
             print(
                 f"✅ Статус доставки ID: {data.delivery_id} оновлено на '{data.status}'."
@@ -1432,13 +1431,15 @@ async def update_delivery(data: UpdateDeliveryRequest):
                     text=message_text,
                     parse_mode="HTML",
                 )
-                changed_color_calendar_events_by_id(delivery_data[0]["calendar_id"], 1)
+                if calendar_id:
+                    changed_color_calendar_events_by_id(calendar_id, 1)
                 await Deliveries.update({Deliveries.status: data.status}).where(
                     Deliveries.id == data.delivery_id
                 ).run()
-                await Events.update({Events.event_status: 1}).where(
-                    Events.event_id == delivery_data[0]["calendar_id"]
-                ).run()
+                if calendar_id:
+                    await Events.update({Events.event_status: 1}).where(
+                        Events.event_id == calendar_id
+                    ).run()
             if data.status == "Виконано" and delivery_data[0]["status"] == "В роботі":
 
                 await bot.send_message(
@@ -1450,13 +1451,15 @@ async def update_delivery(data: UpdateDeliveryRequest):
                     ),
                     parse_mode="HTML",
                 )
-                changed_color_calendar_events_by_id(delivery_data[0]["calendar_id"], 2)
+                if calendar_id:
+                    changed_color_calendar_events_by_id(calendar_id, 2)
                 await Deliveries.update({Deliveries.status: data.status}).where(
                     Deliveries.id == data.delivery_id
                 ).run()
-                await Events.update({Events.event_status: 2}).where(
-                    Events.event_id == delivery_data[0]["calendar_id"]
-                ).run()
+                if calendar_id:
+                    await Events.update({Events.event_status: 2}).where(
+                        Events.event_id == calendar_id
+                    ).run()
             # 2. Delete all existing items for this delivery
             await DeliveryItems.delete().where(
                 DeliveryItems.delivery == data.delivery_id
