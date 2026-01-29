@@ -363,26 +363,42 @@ async def save_processed_data_to_db(
             product_id_map = product_guide.set_index("product")["id"]
             df_matches["product_id"] = df_matches["product"].map(product_id_map)
 
+            # --- ОБНОВЛЕННАЯ ПРОВЕРКА ДУБЛИКАТОВ ---
+            # Используем расширенный набор полей для точной идентификации записи
             existing_moved_data_list = await MovedData.select(
-                MovedData.product_id, MovedData.contract, MovedData.period
+                MovedData.product_id, 
+                MovedData.order, 
+                MovedData.party_sign, 
+                MovedData.qt_moved, 
+                MovedData.date
             ).run()
             df_moved_from_db = pd.DataFrame(existing_moved_data_list)
 
             df_new_matches_to_add = pd.DataFrame()
 
-            if not df_moved_from_db.empty:
-                key_cols = ["product_id", "contract", "period"]
-                for col in key_cols:
-                    df_moved_from_db[col] = (
-                        df_moved_from_db[col].astype(str).str.strip()
-                    )
+            # Функция для создания уникального ключа (нормализация данных)
+            def create_key(row):
+                # Нормализация количества (100.0 -> "100")
+                q = row.get("qt_moved")
+                try:
+                    q_val = float(q)
+                    q_str = f"{q_val:g}"
+                except (ValueError, TypeError):
+                    q_str = str(q) if pd.notna(q) else ""
+                
+                # Нормализация даты
+                d = row.get("date")
+                d_str = str(d).split(" ")[0] if pd.notna(d) else ""
+                
+                return f"{row.get('product_id')}_{row.get('order')}_{row.get('party_sign')}_{q_str}_{d_str}"
 
-                df_matches["composite_key"] = df_matches[key_cols].apply(
-                    lambda row: "_".join(row.values.astype(str)), axis=1
-                )
-                df_moved_from_db["composite_key"] = df_moved_from_db[key_cols].apply(
-                    lambda row: "_".join(row.values.astype(str)), axis=1
-                )
+            if not df_moved_from_db.empty:
+                # Генерируем ключи для существующих записей
+                df_moved_from_db["composite_key"] = df_moved_from_db.apply(create_key, axis=1)
+                
+                # Генерируем ключи для новых записей
+                # Важно: df_matches уже содержит переименованные колонки (order, qt_moved и т.д.)
+                df_matches["composite_key"] = df_matches.apply(create_key, axis=1)
 
                 existing_keys = set(df_moved_from_db["composite_key"])
                 df_new_matches_to_add = df_matches[
