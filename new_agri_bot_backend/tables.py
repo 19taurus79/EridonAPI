@@ -302,3 +302,15 @@ class DeliveryItems(Table):
     quantity = Real()
     party = Varchar(length=255, null=True)
     party_quantity = Real(null=True)
+
+
+class OrderComments(Table):
+    comment_type = Varchar(length=10)
+    order_ref = Varchar(length=50)
+    product_id = UUID()
+    product_name = Varchar(length=255)
+    comment_text = Text()
+    created_by = Integer()
+    created_by_name = Varchar(length=100)
+    created_at = Timestamp(default=TimestampNow())
+    updated_at = Timestamp(auto_update=datetime.now)

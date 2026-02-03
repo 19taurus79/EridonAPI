@@ -4,6 +4,7 @@ import io
 import os
 import tempfile
 import uuid
+from enum import Enum
 from pathlib import Path
 from typing import Optional, List, Dict
 
@@ -31,6 +32,7 @@ from .tables import (
     MovedData,
     Deliveries,
     DeliveryItems,
+    OrderComments,
 )
 from aiogram.types import FSInputFile, BufferedInputFile
 from fastapi import (
@@ -55,7 +57,7 @@ from piccolo_admin.endpoints import create_admin
 from openpyxl import Workbook
 
 # from openpyxl.utils import get_column_letter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
@@ -64,6 +66,7 @@ from .telegram_auth import (
     router as telegram_auth_router,
     InitDataModel,
     check_telegram_auth,
+    get_current_telegram_user,
 )
 from .data_retrieval import router as data_retrieval_router
 from .data_loader import save_processed_data_to_db
@@ -144,6 +147,119 @@ class UpdateDeliveryRequest(BaseModel):
     delivery_id: int
     status: str
     items: List[UpdateItem]
+
+
+class CommentType(str, Enum):
+    """Тип коментаря"""
+
+    ORDER = "order"
+    PRODUCT = "product"
+
+
+class CreateCommentRequest(BaseModel):
+    """Запит на створення коментаря"""
+
+    comment_type: CommentType = Field(
+        ..., description="Тип коментаря: order або product"
+    )
+    order_ref: str = Field(..., min_length=1, max_length=50, description="Номер заявки")
+    product_id: Optional[str] = Field(None, description="UUID товару (для дашборду)")
+    product_name: Optional[str] = Field(
+        None, max_length=255, description="Назва товару (для BI)"
+    )
+    comment_text: str = Field(..., min_length=1, description="Текст коментаря")
+
+    @validator("comment_text")
+    def validate_comment_text(cls, v):
+        """Валідація тексту коментаря"""
+        if not v or not v.strip():
+            raise ValueError("Текст коментаря не може бути порожнім")
+        return v.strip()
+
+    @validator("product_id", "product_name")
+    def validate_product_fields(cls, v, values):
+        """Валідація полів товару залежно від типу коментаря"""
+        comment_type = values.get("comment_type")
+
+        # Для коментарів заявки product_id та product_name мають бути None
+        if comment_type == CommentType.ORDER and v is not None:
+            raise ValueError(
+                "Для коментарів заявки product_id та product_name мають бути null"
+            )
+
+        return v
+
+    @validator("product_name")
+    def validate_product_comment(cls, v, values):
+        """Для коментарів товару хоча б одне поле має бути заповнене"""
+        comment_type = values.get("comment_type")
+        product_id = values.get("product_id")
+
+        if comment_type == CommentType.PRODUCT:
+            if not product_id and not v:
+                raise ValueError(
+                    "Для коментарів товару product_id або product_name обов'язкові"
+                )
+
+        return v
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "comment_type": "product",
+                "order_ref": "ТЕ-00071300",
+                "product_id": "9aa0c0fc-1239-42cb-a4ec-59c614d77423",
+                "product_name": "Аклон 60%, к.с. (5 л)",
+                "comment_text": "Потрібно терміново відвантажити",
+            }
+        }
+
+
+class UpdateCommentRequest(BaseModel):
+    """Запит на оновлення коментаря"""
+
+    comment_text: str = Field(..., min_length=1, description="Новий текст коментаря")
+
+    @validator("comment_text")
+    def validate_comment_text(cls, v):
+        if not v or not v.strip():
+            raise ValueError("Текст коментаря не може бути порожнім")
+        return v.strip()
+
+    class Config:
+        json_schema_extra = {"example": {"comment_text": "Оновлений текст коментаря"}}
+
+
+class CommentResponse(BaseModel):
+    """Відповідь з даними коментаря"""
+
+    id: int = Field(..., description="ID коментаря")
+    comment_type: CommentType = Field(..., description="Тип коментаря")
+    order_ref: str = Field(..., description="Номер заявки")
+    product_id: Optional[uuid.UUID] = Field(None, description="UUID товару")
+    product_name: Optional[str] = Field(None, description="Назва товару")
+    comment_text: str = Field(..., description="Текст коментаря")
+    created_by: int = Field(..., description="Telegram ID автора")
+    created_by_name: str = Field(..., description="Ім'я автора")
+    created_at: datetime = Field(..., description="Дата створення")
+    updated_at: Optional[datetime] = Field(None, description="Дата оновлення")
+
+    class Config:
+        from_attributes = True
+        json_schema_extra = {
+            "example": {
+                "id": 123,
+                "comment_type": "product",
+                "order_ref": "ТЕ-00071300",
+                "product_id": "9aa0c0fc-1239-42cb-a4ec-59c614d77423",
+                "product_name": "Аклон 60%, к.с. (5 л)",
+                "comment_text": "Потрібно терміново відвантажити",
+                "created_by": 123456789,
+                "created_by_name": "Іван Петренко",
+                "created_at": "2026-02-02T12:00:00.000Z",
+                "updated_at": None,
+            }
+        }
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -372,6 +488,8 @@ origins = [
     "http://127.0.0.1:3000",
     "https://telegram-mini-app-six-inky.vercel.app",
     "https://geocode-six.vercel.app",
+    "https://paravail-aubrianna-noncrystalline.ngrok-free.dev",
+    "http://eridon-dev.local",
 ]
 
 app.add_middleware(
@@ -806,10 +924,11 @@ async def get_all_orders_and_address():
     # Шаг 1: Агрегируем средний вес из Remains
     weight_map = {}
     try:
+        # Используем REPLACE для замены запятой на точку, чтобы корректно преобразовать в число
         avg_weight_query = """
             SELECT
                 product,
-                AVG(CAST(NULLIF(weight, '') AS NUMERIC)) as avg_weight
+                AVG(CAST(REPLACE(NULLIF(weight, ''), ',', '.') AS NUMERIC)) as avg_weight
             FROM
                 remains
             WHERE
@@ -839,8 +958,9 @@ async def get_all_orders_and_address():
             final_weight = weight_from_remains
         else:
             # Иначе — применяем резервную логику
-            line_of_business = order.get("line_of_business", "")
-            nomenclature = order.get("nomenclature", "")
+            # Используем 'or ""' чтобы гарантировать строку, даже если в базе None
+            line_of_business = order.get("line_of_business") or ""
+            nomenclature = order.get("nomenclature") or ""
             final_weight = get_fallback_weight(line_of_business, nomenclature)
 
         quantity = order.get("different", 0)
@@ -1393,73 +1513,13 @@ async def update_delivery(data: UpdateDeliveryRequest):
         # Start a transaction to ensure atomicity
         async with Deliveries._meta.db.transaction():
             # 1. Update the delivery status
-
-            # await Deliveries.update({Deliveries.status: data.status}).where(
-            #     Deliveries.id == data.delivery_id
-            # ).run()
-            delivery_data = (
-                await Deliveries.select().where(Deliveries.id == data.delivery_id).run()
-            )
-            
-            calendar_id = delivery_data[0].get("calendar_id")
-            calendar_data = None
-            if calendar_id:
-                try:
-                    calendar_data = get_calendar_events_by_id(calendar_id)
-                except Exception as e:
-                    print(f"У календарі нема інформації по цій доставці: {e}")
-
-            delivery_data_date = delivery_data[0]["delivery_date"]
+            await Deliveries.update({Deliveries.status: data.status}).where(
+                Deliveries.id == data.delivery_id
+            ).run()
             print(
                 f"✅ Статус доставки ID: {data.delivery_id} оновлено на '{data.status}'."
             )
-            if data.status == "В роботі" and delivery_data[0]["status"] == "Створено":
-                # await bot.send_message(
-                #     chat_id=delivery_data[0]["created_by"],
-                #     text=f"Заявка на доставку, по контрагенту {delivery_data[0]['client']}, передана для підготовки документів, та на комплектацію",
-                # )
-                client_name = delivery_data[0]["client"]
 
-                message_text = (
-                    f"✅ <b>Заявку на доставку прийнято в роботу</b>\n\n"
-                    f"👤 Контрагент: <b>{client_name}</b>\n"
-                    f"📄 Статус: <i>Підготовка документів та комплектація</i>\n\n"
-                )
-
-                await bot.send_message(
-                    chat_id=delivery_data[0]["created_by"],
-                    text=message_text,
-                    parse_mode="HTML",
-                )
-                if calendar_id:
-                    changed_color_calendar_events_by_id(calendar_id, 1)
-                await Deliveries.update({Deliveries.status: data.status}).where(
-                    Deliveries.id == data.delivery_id
-                ).run()
-                if calendar_id:
-                    await Events.update({Events.event_status: 1}).where(
-                        Events.event_id == calendar_id
-                    ).run()
-            if data.status == "Виконано" and delivery_data[0]["status"] == "В роботі":
-
-                await bot.send_message(
-                    chat_id=delivery_data[0]["created_by"],
-                    text=(
-                        f"✅ <b>Заявку на доставку виконано успішно!</b>\n\n"
-                        f"👤 Контрагент: <b>{delivery_data[0]['client']}</b>\n"
-                        f"🏁 Статус: <i>Завершено</i>"
-                    ),
-                    parse_mode="HTML",
-                )
-                if calendar_id:
-                    changed_color_calendar_events_by_id(calendar_id, 2)
-                await Deliveries.update({Deliveries.status: data.status}).where(
-                    Deliveries.id == data.delivery_id
-                ).run()
-                if calendar_id:
-                    await Events.update({Events.event_status: 2}).where(
-                        Events.event_id == calendar_id
-                    ).run()
             # 2. Delete all existing items for this delivery
             await DeliveryItems.delete().where(
                 DeliveryItems.delivery == data.delivery_id
@@ -1516,3 +1576,193 @@ async def update_delivery(data: UpdateDeliveryRequest):
         )
 
     return {"status": "ok", "message": "Delivery items updated successfully."}
+
+
+@app.post(
+    "/orders/comments/create",
+    response_model=CommentResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Створити коментар",
+    description="Створює новий коментар до заявки або товару",
+    dependencies=[Depends(get_current_telegram_user)],
+)
+async def create_comment(
+    request: CreateCommentRequest, user: dict = Depends(get_current_telegram_user)
+):
+    """
+    Створення нового коментаря
+
+    - **comment_type**: 'order' для заявки, 'product' для товару
+    - **order_ref**: Номер заявки (обов'язково)
+    - **product_id**: UUID товару (для дашборду, якщо comment_type='product')
+    - **product_name**: Назва товару (для BI, якщо comment_type='product')
+    - **comment_text**: Текст коментаря (обов'язково)
+    """
+
+    try:
+        # Создаем новую запись в таблице OrderComments
+        new_comment = OrderComments(
+            comment_type=request.comment_type.value,
+            order_ref=request.order_ref,
+            product_id=request.product_id,
+            product_name=request.product_name,
+            comment_text=request.comment_text,
+            created_by=user["telegram_id"],
+            created_by_name=user["full_name_for_orders"] or user["first_name"],
+        )
+        await new_comment.save().run()
+
+        # Возвращаем созданный объект, преобразованный в Pydantic модель
+        return CommentResponse(
+            id=str(new_comment.id),
+            comment_type=new_comment.comment_type,
+            order_ref=new_comment.order_ref,
+            product_id=str(new_comment.product_id) if new_comment.product_id else None,
+            product_name=new_comment.product_name,
+            comment_text=new_comment.comment_text,
+            created_by=new_comment.created_by,
+            created_by_name=new_comment.created_by_name,
+            created_at=new_comment.created_at,
+            updated_at=new_comment.updated_at,
+        )
+    except Exception as e:
+        print(f"❌ Помилка створення коментаря: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Не вдалося зберегти коментар: {e}",
+        )
+
+
+@app.get(
+    "/orders/comments/list",
+    response_model=List[CommentResponse],
+    summary="Отримати коментарі",
+    description="Отримує всі коментарі для вказаної заявки",
+)
+async def get_comments(
+    order_ref: str = Query(..., description="Номер заявки"),
+    # user: dict = Depends(get_current_telegram_user)
+):
+    """
+    Отримання всіх коментарів для заявки
+
+    - **order_ref**: Номер заявки
+
+    Повертає список коментарів, відсортованих за датою створення (найновіші спочатку)
+    """
+
+    if not order_ref or not order_ref.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="order_ref обов'язковий параметр",
+        )
+    comments = (
+        await OrderComments.select()
+        .where(OrderComments.order_ref == order_ref)
+        .order_by(OrderComments.created_at, ascending=False)
+        .run()
+    )
+
+    return comments
+
+
+@app.put(
+    "/orders/comments/{comment_id}",
+    response_model=CommentResponse,
+    summary="Оновити коментар",
+    description="Оновлює текст коментаря (тільки власник може редагувати)",
+    dependencies=[Depends(get_current_telegram_user)],
+)
+async def update_comment(
+    comment_id: int,
+    request: UpdateCommentRequest,
+    user: dict = Depends(get_current_telegram_user),
+):
+    """
+    Оновлення коментаря
+
+    - **comment_id**: ID коментаря
+    - **comment_text**: Новий текст коментаря
+
+    Тільки автор коментаря може його редагувати
+    """
+
+    # Перевірка існування та прав доступу
+    comment = (
+        await OrderComments.objects()
+        .where(OrderComments.id == comment_id)
+        .first()
+        .run()
+    )
+
+    if not comment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Коментар не знайдено"
+        )
+
+    if comment.created_by != user["telegram_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Ви можете редагувати тільки свої коментарі",
+        )
+
+    # Оновлення
+    comment.comment_text = request.comment_text
+    comment.updated_at = datetime.now()
+    await comment.save().run()
+
+    return CommentResponse(
+        id=str(comment.id),
+        comment_type=comment.comment_type,
+        order_ref=comment.order_ref,
+        product_id=str(comment.product_id) if comment.product_id else None,
+        product_name=comment.product_name,
+        comment_text=comment.comment_text,
+        created_by=comment.created_by,
+        created_by_name=comment.created_by_name,
+        created_at=comment.created_at,
+        updated_at=comment.updated_at,
+    )
+
+
+@app.delete(
+    "/orders/comments/{comment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Видалити коментар",
+    description="Видаляє коментар (тільки власник може видалити)",
+    dependencies=[Depends(get_current_telegram_user)],
+)
+async def delete_comment(
+    comment_id: int, user: dict = Depends(get_current_telegram_user)
+):
+    """
+    Видалення коментаря
+
+    - **comment_id**: ID коментаря
+
+    Тільки автор коментаря може його видалити
+    """
+
+    # Перевірка існування та прав доступу
+    comment = (
+        await OrderComments.objects()
+        .where(OrderComments.id == comment_id)
+        .first()
+        .run()
+    )
+
+    if not comment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Коментар не знайдено"
+        )
+
+    if comment.created_by != user["telegram_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Ви можете видаляти тільки свої коментарі",
+        )
+
+    # Видалення
+    await OrderComments.delete().where(OrderComments.id == comment_id).run()
+
+    return None
