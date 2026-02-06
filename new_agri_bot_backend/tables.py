@@ -2,6 +2,7 @@ from datetime import datetime
 
 from piccolo.columns.defaults import TimestampNow
 from piccolo.columns.defaults.timestamptz import TimestamptzNow
+from piccolo.columns.readable import Readable
 from piccolo.table import Table
 from piccolo.columns import (
     Varchar,
@@ -310,7 +311,25 @@ class OrderComments(Table):
     product_id = UUID()
     product_name = Varchar(length=255)
     comment_text = Text()
-    created_by = Integer()
+    created_by = BigInt()
     created_by_name = Varchar(length=100)
     created_at = Timestamp(default=TimestampNow())
     updated_at = Timestamp(auto_update=datetime.now)
+
+
+class OrderChatMessage(Table):
+    """Повідомлення чату для заявок"""
+
+    id = UUID(primary_key=True)
+    order_ref = Varchar(length=50, required=True, index=True)
+    user_id = BigInt(required=True, index=True)
+    user_name = Varchar(length=255, required=True)
+    message_text = Text(required=True)
+    created_at = Timestamptz(auto_now_add=True)
+    updated_at = Timestamptz(auto_now=True)
+    is_edited = Boolean(default=False)
+    reply_to_message_id = ForeignKey(references="self", on_delete="SET NULL", null=True)
+
+    @classmethod
+    def get_readable(cls):
+        return Readable(template="%s", columns=[cls.message_text])

@@ -72,6 +72,8 @@ from .data_retrieval import router as data_retrieval_router
 from .data_loader import save_processed_data_to_db
 from .bi import router as bi_router
 from .bi_pandas import router as bi_pandas_router
+from .order_chat import router as chat_router
+from .notification import router as notification_router
 from .utils import send_message_to_managers, create_composite_key_from_dict
 
 # Импорт TELEGRAM_BOT_TOKEN из config.py для инициализации бота
@@ -505,6 +507,8 @@ app.include_router(telegram_auth_router)  # Подключаем маршрут�
 app.include_router(data_retrieval_router)
 app.include_router(bi_router)
 app.include_router(bi_pandas_router)
+app.include_router(chat_router)
+app.include_router(notification_router)
 app.mount("/admin", admin_router)
 
 

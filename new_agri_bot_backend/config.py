@@ -102,3 +102,9 @@ POSTGRES_USER = os.getenv("POSTGRES_USER")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 
 bot = Bot(TELEGRAM_BOT_TOKEN)
+LOGISTICS_TELEGRAM_IDS = [
+    548019148,  # Логіст 1
+    7953178333,  # Логіст 2
+    1060393824,  # Логіст 3
+    # Додайте інші ID логістів тут
+]
