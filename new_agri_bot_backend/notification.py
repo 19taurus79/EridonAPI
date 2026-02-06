@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 import os
 import html
@@ -58,8 +58,14 @@ async def send_chat_notification(
     )
 
     # 5. Створення inline клавіатури (aiogram стиль)
+    if chat_link.startswith("https"):
+        button = InlineKeyboardButton(text="📱 Відкрити чат", web_app=WebAppInfo(url=chat_link))
+    else:
+        # Fallback для локальної розробки (HTTP) - відкриває у браузері
+        button = InlineKeyboardButton(text="📱 Відкрити чат", url=chat_link)
+
     keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="📱 Відкрити чат", url=chat_link)]]
+        inline_keyboard=[[button]]
     )
 
     # 6. Відправка через aiogram
@@ -116,17 +122,17 @@ async def notify_chat_message(
     """Відправити Telegram сповіщення про нове повідомлення"""
 
     # 1. Отримати повідомлення
-    message = await OrderChatMessage.objects().get(
+    message = await OrderChatMessage.objects().where(
         (OrderChatMessage.id == message_id) & (OrderChatMessage.order_ref == order_ref)
-    )
+    ).first()
 
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
 
     # Отримати дані про заявку (клієнта)
-    order_info = await Submissions.objects().get(
+    order_info = await Submissions.objects().where(
         Submissions.contract_supplement == order_ref
-    )
+    ).first()
     client_name = order_info.client if order_info and order_info.client else "Невідомий клієнт"
 
     # 2. Визначити отримувачів
@@ -185,14 +191,14 @@ async def get_order_manager(order_ref: str) -> Optional[Users]:
     # Адаптуйте під вашу структуру БД
 
     # Варіант 1: Якщо є таблиця Orders
-    order = await Submissions.objects().get(
+    order = await Submissions.objects().where(
         Submissions.contract_supplement == order_ref
-    )
+    ).first()
 
     if not order or not order.manager:
         return None
 
     # Знайти користувача за ім'ям менеджера
-    user = await Users.objects().get(Users.full_name_for_orders == order.manager)
+    user = await Users.objects().where(Users.full_name_for_orders == order.manager).first()
 
     return user
