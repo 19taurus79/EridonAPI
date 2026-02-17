@@ -204,11 +204,19 @@ async def save_processed_data_to_db(
             submissions_data = submissions_data.rename(
                 columns={"line_of_business_av": "line_of_business"}
             )
+            df_submissions["client"] = df_submissions["client"].str.strip()
+            df_payment["client"] = df_payment["client"].str.strip()
+            df_payment["contract_supplement"] = (
+                df_payment["contract_supplement"].str.strip()
+            )
+            df_submissions["contract_supplement"] = (
+                df_submissions["contract_supplement"].str.strip()
+            )
             submissions_data = pd.merge(
                 submissions_data,
-                df_payment[["contract_supplement", "order_status"]],
+                df_payment[["client", "contract_supplement", "order_status"]],
                 how="left",
-                on="contract_supplement",
+                on=["client", "contract_supplement"],
             )
             submissions_data.drop(columns="delivery_status", inplace=True)
             submissions_data = submissions_data.rename(
