@@ -127,6 +127,7 @@ class MovedNot(Table):
 class Payment(Table):
     id = UUID(primary_key=True)
     contract_supplement = Varchar()
+    client = Varchar()
     contract_type = Varchar()
     order_status = Varchar()
     prepayment_amount = DoublePrecision()
