@@ -117,41 +117,42 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
 
         # Группируем записи по номеру заказа для более компактного вида
         for order_id, order_group in manager_group_df.groupby("order"):
-            # Получаем имя клиента (оно будет одинаковым для всей группы заказа)
-            client_name = order_group["client"].iloc[0]
-            message_text += (
-                f"\n\n📄 *Заявка на відвантаження:* `{order_id}`\n"
-                f"👤 *Контрагент:* {client_name}\n"
-            )
+            message_text += f"\n\n📄 *Заявка на відвантаження:* `{order_id}`\n"
 
-            # --- НОВЫЙ УРОВЕНЬ ГРУППИРОВКИ: по дополнению (контракту) ---
-            for contract_id, contract_group in order_group.groupby("contract"):
-                message_text += f"  📝 *Доповнення:* `{contract_id}`\n"
+            # Внутри заказа группируем по клиенту
+            for client_name, client_group in order_group.groupby("client"):
+                message_text += f"  👤 *Контрагент:* {client_name}\n"
 
-                # --- НОВЫЙ УРОВЕНЬ ГРУППИРОВКИ: по товару ---
-                for product_name, product_group in contract_group.groupby("product"):
-                    message_text += f"    📦 *Товар:* _{product_name}_\n"
+                # Внутри клиента группируем по дополнению (контракту)
+                for contract_id, contract_group in client_group.groupby("contract"):
+                    message_text += f"    📝 *Доповнення:* `{contract_id}`\n"
 
-                    # Итерируемся по каждой строке (партии/позиции) в рамках одного товара
-                    for _, row in product_group.iterrows():
-                        date_val = row.get("date")
-                        formatted_date = (
-                            date_val.strftime("%d.%m.%Y")
-                            if pd.notna(date_val)
-                            else "не вказано"
-                        )
+                    # Внутри контракта группируем по товару
+                    for product_name, product_group in contract_group.groupby(
+                        "product"
+                    ):
+                        message_text += f"      📦 *Товар:* _{product_name}_\n"
 
-                        message_text += (
-                            f"      🏷️ *Партія:* `{row.get('party_sign', 'N/A')}`\n"
-                        )
-                        message_text += (
-                            f"      🚚 *Переміщено:* *{row.get('qt_moved', 0):.2f}*\n"
-                        )
-                        # message_text += f"      🛒 *Замовлено:* {row.get('qt_order', 0)}\n"
-                        # message_text += f"      📈 *Напрям:* {row.get('line_of_business', 'N/A')}\n"
-                        # message_text += f"      🗓️ *Період:* {row.get('period', 'N/A')}\n"
-                        # message_text += f"      📅 *Дата:* {formatted_date}\n"
-                        message_text += "-" * 40 + "\n"  # Разделитель для партий
+                        # Итерируемся по каждой строке (партии/позиции) в рамках одного товара
+                        for _, row in product_group.iterrows():
+                            date_val = row.get("date")
+                            formatted_date = (
+                                date_val.strftime("%d.%m.%Y")
+                                if pd.notna(date_val)
+                                else "не вказано"
+                            )
+
+                            message_text += (
+                                f"        🏷️ *Партія:* `{row.get('party_sign', 'N/A')}`\n"
+                            )
+                            message_text += f"        🚚 *Переміщено:* *{row.get('qt_moved', 0):.2f}*\n"
+                            # message_text += f"      🛒 *Замовлено:* {row.get('qt_order', 0)}\n"
+                            # message_text += f"      📈 *Напрям:* {row.get('line_of_business', 'N/A')}\n"
+                            # message_text += f"      🗓️ *Період:* {row.get('period', 'N/A')}\n"
+                            # message_text += f"      📅 *Дата:* {formatted_date}\n"
+                            message_text += (
+                                " " * 8 + "-" * 32 + "\n"
+                            )  # Разделитель для партий
 
         # --- ИСПРАВЛЕНИЕ: Добавляем секцию менеджера в отчет ОДИН РАЗ после формирования ---
         admin_report_parts.append(
