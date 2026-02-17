@@ -240,7 +240,8 @@ async def save_processed_data_to_db(
     if not df_payment.empty:
         try:
             await Payment.delete(force=True).run()
-            records_payment = df_payment.to_dict(orient="records")
+            df_payment_for_db = df_payment
+            records_payment = df_payment_for_db.to_dict(orient="records")
             payment_raw = [Payment(**item) for item in records_payment]
             for i in range(0, len(payment_raw), BATCH_SIZE):
                 batch = payment_raw[i : i + BATCH_SIZE]
@@ -250,6 +251,7 @@ async def save_processed_data_to_db(
             print(f"!!! Ошибка при сохранении данных в Payment: {e}")
     else:
         print("DataFrame для Payment пуст, пропускаем вставку.")
+        
     moved = await MovedData.select().run()
     df_moved = pd.DataFrame(moved)
     df_moved = pd.merge(
@@ -434,7 +436,7 @@ async def save_processed_data_to_db(
                         df_new_matches_to_add[col] = df_new_matches_to_add[col].apply(
                             lambda x: (
                                 str(int(x))
-                                if pd.notna(x) and isinstance(x, (int, float))
+                                if pd.notna(x) and isinstance(x, (int, float, np.integer, np.floating))
                                 else (str(x) if pd.notna(x) else None)
                             )
                         )
