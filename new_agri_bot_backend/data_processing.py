@@ -193,10 +193,11 @@ def process_payment(content: bytes) -> pd.DataFrame:
     payment = read_excel_content(content)
     payment.drop(axis=0, labels=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], inplace=True)
     payment.drop(
-        axis=1, labels=["Unnamed: 1", "Unnamed: 2", "Unnamed: 7"], inplace=True
-    )
+        axis=1, labels=["Unnamed: 1", "Unnamed: 2"], inplace=True
+    )  # Предполагаем, что клиент в Unnamed: 7
     payment.drop(axis=0, labels=payment.tail(1).index, inplace=True)
     payment_col_name = [
+        "client",
         "contract_supplement",
         "contract_type",
         "order_status",
@@ -222,6 +223,7 @@ def process_payment(content: bytes) -> pd.DataFrame:
     ]
     for col in numeric_columns:
         payment[col] = pd.to_numeric(payment[col], errors="coerce").fillna(0)
+    payment["client"] = payment["client"].astype(str).fillna("")
     payment["contract_supplement"] = (
         payment["contract_supplement"].astype(str).fillna("")
     )
