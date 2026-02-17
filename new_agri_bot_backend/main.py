@@ -1511,30 +1511,65 @@ async def delete_delivery(deliveryId: DeleteDeliveryRequest):
 @app.post("/delivery/update", tags=["Delivery"])
 async def update_delivery(data: UpdateDeliveryRequest):
     """
-    Updates a delivery by completely replacing its items in a single transaction.
+    Оновлює доставку, повністю замінюючи її позиції однією транзакцією.
     """
     try:
-        # Start a transaction to ensure atomicity
+        # Початок транзакції для забезпечення атомарності
         async with Deliveries._meta.db.transaction():
-            # 1. Update the delivery status
+            # 1. Оновлення статусу доставки
+            delivery_data = await Deliveries.objects().where(Deliveries.id == data.delivery_id).first()
             await Deliveries.update({Deliveries.status: data.status}).where(
                 Deliveries.id == data.delivery_id
             ).run()
+            # print(delivery_data)
+            event_data = await Events.objects().where(Events.event_id == delivery_data.calendar_id).first()
+            # print(event_data)
+            calendar_data = get_calendar_events_by_id(delivery_data.calendar_id)
+            if delivery_data.status == data.status:
+                print(f"⚠️ Статус доставки ID: {data.delivery_id} вже має значення '{data.status}'. Тому повідомлення не відправляється, а статус оновлюється в базі. Створення події в календарі пропущено.")
+                
+            elif delivery_data.status == 'Виконано' and data.status == 'В роботі':
+                print("Скоріш за все відміна виконання доставки, тому повідомлення не відправляється, а статус просто оновлюється в базі.")
+            else:
+                if data.status == 'Виконано':
+                    await bot.send_message(
+                        chat_id=delivery_data.created_by,
+                        text=(
+                            f"🎉 <b>Доставку виконано</b>\n\n"
+                            f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
+                            # f"📅 Дата доставки: {delivery_data.delivery_date}\n"
+                            # f"🗒 Коментар: {delivery_data.comment}\n\n"
+                            # f"🎉 Вітаємо з успішною доставкою!"
+                        ),
+                        parse_mode="HTML",
+                    )
+                    changed_color_calendar_events_by_id(id=delivery_data.calendar_id,status=2)
+                elif data.status == 'В роботі':
+                    await bot.send_message(
+                        chat_id=delivery_data.created_by,
+                        text=(
+                            f"✅ <b>Доставка в роботі</b>\n\n"
+                            f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
+                            f"Дані по доставці передані бухгалтеру, та будуть передані на склад для комплектації\n"),
+                        parse_mode="HTML",
+                    )
+                    changed_color_calendar_events_by_id(id=delivery_data.calendar_id,status=1)
+
             print(
                 f"✅ Статус доставки ID: {data.delivery_id} оновлено на '{data.status}'."
             )
 
-            # 2. Delete all existing items for this delivery
+            # 2. Видалення всіх існуючих позицій для цієї доставки
             await DeliveryItems.delete().where(
                 DeliveryItems.delivery == data.delivery_id
             ).run()
 
-            # 3. Prepare new items for bulk insertion
+            # 3. Підготовка нових позицій для масової вставки
             items_to_insert = []
             for item in data.items:
                 if item.parties:
                     for party in item.parties:
-                        # Add an item for each party
+                        # Додаємо позицію для кожної партії
                         if party.moved_q > 0:
                             items_to_insert.append(
                                 DeliveryItems(
@@ -1547,7 +1582,7 @@ async def update_delivery(data: UpdateDeliveryRequest):
                                 )
                             )
                 else:
-                    # Handle items without parties, if necessary
+                    # Обробка позицій без партій, якщо необхідно
                     items_to_insert.append(
                         DeliveryItems(
                             delivery=data.delivery_id,
@@ -1557,11 +1592,11 @@ async def update_delivery(data: UpdateDeliveryRequest):
                         )
                     )
 
-            # 4. Perform a single bulk insert for all new items
+            # 4. Виконання масової вставки для всіх нових позицій
             if items_to_insert:
                 await DeliveryItems.insert(*items_to_insert).run()
             else:
-                # Если товаров нет, удаляем саму доставку
+                # Якщо товарів немає, видаляємо саму доставку
                 await Deliveries.delete().where(Deliveries.id == data.delivery_id).run()
                 print(
                     f"🗑️ Доставка ID: {data.delivery_id} видалена, бо в ній не залишилось товарів."
@@ -1572,11 +1607,11 @@ async def update_delivery(data: UpdateDeliveryRequest):
                 }
 
     except Exception as e:
-        # If any step fails, the transaction will be rolled back automatically.
-        print(f"❌ Error updating delivery: {e}")
+        # Якщо будь-який крок завершується невдачею, транзакція буде автоматично відкочена.
+        print(f"❌ Помилка оновлення доставки: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update delivery items: {e}",
+            detail=f"Не вдалося оновити позиції доставки: {e}",
         )
 
     return {"status": "ok", "message": "Delivery items updated successfully."}

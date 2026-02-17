@@ -12,6 +12,7 @@ from new_agri_bot_backend.tables import (
     FreeStock,
     Payment,
     MovedData,
+    ValidFreeStock,
 )
 
 router = APIRouter(
@@ -105,18 +106,30 @@ async def combined_pandas_endpoint(
     )
 
     # Запрос 4: Детальные свободные остатки на складах (только для нужных товаров).
+    # available_data = (
+    #     await FreeStock.select(
+    #         FreeStock.product.product.as_alias("product"),
+    #         FreeStock.division,
+    #         FreeStock.warehouse,
+    #         FreeStock.free_qty.as_alias("available"),
+    #     )
+    #     .where(
+    #         FreeStock.free_qty > 0,
+    #         FreeStock.product.product.is_in(filtered_product_names),
+    #     )
+    #     .run()
+    # )
     available_data = (
-        await FreeStock.select(
-            FreeStock.product.product.as_alias("product"),
-            FreeStock.division,
-            FreeStock.warehouse,
-            FreeStock.free_qty.as_alias("available"),
+        await ValidFreeStock.select(
+            ValidFreeStock.product.as_alias("product"),
+            ValidFreeStock.division,
+            ValidFreeStock.warehouse,
+            ValidFreeStock.free_qty.as_alias("available"),
         )
         .where(
-            FreeStock.free_qty > 0,
-            FreeStock.product.product.is_in(filtered_product_names),
-        )
-        .run()
+            ValidFreeStock.free_qty > 0,
+            ValidFreeStock.product.is_in(filtered_product_names),
+        ).run()
     )
     moved_data = (
         await MovedData.select(

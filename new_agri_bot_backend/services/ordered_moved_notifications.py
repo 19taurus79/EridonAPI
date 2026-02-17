@@ -145,7 +145,7 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
                             f"      🏷️ *Партія:* `{row.get('party_sign', 'N/A')}`\n"
                         )
                         message_text += (
-                            f"      🚚 *Переміщено:* *{row.get('qt_moved', 0)}*\n"
+                            f"      🚚 *Переміщено:* *{row.get('qt_moved', 0):.2f}*\n"
                         )
                         # message_text += f"      🛒 *Замовлено:* {row.get('qt_order', 0)}\n"
                         # message_text += f"      📈 *Напрям:* {row.get('line_of_business', 'N/A')}\n"

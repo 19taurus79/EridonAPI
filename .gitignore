@@ -317,3 +317,5 @@ credentials.json
 credentials_task.json
 credentials__.json
 token.json
+*.xlsx
+*.csv

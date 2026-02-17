@@ -420,7 +420,7 @@ async def save_processed_data_to_db(
                         "product_id"
                     ].astype(str)
 
-                cols_to_str = ["qt_order", "qt_moved", "period", "party_sign"]
+                cols_to_str = ["period", "party_sign"]
                 for col in cols_to_str:
                     if col in df_new_matches_to_add.columns:
                         df_new_matches_to_add[col] = df_new_matches_to_add[col].apply(

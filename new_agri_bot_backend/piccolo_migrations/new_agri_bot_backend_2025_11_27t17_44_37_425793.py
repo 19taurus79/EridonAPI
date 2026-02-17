@@ -1,0 +1,129 @@
+from piccolo.apps.migrations.auto.migration_manager import MigrationManager
+from piccolo.columns.column_types import BigInt
+from piccolo.columns.column_types import DoublePrecision
+from piccolo.columns.column_types import ForeignKey
+from piccolo.columns.column_types import Serial
+from piccolo.columns.indexes import IndexMethod
+from piccolo.table import Table
+
+
+class AddressGuide(Table, tablename="address_guide", schema=None):
+    id = Serial(
+        null=False,
+        primary_key=True,
+        unique=False,
+        index=False,
+        index_method=IndexMethod.btree,
+        choices=None,
+        db_column_name="id",
+        secret=False,
+    )
+
+
+ID = "2025-11-27T17:44:37:425793"
+VERSION = "1.26.1"
+DESCRIPTION = ""
+
+
+async def forwards():
+    manager = MigrationManager(
+        migration_id=ID, app_name="new_agri_bot_backend", description=DESCRIPTION
+    )
+
+    manager.alter_column(
+        table_class_name="AddressGuide",
+        tablename="address_guide",
+        column_name="level_1_id",
+        db_column_name="level_1_id",
+        params={"references": AddressGuide},
+        old_params={"references": AddressGuide},
+        column_class=ForeignKey,
+        old_column_class=ForeignKey,
+        schema=None,
+    )
+
+    manager.alter_column(
+        table_class_name="AddressGuide",
+        tablename="address_guide",
+        column_name="level_2_id",
+        db_column_name="level_2_id",
+        params={"references": AddressGuide},
+        old_params={"references": AddressGuide},
+        column_class=ForeignKey,
+        old_column_class=ForeignKey,
+        schema=None,
+    )
+
+    manager.alter_column(
+        table_class_name="AddressGuide",
+        tablename="address_guide",
+        column_name="level_3_id",
+        db_column_name="level_3_id",
+        params={"references": AddressGuide},
+        old_params={"references": AddressGuide},
+        column_class=ForeignKey,
+        old_column_class=ForeignKey,
+        schema=None,
+    )
+
+    manager.alter_column(
+        table_class_name="AddressGuide",
+        tablename="address_guide",
+        column_name="level_4_id",
+        db_column_name="level_4_id",
+        params={"references": AddressGuide},
+        old_params={"references": AddressGuide},
+        column_class=ForeignKey,
+        old_column_class=ForeignKey,
+        schema=None,
+    )
+
+    manager.alter_column(
+        table_class_name="AddressGuide",
+        tablename="address_guide",
+        column_name="level_5_id",
+        db_column_name="level_5_id",
+        params={"references": AddressGuide},
+        old_params={"references": AddressGuide},
+        column_class=ForeignKey,
+        old_column_class=ForeignKey,
+        schema=None,
+    )
+
+    manager.alter_column(
+        table_class_name="FreeStock",
+        tablename="free_stock",
+        column_name="free_qty",
+        db_column_name="free_qty",
+        params={"default": 0.0},
+        old_params={"default": 0},
+        column_class=DoublePrecision,
+        old_column_class=BigInt,
+        schema=None,
+    )
+
+    manager.alter_column(
+        table_class_name="FreeStock",
+        tablename="free_stock",
+        column_name="buh_qty",
+        db_column_name="buh_qty",
+        params={"default": 0.0},
+        old_params={"default": 0},
+        column_class=DoublePrecision,
+        old_column_class=BigInt,
+        schema=None,
+    )
+
+    manager.alter_column(
+        table_class_name="FreeStock",
+        tablename="free_stock",
+        column_name="skl_qty",
+        db_column_name="skl_qty",
+        params={"default": 0.0},
+        old_params={"default": 0},
+        column_class=DoublePrecision,
+        old_column_class=BigInt,
+        schema=None,
+    )
+
+    return manager

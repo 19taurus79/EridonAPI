@@ -1,0 +1,14 @@
+{
+  "sqltools.connections": [
+    {
+      "ssh": "Disabled",
+      "previewLimit": 50,
+      "server": "195.189.226.96",
+      "port": 5432,
+      "driver": "PostgreSQL",
+      "name": "myDB",
+      "database": "taurus_db_test",
+      "username": "taurus"
+    }
+  ]
+}

@@ -243,8 +243,8 @@ def process_moved_data(content: bytes) -> pd.DataFrame:
         "contract",
     ]
     moved.columns = moved_col_names
-    # for col in ["qt_order", "qt_moved"]:
-    #     moved[col] = pd.to_numeric(moved[col], errors="coerce").fillna(0)
+    for col in ["qt_order", "qt_moved"]:
+        moved[col] = pd.to_numeric(moved[col], errors="coerce").fillna(0)
     text_columns = [
         "order",
         "line_of_business",
@@ -252,8 +252,6 @@ def process_moved_data(content: bytes) -> pd.DataFrame:
         "party_sign",
         "period",
         "contract",
-        "qt_order",
-        "qt_moved",
     ]
     for col in text_columns:
         moved[col] = moved[col].astype(str).fillna("")

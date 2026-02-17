@@ -107,8 +107,8 @@ class MovedData(Table):
     contract = Varchar(null=True)
     date = Date()
     line_of_business = Varchar()
-    qt_order = Varchar()
-    qt_moved = Varchar()
+    qt_order = DoublePrecision()
+    qt_moved = DoublePrecision()
     party_sign = Varchar()
     period = Varchar()
     order = Varchar()
@@ -208,6 +208,18 @@ class DetailsForOrders(Table):
 
     class Meta:
         tablename = "details_for_orders"
+
+class ValidFreeStock(Table):
+    product = Varchar()
+    division = Varchar()
+    warehouse = Varchar()
+    free_qty = DoublePrecision()
+    buh_qty = DoublePrecision()
+    skl_qty = DoublePrecision()
+
+    class Meta:
+        tablename = "valid_free_stock"
+
 
 
 class Events(Table):
