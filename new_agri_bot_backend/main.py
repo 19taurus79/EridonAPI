@@ -1537,13 +1537,11 @@ async def update_delivery(data: UpdateDeliveryRequest):
                         text=(
                             f"🎉 <b>Доставку виконано</b>\n\n"
                             f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
-                            # f"📅 Дата доставки: {delivery_data.delivery_date}\n"
-                            # f"🗒 Коментар: {delivery_data.comment}\n\n"
-                            # f"🎉 Вітаємо з успішною доставкою!"
                         ),
                         parse_mode="HTML",
                     )
                     changed_color_calendar_events_by_id(id=delivery_data.calendar_id,status=2)
+                    await Events.update({Events.event_status: 2}).where(Events.event_id == delivery_data.calendar_id).run()
                 elif data.status == 'В роботі':
                     await bot.send_message(
                         chat_id=delivery_data.created_by,
@@ -1554,6 +1552,7 @@ async def update_delivery(data: UpdateDeliveryRequest):
                         parse_mode="HTML",
                     )
                     changed_color_calendar_events_by_id(id=delivery_data.calendar_id,status=1)
+                    await Events.update({Events.event_status: 1}).where(Events.event_id == delivery_data.calendar_id).run()
 
             print(
                 f"✅ Статус доставки ID: {data.delivery_id} оновлено на '{data.status}'."
