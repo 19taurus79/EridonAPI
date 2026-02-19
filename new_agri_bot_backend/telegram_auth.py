@@ -26,6 +26,70 @@ class InitDataModel(BaseModel):
     initData: str
 
 
+class TelegramWidgetData(BaseModel):
+    """Дані від Telegram Login Widget (onTelegramAuth callback)"""
+    id: int
+    first_name: str
+    last_name: str | None = None
+    username: str | None = None
+    photo_url: str | None = None
+    auth_date: int
+    hash: str
+
+
+def check_widget_auth(data: TelegramWidgetData) -> None:
+    """
+    Верифікує дані від Telegram Login Widget.
+    Алгоритм відрізняється від Mini App:
+      secret_key = SHA256(bot_token)  # не HMAC("WebAppData", token)
+      data_check_string = відсортовані поля (без hash), з'єднані \\n
+      hash = HMAC-SHA256(data_check_string, secret_key)
+    """
+    if not TELEGRAM_BOT_TOKEN:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN не встановлено.")
+
+    # Формуємо словник полів (без hash)
+    fields = {
+        "auth_date": str(data.auth_date),
+        "first_name": data.first_name,
+        "id": str(data.id),
+    }
+    if data.last_name:
+        fields["last_name"] = data.last_name
+    if data.username:
+        fields["username"] = data.username
+    if data.photo_url:
+        fields["photo_url"] = data.photo_url
+
+    # Сортуємо та формуємо data_check_string
+    data_check_string = "\n".join(
+        f"{k}={v}" for k, v in sorted(fields.items())
+    )
+
+    # secret_key = SHA256(bot_token) — ключова відмінність від Mini App!
+    secret_key = hashlib.sha256(TELEGRAM_BOT_TOKEN.encode("utf-8")).digest()
+
+    calculated_hash = hmac.new(
+        key=secret_key,
+        msg=data_check_string.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).hexdigest()
+
+    if calculated_hash != data.hash:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Невірний хеш даних Telegram Widget.",
+        )
+
+    # Перевіряємо свіжість даних (не старіше 24 годин)
+    age = datetime.now(timezone.utc).timestamp() - data.auth_date
+    if age > 86400:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Дані авторизації застаріли (більше 24 годин).",
+        )
+
+
 def check_telegram_auth(init_data: str) -> dict:
     """
     Проверяет init_data, полученные от Telegram Mini App,
@@ -290,3 +354,91 @@ async def get_current_telegram_user(
         )
 
     return user_in_db  # Повертаємо об'єкт користувача з БД
+
+
+@router.post("/auth/login-widget", summary="Авторизація через Telegram Login Widget")
+async def login_via_widget(data: TelegramWidgetData):
+    """
+    Авторизація для браузерних клієнтів через Telegram Login Widget.
+
+    1. Верифікує хеш Widget-даних (SHA256-алгоритм, відмінний від Mini App).
+    2. Перевіряє наявність та дозвіл користувача в БД.
+    3. Формує та повертає init_data рядок у форматі Mini App,
+       сумісний з існуючим заголовком X-Telegram-Init-Data.
+    """
+    # 1. Верифікуємо хеш
+    check_widget_auth(data)
+
+    # 2. Перевіряємо користувача в БД
+    user_in_db = (
+        await Users.objects().where(Users.telegram_id == data.id).first().run()
+    )
+
+    if not user_in_db:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Доступ заборонено. Користувач з Telegram ID {data.id} не зареєстрований.",
+        )
+    if not user_in_db.is_allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Доступ заборонено. Ваш акаунт не має активного дозволу.",
+        )
+
+    # 3. Оновлюємо дані користувача
+    current_utc_time = datetime.now(timezone.utc)
+    user_in_db.username = data.username
+    user_in_db.first_name = data.first_name
+    user_in_db.last_name = data.last_name
+    user_in_db.last_activity_date = current_utc_time
+    await user_in_db.save().run()
+
+    # 4. Формуємо init_data рядок у форматі Mini App
+    #    (сумісний з існуючим check_telegram_auth та X-Telegram-Init-Data заголовком)
+    import json as _json
+    from urllib.parse import urlencode, quote
+
+    user_json = _json.dumps({
+        "id": data.id,
+        "first_name": data.first_name,
+        **({"last_name": data.last_name} if data.last_name else {}),
+        **({"username": data.username} if data.username else {}),
+        **({"photo_url": data.photo_url} if data.photo_url else {}),
+        "language_code": "uk",
+    }, ensure_ascii=False, separators=(",", ":"))
+
+    params = {
+        "user": user_json,
+        "auth_date": str(data.auth_date),
+    }
+
+    # Формуємо data_check_string для Mini App підпису
+    data_check_string = "\n".join(
+        f"{k}={v}" for k, v in sorted(params.items())
+    )
+
+    # Рахуємо хеш за Mini App алгоритмом (щоб /get_user міг верифікувати)
+    secret_key = hmac.new(
+        key=b"WebAppData",
+        msg=TELEGRAM_BOT_TOKEN.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).digest()
+
+    new_hash = hmac.new(
+        key=secret_key,
+        msg=data_check_string.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).hexdigest()
+
+    params["hash"] = new_hash
+
+    # URL-кодуємо так само як Telegram Mini App
+    init_data = "&".join(
+        f"{k}={quote(str(v), safe='')}" if k == "user" else f"{k}={v}"
+        for k, v in params.items()
+    )
+
+    print(f"[{current_utc_time}] Widget login: user {data.id} ({data.username}) authorized.")
+
+    return {"init_data": init_data}
+
