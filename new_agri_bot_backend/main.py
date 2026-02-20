@@ -80,7 +80,10 @@ from .utils import send_message_to_managers, create_composite_key_from_dict
 from .config import TELEGRAM_BOT_TOKEN, bot
 
 # Инициализация Telegram Bot (используется в utils.py, но может быть нужен здесь для глобальной инициализации)
-from aiogram import Bot
+from aiogram import Bot, Dispatcher
+from aiogram.filters import CommandStart
+from aiogram.types import Update
+from .telegram_auth import confirm_login_token
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from pydantic import BaseModel
@@ -460,14 +463,57 @@ def get_calendar_events_by_id(id: str):
         return None
 
 
+BACKEND_URL = os.getenv("BACKEND_URL", "")
+
+# aiogram Dispatcher для обработки входящих сообщений бота
+dp = Dispatcher()
+
+
+@dp.message(CommandStart())
+async def handle_bot_start(message):
+    """Handle /start weblogin_TOKEN — Bot Deep Link Auth."""
+    text = message.text or ""
+    parts = text.split(" ", 1)
+    if len(parts) == 2 and parts[1].startswith("weblogin_"):
+        token = parts[1][len("weblogin_"):]
+        telegram_id = message.from_user.id
+        success = await confirm_login_token(token, telegram_id)
+        if success:
+            await message.answer(
+                "✅ Вхід підтверджено! Поверніться в браузер — сторінка завантажиться автоматично."
+            )
+        else:
+            await message.answer(
+                "❌ Посилання не знайдено або вже використано. Спробуйте ще раз."
+            )
+    else:
+        await message.answer("Вітаю! Я бот авторизації Eridon.")
+
+
 # Определяем контекстный менеджер для жизненного цикла приложения
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print(
         "Piccolo database engine initialized. Connections will be managed automatically."
     )
+    # Регистрируем webhook для бота если есть BACKEND_URL
+    if BACKEND_URL:
+        webhook_url = f"{BACKEND_URL}/webhook/bot"
+        try:
+            await bot.set_webhook(webhook_url)
+            print(f"Telegram webhook registered: {webhook_url}")
+        except Exception as e:
+            print(f"Failed to set webhook: {e}")
     yield
+    # Удаляем webhook при остановке
+    if BACKEND_URL:
+        try:
+            await bot.delete_webhook()
+            print("Telegram webhook removed.")
+        except Exception:
+            pass
     print("Piccolo database engine shutdown. Connections are closed automatically.")
+
 
 
 app = FastAPI(
@@ -510,6 +556,19 @@ app.include_router(bi_pandas_router)
 app.include_router(chat_router)
 app.include_router(notification_router)
 app.mount("/admin", admin_router)
+
+
+@app.post("/webhook/bot", include_in_schema=False)
+async def bot_webhook(request: Request):
+    """Отримує оновлення від Telegram та передає до aiogram Dispatcher."""
+    data = await request.json()
+    try:
+        update = Update.model_validate(data)
+    except Exception:
+        update = Update(**data)
+    await dp.feed_update(bot=bot, update=update)
+    return {"ok": True}
+
 
 
 #
