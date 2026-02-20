@@ -1,7 +1,7 @@
 # app/telegram_auth.py
-import hmac, hashlib, json
+import hmac, hashlib, json, uuid
 from urllib.parse import parse_qsl
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import HTTPException, status, APIRouter, Header, Depends
 from pydantic import BaseModel
@@ -443,3 +443,137 @@ async def login_via_widget(data: TelegramWidgetData):
 
     return {"init_data": init_data}
 
+
+# ---------------------------------------------------------------------------
+# Bot Deep Link Auth
+# ---------------------------------------------------------------------------
+
+# In-memory хранилище токенов (dict: token → info)
+# Токены живут 5 минут, затем очищаются при проверке.
+login_tokens: dict[str, dict] = {}
+
+TELEGRAM_BOT_NAME = os.getenv("NEXT_PUBLIC_TELEGRAM_BOT_NAME", "EridonKharkiv_bot")
+
+
+def _build_init_data_for_user(user_in_db) -> str:
+    """Генерирует init_data-строку в формате Mini App для пользователя."""
+    from urllib.parse import quote as _quote
+    user_json = json.dumps({
+        "id": user_in_db.telegram_id,
+        "first_name": user_in_db.first_name or "",
+        **({
+            "last_name": user_in_db.last_name
+        } if user_in_db.last_name else {}),
+        **({
+            "username": user_in_db.username
+        } if user_in_db.username else {}),
+        "language_code": "uk",
+    }, ensure_ascii=False, separators=(",", ":"))
+
+    auth_date = str(int(datetime.now(timezone.utc).timestamp()))
+    params = {"user": user_json, "auth_date": auth_date}
+
+    data_check_string = "\n".join(
+        f"{k}={v}" for k, v in sorted(params.items())
+    )
+    secret_key = hmac.new(
+        key=b"WebAppData",
+        msg=TELEGRAM_BOT_TOKEN.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).digest()
+    new_hash = hmac.new(
+        key=secret_key,
+        msg=data_check_string.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).hexdigest()
+    params["hash"] = new_hash
+
+    return "&".join(
+        f"{k}={_quote(str(v), safe='')}" if k == "user" else f"{k}={v}"
+        for k, v in params.items()
+    )
+
+
+async def confirm_login_token(token: str, telegram_id: int) -> bool:
+    """
+    Вызывается из bot-вебхука после получения /start weblogin_TOKEN.
+    Проверяет токен, находит пользователя в БД, генерирует init_data.
+    Возвращает True если успешно, False если токен невалиден.
+    """
+    entry = login_tokens.get(token)
+    if not entry or entry["status"] != "pending":
+        return False
+    if datetime.now(timezone.utc) > entry["expires"]:
+        login_tokens.pop(token, None)
+        return False
+
+    user_in_db = await Users.objects().where(
+        Users.telegram_id == telegram_id
+    ).first().run()
+
+    if not user_in_db or not user_in_db.is_allowed:
+        login_tokens[token]["status"] = "forbidden"
+        return False
+
+    # Генерируем init_data
+    init_data = _build_init_data_for_user(user_in_db)
+    login_tokens[token].update({
+        "status": "confirmed",
+        "init_data": init_data,
+        "user_id": telegram_id,
+    })
+    return True
+
+
+@router.post("/auth/generate-login-token", summary="Генерація токену для Bot Deep Link Login")
+async def generate_login_token():
+    """
+    Створює унікальний токен та повертає deep link для входу через Telegram-бота.
+    TTL токена — 5 хвилин.
+    """
+    # Очищаем просроченные токены
+    now = datetime.now(timezone.utc)
+    expired = [t for t, v in login_tokens.items() if v["expires"] < now]
+    for t in expired:
+        login_tokens.pop(t, None)
+
+    token = str(uuid.uuid4()).replace("-", "")[:24]
+    login_tokens[token] = {
+        "status": "pending",
+        "expires": now + timedelta(minutes=5),
+        "init_data": None,
+        "user_id": None,
+    }
+
+    bot_name = os.getenv("TELEGRAM_BOT_NAME", "EridonKharkiv_bot")
+    deep_link = f"https://t.me/{bot_name}?start=weblogin_{token}"
+
+    return {"token": token, "deep_link": deep_link, "expires_in": 300}
+
+
+@router.get("/auth/check-login-token/{token}", summary="Перевірка статусу Deep Link-токену")
+async def check_login_token(token: str):
+    """
+    Проверяет статус токена авторизации. Фронтенд поллингует этот эндпоинт каждые 2 секунды.
+    - status=pending: пользователь ещё не подтвердил
+    - status=confirmed: возвращает init_data
+    - status=expired / not_found: токен недействителен
+    """
+    entry = login_tokens.get(token)
+    if not entry:
+        return {"status": "not_found"}
+
+    if datetime.now(timezone.utc) > entry["expires"]:
+        login_tokens.pop(token, None)
+        return {"status": "expired"}
+
+    if entry["status"] == "confirmed":
+        init_data = entry["init_data"]
+        login_tokens.pop(token, None)  # Одноразовое использование
+        return {"status": "confirmed", "init_data": init_data}
+
+    if entry["status"] == "forbidden":
+        login_tokens.pop(token, None)
+        return {"status": "forbidden"}
+
+    return {"status": "pending"}
