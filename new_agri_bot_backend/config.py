@@ -61,6 +61,11 @@ load_dotenv()
 # Ваш токен Telegram бота. Получается у BotFather.
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
+# Токен отдельного бота без Mini App — используется ТОЛЬКО для верификации
+# Telegram Login Widget на десктопных браузерах.
+# Если не задан — fallback на основной токен (обратная совместимость).
+TELEGRAM_WIDGET_BOT_TOKEN = os.getenv("TELEGRAM_WIDGET_BOT_TOKEN", TELEGRAM_BOT_TOKEN)
+
 # ID менеджеров Telegram, которым будут отправляться уведомления.
 # Это должен быть словарь, где ключ - это имя (для удобства), а значение - Telegram ID (число).
 # Пример: {"manager_name_1": 123456789, "manager_name_2": 987654321}

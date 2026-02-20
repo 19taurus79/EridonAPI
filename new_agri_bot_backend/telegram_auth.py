@@ -11,7 +11,8 @@ import os
 from .tables import Users  # Импорт вашей модели Users
 from .config import (
     TELEGRAM_BOT_TOKEN,
-)  # Убедитесь, что TELEGRAM_BOT_TOKEN есть в config.py
+    TELEGRAM_WIDGET_BOT_TOKEN,
+)  # TELEGRAM_WIDGET_BOT_TOKEN — токен бота без Mini App для Login Widget
 
 load_dotenv()
 
@@ -45,8 +46,8 @@ def check_widget_auth(data: TelegramWidgetData) -> None:
       data_check_string = відсортовані поля (без hash), з'єднані \\n
       hash = HMAC-SHA256(data_check_string, secret_key)
     """
-    if not TELEGRAM_BOT_TOKEN:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN не встановлено.")
+    if not TELEGRAM_WIDGET_BOT_TOKEN:
+        raise RuntimeError("TELEGRAM_WIDGET_BOT_TOKEN не встановлено.")
 
     # Формуємо словник полів (без hash)
     fields = {
@@ -66,8 +67,8 @@ def check_widget_auth(data: TelegramWidgetData) -> None:
         f"{k}={v}" for k, v in sorted(fields.items())
     )
 
-    # secret_key = SHA256(bot_token) — ключова відмінність від Mini App!
-    secret_key = hashlib.sha256(TELEGRAM_BOT_TOKEN.encode("utf-8")).digest()
+    # secret_key = SHA256(widget_bot_token) — використовуємо окремий бот без Mini App
+    secret_key = hashlib.sha256(TELEGRAM_WIDGET_BOT_TOKEN.encode("utf-8")).digest()
 
     calculated_hash = hmac.new(
         key=secret_key,
