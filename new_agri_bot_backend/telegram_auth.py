@@ -546,9 +546,10 @@ async def generate_login_token():
     }
 
     bot_name = os.getenv("TELEGRAM_BOT_NAME", "EridonKharkiv_bot")
-    deep_link = f"https://t.me/{bot_name}?start=weblogin_{token}"
+    tg_link = f"tg://resolve?domain={bot_name}&start=weblogin_{token}"
+    web_link = f"https://t.me/{bot_name}?start=weblogin_{token}"
 
-    return {"token": token, "deep_link": deep_link, "expires_in": 300}
+    return {"token": token, "deep_link": tg_link, "web_link": web_link, "expires_in": 300}
 
 
 @router.get("/auth/check-login-token/{token}", summary="Перевірка статусу Deep Link-токену")
