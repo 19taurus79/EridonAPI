@@ -514,6 +514,32 @@ async def get_details_for_order(order: str):
         DetailsForOrders.contract_supplement == order
     )
     result = group_products_with_parties(data)
+
+    # Отримуємо загальні залишки (buh/skl) з таблиці Remains по product_id
+    # без фільтрації по партії — це дає суму по всіх партіях
+    product_ids = [item["product"] for item in result if item.get("product")]
+    if product_ids:
+        remains_totals = (
+            await Remains.select(
+                Remains.product.as_alias("product_id"),
+                Sum(Remains.buh).as_alias("total_buh"),
+                Sum(Remains.skl).as_alias("total_skl"),
+            )
+            .where(Remains.product.is_in(product_ids))
+            .group_by(Remains.product)
+            .run()
+        )
+        # Будуємо словник product_id -> totals
+        totals_map = {
+            str(r["product_id"]): r for r in remains_totals
+        }
+        # Перезаписуємо buh/skl загальними значеннями
+        for item in result:
+            pid = str(item.get("product", ""))
+            if pid in totals_map:
+                item["buh"] = float(totals_map[pid]["total_buh"] or 0)
+                item["skl"] = float(totals_map[pid]["total_skl"] or 0)
+
     return result
 
 
