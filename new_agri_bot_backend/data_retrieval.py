@@ -456,8 +456,8 @@ def group_products_with_parties(items):
             "manager": None,
             "product": None,
             "orders_q": None,
-            "buh": None,
-            "skl": None,
+            "buh": 0.0,
+            "skl": 0.0,
             "qok": None,
             "parties": [],
         }
@@ -487,17 +487,13 @@ def group_products_with_parties(items):
                 if item.get("orders_q") is not None
                 else None
             )
-            group["buh"] = (
-                float(item.get("buh")) if item.get("buh") is not None else None
-            )
-            group["skl"] = (
-                float(item.get("skl")) if item.get("skl") is not None else None
-            )
             group["qok"] = str(item.get("qok"))
 
-        # else:
-        #     # Обновление флага qok, если нужно
-        #     group["qok"] = group["qok"] and bool(item.get("qok", True))
+        # Суммируем buh и skl по всем строкам группы (всі партії)
+        buh_val = item.get("buh")
+        skl_val = item.get("skl")
+        group["buh"] += float(buh_val) if buh_val is not None else 0.0
+        group["skl"] += float(skl_val) if skl_val is not None else 0.0
 
         # Добавляем партию
         party_data = {
