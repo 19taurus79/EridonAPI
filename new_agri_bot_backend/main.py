@@ -21,6 +21,7 @@ from . import models, processing
 from .calendar_utils import (
     changed_color_calendar_events_by_id,
     delete_calendar_event_by_id,
+    changed_date_calendar_events_by_id,
 )
 from .models import RegionResponse, AddressResponse, AddressCreate
 from .tables import (
@@ -152,6 +153,11 @@ class UpdateDeliveryRequest(BaseModel):
     delivery_id: int
     status: str
     items: List[UpdateItem]
+
+
+class ChangeDeliveryDateRequest(BaseModel):
+    delivery_id: int
+    new_date: str
 
 
 class CommentType(str, Enum):
@@ -1674,6 +1680,67 @@ async def update_delivery(data: UpdateDeliveryRequest):
         )
 
     return {"status": "ok", "message": "Delivery items updated successfully."}
+
+
+@app.post("/delivery/change_date", tags=["Delivery"])
+async def update_delivery_date(
+    data: ChangeDeliveryDateRequest,
+    X_Telegram_Init_Data: str = Header()
+):
+    """
+    Оновлює дату доставки, оновлює подію в Google Calendar та відправляє повідомлення менеджеру.
+    """
+    parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
+    if not parsed_init_data:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        # 1. Знаходимо доставку
+        delivery = await Deliveries.objects().where(Deliveries.id == data.delivery_id).first()
+        if not delivery:
+            raise HTTPException(status_code=404, detail="Delivery not found")
+
+        old_date = delivery.delivery_date
+        new_date_obj = datetime.strptime(data.new_date, "%Y-%m-%d").date()
+
+        if old_date == new_date_obj:
+            return {"status": "ok", "message": "Date is unchanged."}
+
+        # 2. Оновлюємо дату в базі
+        delivery.delivery_date = new_date_obj
+        await delivery.save().run()
+
+        # 3. Оновлюємо подію в Google Calendar та таблиці Events
+        if delivery.calendar_id:
+            changed_date_calendar_events_by_id(delivery.calendar_id, new_date_obj)
+            await Events.update({Events.start_event: new_date_obj}).where(
+                Events.event_id == delivery.calendar_id
+            ).run()
+
+        # 4. Відправляємо повідомлення в Telegram
+        manager_id = delivery.created_by
+        if manager_id:
+            message_text = (
+                f"📅 <b>Увага!</b> Змінено дату доставки.\n\n"
+                f"👤 Клієнт: <b>{delivery.client}</b>\n"
+                f"🗓 Стара дата: {old_date}\n"
+                f"🆕 <b>Нова дата: {new_date_obj}</b>"
+            )
+            await bot.send_message(
+                chat_id=manager_id,
+                text=message_text,
+                parse_mode="HTML"
+            )
+
+        print(f"✅ Дата доставки ID: {data.delivery_id} оновлена з {old_date} на {new_date_obj}.")
+        return {"status": "ok", "message": "Delivery date updated successfully."}
+
+    except Exception as e:
+        print(f"❌ Помилка оновлення дати доставки: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Не вдалося оновити дату доставки: {e}",
+        )
 
 
 @app.post(
