@@ -1564,6 +1564,7 @@ async def delete_delivery(deliveryId: DeleteDeliveryRequest):
         parse_mode="HTML",
     )
     await Deliveries.delete().where(Deliveries.id == deliveryId.delivery_id).run()
+    await Events.delete().where(Events.event_id == data.calendar_id).run()
     delete_calendar_event_by_id(event_id=data.calendar_id)
 
 
