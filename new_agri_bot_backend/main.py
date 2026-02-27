@@ -78,7 +78,7 @@ from .notification import router as notification_router
 from .utils import send_message_to_managers, create_composite_key_from_dict
 
 # Импорт TELEGRAM_BOT_TOKEN из config.py для инициализации бота
-from .config import TELEGRAM_BOT_TOKEN, bot
+from .config import TELEGRAM_BOT_TOKEN, bot, logger
 
 # Инициализация Telegram Bot (используется в utils.py, но может быть нужен здесь для глобальной инициализации)
 from aiogram import Bot, Dispatcher
@@ -364,7 +364,7 @@ async def create_calendar_event(data: DeliveryRequest) -> Optional[str]:
         return created_event
 
     except Exception as e:
-        print("Ошибка при добавлении в календарь:", e)
+        logger.info("Ошибка при добавлении в календарь:", e)
         return None
 
 
@@ -429,7 +429,7 @@ def get_calendar_events(
         return events
 
     except Exception as e:
-        print("Ошибка при получении событий из календаря:", e)
+        logger.info("Ошибка при получении событий из календаря:", e)
         return None
 
 
@@ -460,12 +460,12 @@ def get_calendar_events_by_id(id: str):
             )
             .execute()
         )
-        # print(events_result)
+        # logger.info(events_result)
         # events = events_result.get("items", [])
         return events_result
 
     except Exception as e:
-        print("Ошибка при получении событий из календаря:", e)
+        logger.info("Ошибка при получении событий из календаря:", e)
         return None
 
 
@@ -499,7 +499,7 @@ async def handle_bot_start(message):
 # Определяем контекстный менеджер для жизненного цикла приложения
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print(
+    logger.info(
         "Piccolo database engine initialized. Connections will be managed automatically."
     )
     # Регистрируем webhook для бота если есть BACKEND_URL
@@ -507,18 +507,18 @@ async def lifespan(app: FastAPI):
         webhook_url = f"{BACKEND_URL}/webhook/bot"
         try:
             await bot.set_webhook(webhook_url)
-            print(f"Telegram webhook registered: {webhook_url}")
+            logger.info(f"Telegram webhook registered: {webhook_url}")
         except Exception as e:
-            print(f"Failed to set webhook: {e}")
+            logger.info(f"Failed to set webhook: {e}")
     yield
     # Удаляем webhook при остановке
     if BACKEND_URL:
         try:
             await bot.delete_webhook()
-            print("Telegram webhook removed.")
+            logger.info("Telegram webhook removed.")
         except Exception:
             pass
-    print("Piccolo database engine shutdown. Connections are closed automatically.")
+    logger.info("Piccolo database engine shutdown. Connections are closed automatically.")
 
 
 
@@ -739,7 +739,7 @@ async def upload_and_process_files(
             filtered_leftovers  # Заменяем оригинальные leftovers отфильтрованными
         )
     except Exception as e:
-        print(
+        logger.info(
             f"!!! Предупреждение: не удалось отфильтровать исторические данные. Ошибка: {e}"
         )
     # ---------------------------------------------------------
@@ -855,7 +855,7 @@ async def manual_match(session_id: str, match_input: models.ManualMatchInput):
     except KeyError:
         # Эта ошибка может возникнуть, если фронтенд отправит уже удаленные индексы.
         # Мы можем ее проигнорировать или вернуть предупреждение.
-        print(
+        logger.info(
             f"Предупреждение: Попытка удалить уже сопоставленные индексы для сессии {session_id}"
         )
         pass
@@ -925,7 +925,7 @@ async def upload_data(
     Обработка данных выполняется в фоновом режиме.
     После успешной загрузки отправляется уведомление менеджерам в Telegram.
     """
-    print(f"[{datetime.now(timezone.utc)}] Получен запрос на загрузку данных.")
+    logger.info(f"[{datetime.now(timezone.utc)}] Получен запрос на загрузку данных.")
 
     try:
         # Читаем содержимое файлов в байты асинхронно
@@ -960,7 +960,7 @@ async def upload_data(
         )
 
     except Exception as e:
-        print(f"Ошибка при обработке загруженных файлов: {e}")
+        logger.error(f"Ошибка при обработке загруженных файлов: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Ошибка обработки файлов: {e}",
@@ -1010,7 +1010,7 @@ async def get_all_orders_and_address():
             item["product"]: float(item["avg_weight"] or 0) for item in avg_weights_list
         }
     except Exception as e:
-        print(f"--- Ошибка при запросе среднего веса: {e} ---")
+        logger.info(f"--- Ошибка при запросе среднего веса: {e} ---")
 
     # Шаг 2: Получаем все заказы
     orders_list = await Submissions.select().where(Submissions.different > 0).run()
@@ -1241,7 +1241,7 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
     telegram_id = user_data.get("id")
     # ----------------------------Сообщение для Телеграм-----------------------
     # 📝 Формируем текст для Telegram
-    print(X_Telegram_Init_Data)
+    logger.info(X_Telegram_Init_Data)
     message_lines = [
         f"👤 Менеджер: {data.manager}",
         f"🚚 Контрагент: <code>{data.client}</code>",
@@ -1449,9 +1449,9 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
                     event=data.client,
                 )
             ).run()
-            print("📅 Добавлено в календарь:", calendar_link)
+            logger.info("📅 Добавлено в календарь:", calendar_link)
         else:
-            print("❌ Не удалось добавить в календарь")
+            logger.info("❌ Не удалось добавить в календарь")
         # --- ШАГ 1: Сохранение данных в БД (ВРЕМЕННО ВЫНЕСЕНО ДЛЯ ТЕСТА) ---
         try:
             # 1.1 Создаем основную запись о доставке
@@ -1471,7 +1471,7 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
                 calendar_id=calendar["id"],
             )
             await new_delivery.save().run()
-            print(f"✅ Основна інформація по доставці ID: {new_delivery.id} збережена.")
+            logger.info(f"✅ Основна інформація по доставці ID: {new_delivery.id} збережена.")
 
             # 1.2 Готовим список товаров для массовой вставки
             items_to_insert = []
@@ -1495,10 +1495,10 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
             # 1.3 Сохраняем все товары одним запросом
             if items_to_insert:
                 await DeliveryItems.insert(*items_to_insert).run()
-                print(f"✅ {len(items_to_insert)} позицій по доставці збережено.")
+                logger.info(f"✅ {len(items_to_insert)} позицій по доставці збережено.")
 
         except Exception as e:
-            print(f"❌ Помилка збереження доставки в БД: {e}")
+            logger.info(f"❌ Помилка збереження доставки в БД: {e}")
             raise HTTPException(status_code=500, detail=f"Помилка збереження в БД: {e}")
 
         if app_env == "production":
@@ -1533,19 +1533,19 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
             #             event=data.client,
             #         )
             #     ).run()
-            #     print("📅 Добавлено в календарь:", calendar_link)
+            #     logger.info("📅 Добавлено в календарь:", calendar_link)
             # else:
-            #     print("❌ Не удалось добавить в календарь")
+            #     logger.info("❌ Не удалось добавить в календарь")
 
         else:
             # Режим разработки: выводим все в консоль
-            print("\n--- [DEV] РЕЖИМ: ВІДПРАВКА ПОВІДОМЛЕННЯ ПРО ДОСТАВКУ ---")
-            print(f"--- [DEV] Одержувачі (адміни): {os.getenv('ADMINS', '[]')}")
-            print(f"--- [DEV] Одержувач (користувач): {telegram_id}")
-            print("--- [DEV] Текст повідомлення: ---")
-            print(message)
-            print(f"--- [DEV] Excel-файл '{filename}' було б надіслано. ---")
-            print("--- [DEV] Створення події в календарі пропущено. ---")
+            logger.info("\n--- [DEV] РЕЖИМ: ВІДПРАВКА ПОВІДОМЛЕННЯ ПРО ДОСТАВКУ ---")
+            logger.info(f"--- [DEV] Одержувачі (адміни): {os.getenv('ADMINS', '[]')}")
+            logger.info(f"--- [DEV] Одержувач (користувач): {telegram_id}")
+            logger.info("--- [DEV] Текст повідомлення: ---")
+            logger.info(message)
+            logger.info(f"--- [DEV] Excel-файл '{filename}' було б надіслано. ---")
+            logger.info("--- [DEV] Створення події в календарі пропущено. ---")
 
     # Удаляем временный файл
     os.remove(tmp.name)
@@ -1587,15 +1587,15 @@ async def update_delivery(data: UpdateDeliveryRequest):
             await Deliveries.update({Deliveries.status: data.status}).where(
                 Deliveries.id == data.delivery_id
             ).run()
-            # print(delivery_data)
+            # logger.info(delivery_data)
             event_data = await Events.objects().where(Events.event_id == delivery_data.calendar_id).first()
-            # print(event_data)
+            # logger.info(event_data)
             calendar_data = get_calendar_events_by_id(delivery_data.calendar_id)
             if delivery_data.status == data.status:
-                print(f"⚠️ Статус доставки ID: {data.delivery_id} вже має значення '{data.status}'. Тому повідомлення не відправляється, а статус оновлюється в базі. Створення події в календарі пропущено.")
+                logger.info(f"⚠️ Статус доставки ID: {data.delivery_id} вже має значення '{data.status}'. Тому повідомлення не відправляється, а статус оновлюється в базі. Створення події в календарі пропущено.")
                 
             elif delivery_data.status == 'Виконано' and data.status == 'В роботі':
-                print("Скоріш за все відміна виконання доставки, тому повідомлення не відправляється, а статус просто оновлюється в базі.")
+                logger.info("Скоріш за все відміна виконання доставки, тому повідомлення не відправляється, а статус просто оновлюється в базі.")
             else:
                 if data.status == 'Виконано':
                     await bot.send_message(
@@ -1620,7 +1620,7 @@ async def update_delivery(data: UpdateDeliveryRequest):
                     changed_color_calendar_events_by_id(id=delivery_data.calendar_id,status=1)
                     await Events.update({Events.event_status: 1}).where(Events.event_id == delivery_data.calendar_id).run()
 
-            print(
+            logger.info(
                 f"✅ Статус доставки ID: {data.delivery_id} оновлено на '{data.status}'."
             )
 
@@ -1663,7 +1663,7 @@ async def update_delivery(data: UpdateDeliveryRequest):
             else:
                 # Якщо товарів немає, видаляємо саму доставку
                 await Deliveries.delete().where(Deliveries.id == data.delivery_id).run()
-                print(
+                logger.info(
                     f"🗑️ Доставка ID: {data.delivery_id} видалена, бо в ній не залишилось товарів."
                 )
                 return {
@@ -1673,7 +1673,7 @@ async def update_delivery(data: UpdateDeliveryRequest):
 
     except Exception as e:
         # Якщо будь-який крок завершується невдачею, транзакція буде автоматично відкочена.
-        print(f"❌ Помилка оновлення доставки: {e}")
+        logger.info(f"❌ Помилка оновлення доставки: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Не вдалося оновити позиції доставки: {e}",
@@ -1732,11 +1732,11 @@ async def update_delivery_date(
                 parse_mode="HTML"
             )
 
-        print(f"✅ Дата доставки ID: {data.delivery_id} оновлена з {old_date} на {new_date_obj}.")
+        logger.info(f"✅ Дата доставки ID: {data.delivery_id} оновлена з {old_date} на {new_date_obj}.")
         return {"status": "ok", "message": "Delivery date updated successfully."}
 
     except Exception as e:
-        print(f"❌ Помилка оновлення дати доставки: {e}")
+        logger.info(f"❌ Помилка оновлення дати доставки: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Не вдалося оновити дату доставки: {e}",
@@ -1791,7 +1791,7 @@ async def create_comment(
             updated_at=new_comment.updated_at,
         )
     except Exception as e:
-        print(f"❌ Помилка створення коментаря: {e}")
+        logger.info(f"❌ Помилка створення коментаря: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Не вдалося зберегти коментар: {e}",

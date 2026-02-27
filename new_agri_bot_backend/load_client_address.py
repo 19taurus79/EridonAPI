@@ -5,13 +5,14 @@ import sys
 import pandas as pd
 
 from new_agri_bot_backend.tables import ClientAddress
+from new_agri_bot_backend.config import logger
 
 
 async def load_client_address_data(excel_filepath: str):
     """
     Читает данные из Excel-файла, очищает их и загружает в таблицу ClientAddress.
     """
-    print(f"--- Начало загрузки данных из файла: {excel_filepath} ---")
+    logger.info(f"--- Начало загрузки данных из файла: {excel_filepath} ---")
 
     try:
         # --- 1. Чтение и подготовка данных ---
@@ -39,36 +40,36 @@ async def load_client_address_data(excel_filepath: str):
         records_to_insert = df.to_dict("records")
 
         if not records_to_insert:
-            print("⚠️ В файле не найдено данных для загрузки.")
+            logger.warning("⚠️ В файле не найдено данных для загрузки.")
             return
 
         # --- 2. Загрузка данных в базу данных ---
 
         # Сначала полностью очищаем таблицу
-        print("--- Очистка таблицы ClientAddress... ---")
+        logger.info("--- Очистка таблицы ClientAddress... ---")
         await ClientAddress.delete(force=True).run()
-        print("--- Таблица успешно очищена. ---")
+        logger.info("--- Таблица успешно очищена. ---")
 
         # Создаем список экземпляров модели Piccolo
         models_to_insert = [ClientAddress(**row) for row in records_to_insert]
 
         # Выполняем вставку пакетами, чтобы избежать ограничений БД
         BATCH_SIZE = 1000
-        print(f"--- Начало загрузки {len(models_to_insert)} записей... ---")
+        logger.info(f"--- Начало загрузки {len(models_to_insert)} записей... ---")
 
         for i in range(0, len(models_to_insert), BATCH_SIZE):
             batch = models_to_insert[i : i + BATCH_SIZE]
             await ClientAddress.insert(*batch).run()
-            print(f"  -> Загружен пакет {i // BATCH_SIZE + 1}...")
+            logger.info(f"  -> Загружен пакет {i // BATCH_SIZE + 1}...")
 
-        print(f"✅ Успешно загружено {len(models_to_insert)} записей в ClientAddress.")
+        logger.info(f"✅ Успешно загружено {len(models_to_insert)} записей в ClientAddress.")
 
     except FileNotFoundError:
-        print(f"❌ Ошибка: Файл '{excel_filepath}' не найден.")
+        logger.error(f"❌ Ошибка: Файл '{excel_filepath}' не найден.")
     except KeyError as e:
-        print(f"❌ Ошибка: В Excel-файле отсутствует необходимая колонка: {e}")
+        logger.error(f"❌ Ошибка: В Excel-файле отсутствует необходимая колонка: {e}")
     except Exception as e:
-        print(f"❌ Произошла непредвиденная ошибка: {e}")
+        logger.error(f"❌ Произошла непредвиденная ошибка: {e}")
 
 
 # ----------------------------------------------------
@@ -92,4 +93,4 @@ if __name__ == "__main__":
             await DB.close_connection_pool()
 
     asyncio.run(run_main())
-    print("\n🏁 Загрузка завершена.")
+    logger.info("\n🏁 Загрузка завершена.")

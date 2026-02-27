@@ -2,6 +2,7 @@ import pandas as pd
 import re
 from typing import Dict, Any, Tuple, List
 import numpy as np
+from .config import logger
 
 # --- Вспомогательная функция для конвертации типов ---
 
@@ -258,7 +259,7 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[Dict, List]:
                     ],
                 }
         except Exception as e:
-            print(f"!!! Ошибка при автоматической обработке заявки {request_id}: {e}")
+            logger.info(f"!!! Ошибка при автоматической обработке заявки {request_id}: {e}")
             continue
 
     leftovers = convert_numpy_types(leftovers)

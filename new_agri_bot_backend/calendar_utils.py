@@ -1,4 +1,5 @@
 import os
+from .config import logger
 from datetime import date, datetime, time
 import re
 import pytz
@@ -38,12 +39,12 @@ def changed_color_calendar_events_by_id(id: str, status: int):
             )
             .execute()
         )
-        # print(events_result)
+        # logger.info(events_result)
         # events = events_result.get("items", [])
         return events_result
 
     except Exception as e:
-        print("Ошибка при получении событий из календаря:", e)
+        logger.error(f"Ошибка при получении событий из календаря: {e}")
         return None
 
 
@@ -92,12 +93,12 @@ def changed_date_calendar_events_by_id(id: str, new_date):
             )
             .execute()
         )
-        # print(events_result)
+        # logger.info(events_result)
         # events = events_result.get("items", [])
         return events_result
 
     except Exception as e:
-        print("Ошибка при получении событий из календаря:", e)
+        logger.error(f"Ошибка при получении событий из календаря: {e}")
         return None
 
 
@@ -121,9 +122,9 @@ def delete_calendar_event_by_id(event_id: str):
         # Удаление события
         service.events().delete(calendarId=CALENDAR_ID, eventId=event_id).execute()
 
-        print(f"Событие {event_id} успешно удалено")
+        logger.info(f"Событие {event_id} успешно удалено")
         return True
 
     except Exception as e:
-        print(f"Ошибка при удалении события {event_id}:", e)
+        logger.error(f"Ошибка при удалении события {event_id}: {e}")
         return False

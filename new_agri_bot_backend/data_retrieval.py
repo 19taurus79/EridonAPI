@@ -14,7 +14,7 @@ from .calendar_utils import (
     changed_color_calendar_events_by_id,
     changed_date_calendar_events_by_id,
 )
-from .config import bot
+from .config import bot, logger
 
 # from .main import get_calendar_events
 
@@ -773,4 +773,4 @@ async def get_task_status(task_id):
         data = await Tasks.objects().where(Tasks.task_id == task_id).run()
         return data[0]
     except Exception as e:
-        print(e)
+        logger.error(e)

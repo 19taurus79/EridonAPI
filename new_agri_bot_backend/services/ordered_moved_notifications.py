@@ -6,7 +6,7 @@ import pandas as pd
 from aiogram import Bot
 from pandas import Timestamp
 
-from new_agri_bot_backend.config import TELEGRAM_BOT_TOKEN, ADMINS_ID
+from new_agri_bot_backend.config import TELEGRAM_BOT_TOKEN, ADMINS_ID, logger
 from new_agri_bot_backend.services.send_telegram_notification import send_notification
 from new_agri_bot_backend.tables import Submissions, Users
 
@@ -73,7 +73,7 @@ async def get_data_from_df(frame: pd.DataFrame):
         }
         return contract_data_map
     except Exception as e:
-        print(f"!!! Ошибка при получении данных о менеджерах и клиентах из БД: {e}")
+        logger.info(f"!!! Ошибка при получении данных о менеджерах и клиентах из БД: {e}")
         return {}
 
 
@@ -83,8 +83,8 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
 
     # 1. Получаем словарь { 'номер_контракта': 'имя_менеджера' }
     contract_data_map = await get_data_from_df(frame)
-    print("--- Словарь сопоставления Контракт -> Менеджер ---")
-    print(contract_data_map)
+    logger.debug("--- Словарь сопоставления Контракт -> Менеджер ---")
+    logger.debug(contract_data_map)
 
     # 2. Добавляем колонку 'manager' в DataFrame, используя метод .map()
     # Создаем две новые колонки: 'manager' и 'client'
@@ -104,7 +104,7 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
     admin_report_parts.append(
         "👑 *Зведений звіт по всім переміщенням*\n" + "=" * 25 + "\n"
     )
-    print("\n--- Данные, сгруппированные по менеджеру ---")
+    logger.info("--- Обработка данных, сгруппированных по менеджеру ---")
     # 4. Итерируемся по группам
     for manager_name, manager_group_df in grouped_by_manager:
         # Берем только второе слово из ФИО, если оно есть, иначе используем полное имя
@@ -185,18 +185,18 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
                         )
                     else:
                         # В режиме разработки просто выводим в консоль
-                        print(
+                        logger.info(
                             f"\n--- [DEV] Сообщение для {manager_name} (ID: {telegram_id}) ---"
                         )
-                        print(chunk)
-                        print(f"--- [DEV] Конец сообщения для {manager_name} ---\n")
+                        logger.info(chunk)
+                        logger.info(f"--- [DEV] Конец сообщения для {manager_name} ---\n")
             else:
-                print(
+                logger.info(
                     f"!!! Увага: Telegram ID для менеджера '{manager_name}' не знайдено. Сповіщення не відправлено."
                 )
 
         except Exception as e:
-            print(f"!!! Ошибка при отправке уведомления менеджеру {manager_name}: {e}")
+            logger.info(f"!!! Ошибка при отправке уведомления менеджеру {manager_name}: {e}")
 
     # --- ИСПРАВЛЕНИЕ: Отправляем сводный отчет ОДИН РАЗ после завершения цикла по менеджерам ---
     if len(admin_report_parts) > 1:  # Отправляем, только если были данные
@@ -206,13 +206,13 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
                 parsed_ids = json.loads(ADMINS_ID)
                 admin_chat_ids = [int(admin_id) for admin_id in parsed_ids]
             except (json.JSONDecodeError, TypeError):
-                print(
+                logger.info(
                     f'!!! Помилка: Не вдалося розпарсити ADMINS_ID. Перевірте формат у .env файлі. Очікується формат ["id1", "id2"].'
                 )
 
         try:
             if not admin_chat_ids:
-                print(
+                logger.info(
                     "!!! Увага: Не знайдено жодного адміністратора для відправки звіту."
                 )
                 return
@@ -222,7 +222,7 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
 
             for chunk in report_chunks:
                 if app_env == "production":
-                    print(
+                    logger.info(
                         f"\n--- Відправка зведеного звіту адміністраторам ({', '.join(map(str, admin_chat_ids))}) ---"
                     )
                     await send_notification(
@@ -230,12 +230,12 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
                         chat_ids=admin_chat_ids,  # Передаем список ID напрямую
                         text=chunk,
                     )
-                    print("✅ Частину зведеного звіту успішно відправлено.")
+                    logger.info("✅ Частину зведеного звіту успішно відправлено.")
                 else:
-                    print(
+                    logger.info(
                         f"\n--- [DEV] Зведений звіт для адміністраторів ({', '.join(map(str, admin_chat_ids))}) ---"
                     )
-                    print(chunk)
-                    print(f"--- [DEV] Кінець зведеного звіту ---\n")
+                    logger.info(chunk)
+                    logger.info(f"--- [DEV] Кінець зведеного звіту ---\n")
         except Exception as e:
-            print(f"!!! Помилка при відправці зведеного звіту адміністратору: {e}")
+            logger.info(f"!!! Помилка при відправці зведеного звіту адміністратору: {e}")

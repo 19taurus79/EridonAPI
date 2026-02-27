@@ -4,7 +4,7 @@ import uuid
 import pandas as pd
 import numpy as np
 import io
-from .config import valid_line_of_business, valid_warehouse  # Импорт из config.py
+from .config import valid_line_of_business, valid_warehouse, logger  # Импорт из config.py
 
 # Опция для будущего поведения Pandas
 pd.set_option("future.no_silent_downcasting", True)
@@ -322,9 +322,9 @@ def process_free_stock(content: bytes) -> pd.DataFrame:
 
         # Rename the columns
         file = file.rename(columns=rename_map)
-        print("Столбцы успешно переименованы.")
+        logger.info("Столбцы успешно переименованы.")
     else:
-        print(
+        logger.error(
             f"Ошибка: Количество текущих столбцов ({len(current_cols)}) не соответствует количеству новых имен ({len(new_cols)})."
         )
     # Get the current column names

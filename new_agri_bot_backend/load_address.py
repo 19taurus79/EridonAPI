@@ -6,6 +6,7 @@ from typing import Optional
 from piccolo.query import Insert
 
 from new_agri_bot_backend.tables import AddressGuide
+from new_agri_bot_backend.config import logger
 
 
 def _get_pk_code(row: dict) -> Optional[str]:
@@ -62,10 +63,10 @@ async def load_address_guide_data(csv_filepath: str):
                     grouped_data[category].append(cleaned_row)
 
     except FileNotFoundError:
-        print(f"❌ Ошибка: Файл '{csv_filepath}' не найден.")
+        logger.error(f"❌ Ошибка: Файл '{csv_filepath}' не найден.")
         return
     except Exception as e:
-        print(f"❌ Ошибка чтения CSV: {e}")
+        logger.error(f"❌ Ошибка чтения CSV: {e}")
         return
 
     # 2. Последовательная загрузка данных (для удовлетворения FK)
@@ -74,7 +75,7 @@ async def load_address_guide_data(csv_filepath: str):
         if not rows_to_insert:
             continue
 
-        print(f"--- Загрузка категории '{category}' ({len(rows_to_insert)} записей)...")
+        logger.info(f"--- Загрузка категории '{category}' ({len(rows_to_insert)} записей)...")
 
         try:
             # Создаем список экземпляров модели напрямую из словарей.
@@ -93,13 +94,13 @@ async def load_address_guide_data(csv_filepath: str):
                 # Вставляем только этот пакет
                 await AddressGuide.insert(*batch).run()
 
-            print(
+            logger.info(
                 f"✅ Успешно загружено {len(rows_to_insert)} записей категории '{category}'."
             )
 
         except Exception as e:
-            print(f"❌ Критическая ошибка при загрузке категории {category}: {e}")
-            print(
+            logger.error(f"❌ Критическая ошибка при загрузке категории {category}: {e}")
+            logger.error(
                 "❗ Процесс остановлен. Убедитесь, что все родительские элементы загружены."
             )
             return
@@ -129,4 +130,4 @@ if __name__ == "__main__":
             await DB.close_connection_pool()
 
     asyncio.run(run_main())
-    print("\n🏁 Загрузка завершена.")
+    logger.info("\n🏁 Загрузка завершена.")
