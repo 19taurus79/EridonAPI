@@ -61,7 +61,10 @@ async def get_data_from_df(frame: pd.DataFrame):
             await Submissions.select(
                 Submissions.contract_supplement, Submissions.manager, Submissions.client
             )
-            .where(Submissions.contract_supplement.is_in(orders))
+            .where(
+                (Submissions.contract_supplement.is_in(orders))
+                & (Submissions.different > 0)
+            )
             .run()
         )
         contract_data_map = {
