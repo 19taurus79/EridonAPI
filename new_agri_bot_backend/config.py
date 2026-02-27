@@ -113,3 +113,17 @@ LOGISTICS_TELEGRAM_IDS = [
     1060393824,  # Логіст 3
     # Додайте інші ID логістів тут
 ]
+
+# --- Настройка логирования ---
+import logging
+import sys
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler("app.log", encoding="utf-8")
+    ]
+)
+logger = logging.getLogger("agri_bot")

@@ -12,6 +12,7 @@ from .tables import Users  # Импорт вашей модели Users
 from .config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_WIDGET_BOT_TOKEN,
+    logger
 )  # TELEGRAM_WIDGET_BOT_TOKEN — токен бота без Mini App для Login Widget
 
 load_dotenv()
@@ -101,13 +102,13 @@ def check_telegram_auth(init_data: str) -> dict:
             "TELEGRAM_BOT_TOKEN не установлен. Проверьте config.py или переменные окружения."
         )
 
-    # print("\n--- НАЧАЛО ДЕТАЛЬНОЙ ОТЛАДКИ check_telegram_auth ---")
-    # print(f"1. Получена init_data: '{init_data}'")
-    # print(f"2. Длина init_data: {len(init_data)}")
-    # print(
+    # logger.info("\n--- НАЧАЛО ДЕТАЛЬНОЙ ОТЛАДКИ check_telegram_auth ---")
+    # logger.info(f"1. Получена init_data: '{init_data}'")
+    # logger.info(f"2. Длина init_data: {len(init_data)}")
+    # logger.info(
     #     f"3. TELEGRAM_BOT_TOKEN (обрезан): '{TELEGRAM_BOT_TOKEN[:5]}...{TELEGRAM_BOT_TOKEN[-5:]}'"
     # )
-    # print(f"4. Длина TELEGRAM_BOT_TOKEN: {len(TELEGRAM_BOT_TOKEN)}")
+    # logger.info(f"4. Длина TELEGRAM_BOT_TOKEN: {len(TELEGRAM_BOT_TOKEN)}")
 
     parsed = dict(parse_qsl(init_data))
     hash_ = parsed.pop("hash", None)
@@ -117,9 +118,9 @@ def check_telegram_auth(init_data: str) -> dict:
             detail="Отсутствует 'hash' в данных инициализации Telegram.",
         )
 
-    # print(f"5. Извлечен 'hash_': '{hash_}'")
-    # print(f"6. Распарсенные данные (после удаления 'hash'): {parsed}")
-    # print(f"7. Количество полей для проверки: {len(parsed)}")
+    # logger.info(f"5. Извлечен 'hash_': '{hash_}'")
+    # logger.info(f"6. Распарсенные данные (после удаления 'hash'): {parsed}")
+    # logger.info(f"7. Количество полей для проверки: {len(parsed)}")
 
     sorted_items = sorted(parsed.items())
     data_check_string_parts = []
@@ -129,10 +130,10 @@ def check_telegram_auth(init_data: str) -> dict:
 
     data_check_string = "\n".join(data_check_string_parts)
 
-    # print(f"8. Сформированная data_check_string (длина {len(data_check_string)}):")
-    # print("--- НАЧАЛО data_check_string ---")
-    # print(data_check_string)
-    # print("--- КОНЕЦ data_check_string ---")
+    # logger.info(f"8. Сформированная data_check_string (длина {len(data_check_string)}):")
+    # logger.info("--- НАЧАЛО data_check_string ---")
+    # logger.info(data_check_string)
+    # logger.info("--- КОНЕЦ data_check_string ---")
 
     secret_key_intermediate = hmac.new(
         key=b"WebAppData",
@@ -140,7 +141,7 @@ def check_telegram_auth(init_data: str) -> dict:
         digestmod=hashlib.sha256,
     ).digest()
 
-    # print(
+    # logger.info(
     #     f"9. Промежуточный секретный ключ (HMAC(WebAppData, bot_token)) (hex): {secret_key_intermediate.hex()}"
     # )
 
@@ -150,9 +151,9 @@ def check_telegram_auth(init_data: str) -> dict:
         digestmod=hashlib.sha256,
     ).hexdigest()
 
-    # print(f"10. Вычисленный финальный хэш: '{calculated_hash}'")
-    # print(f"11. Хэши совпадают? (Calculated == Received) : {calculated_hash == hash_}")
-    # print("--- КОНЕЦ ДЕТАЛЬНОЙ ОТЛАДКИ check_telegram_auth ---\n")
+    # logger.info(f"10. Вычисленный финальный хэш: '{calculated_hash}'")
+    # logger.info(f"11. Хэши совпадают? (Calculated == Received) : {calculated_hash == hash_}")
+    # logger.info("--- КОНЕЦ ДЕТАЛЬНОЙ ОТЛАДКИ check_telegram_auth ---\n")
 
     if calculated_hash != hash_:
         raise HTTPException(
@@ -189,19 +190,19 @@ async def auth(data: InitDataModel):
     - **403 Forbidden**: Если пользователь с данным `telegram_id` не найден в вашей базе данных `Users`.
     - 500 Internal Server Error: При внутренних ошибках сервера.
     """
-    print(
+    logger.info(
         f"[{datetime.now(timezone.utc)}] Получены RAW INIT DATA: {data.initData[:100]}..."
     )
 
     try:
         parsed_init_data = check_telegram_auth(data.initData)
     except HTTPException as e:
-        print(
+        logger.info(
             f"[{datetime.now(timezone.utc)}] Ошибка аутентификации initData: {e.detail}"
         )
         raise e
     except Exception as e:
-        print(
+        logger.info(
             f"[{datetime.now(timezone.utc)}] Неожиданная ошибка при проверке initData: {e}"
         )
         raise HTTPException(
@@ -211,7 +212,7 @@ async def auth(data: InitDataModel):
 
     user_info_str = parsed_init_data.get("user")
     if not user_info_str:
-        print(f"[{datetime.now(timezone.utc)}] Отсутствует поле 'user' в initData.")
+        logger.info(f"[{datetime.now(timezone.utc)}] Отсутствует поле 'user' в initData.")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="В данных инициализации Telegram отсутствует информация о пользователе (поле 'user').",
@@ -220,7 +221,7 @@ async def auth(data: InitDataModel):
     try:
         user_data = json.loads(user_info_str)
     except json.JSONDecodeError:
-        print(
+        logger.info(
             f"[{datetime.now(timezone.utc)}] Неверный формат JSON для данных пользователя: {user_info_str[:50]}..."
         )
         raise HTTPException(
@@ -230,7 +231,7 @@ async def auth(data: InitDataModel):
 
     telegram_id = user_data.get("id")
     if not isinstance(telegram_id, int):
-        print(
+        logger.info(
             f"[{datetime.now(datetime.timezone.utc)}] Telegram ID пользователя не является целым числом: {telegram_id}."
         )
         raise HTTPException(
@@ -244,7 +245,7 @@ async def auth(data: InitDataModel):
     )
 
     if not user_in_db:
-        print(
+        logger.info(
             f"[{current_utc_time}] Пользователь с Telegram ID {telegram_id} НЕ НАЙДЕН в БД. Доступ запрещен."
         )
         raise HTTPException(
@@ -252,7 +253,7 @@ async def auth(data: InitDataModel):
             detail=f"Доступ запрещен. Пользователь с Telegram ID {telegram_id} не зарегистрирован в системе.",
         )
     if not user_in_db.is_allowed:
-        print(
+        logger.info(
             f"[{current_utc_time}] Пользователь {user_in_db.username or user_in_db.telegram_id} (ID: {user_in_db.telegram_id}) найден, но is_allowed=False. Доступ запрещен."
         )
         raise HTTPException(
@@ -260,7 +261,7 @@ async def auth(data: InitDataModel):
             detail=f"Доступ запрещен. Ваш аккаунт (Telegram ID {telegram_id}) не имеет активного разрешения. Обратитесь к администратору.",
         )
 
-    print(
+    logger.info(
         f"[{current_utc_time}] Пользователь с Telegram ID {telegram_id} найден. Обновляем данные."
     )
     user_in_db.username = user_data.get("username")
@@ -269,7 +270,7 @@ async def auth(data: InitDataModel):
     user_in_db.last_activity_date = current_utc_time
     await user_in_db.save().run()
     message = "Данные пользователя успешно обновлены."
-    print(
+    logger.info(
         f"[{current_utc_time}] Данные пользователя {user_in_db.username or user_in_db.telegram_id} (ID: {user_in_db.telegram_id}) обновлены."
     )
 
@@ -313,7 +314,7 @@ async def get_current_telegram_user(
         # Перехоплюємо та перевикидаємо помилки, вже визначені в check_telegram_auth
         raise e
     except Exception as e:
-        print(
+        logger.info(
             f"[{datetime.now(timezone.utc)}] Несподівана помилка при перевірці initData в залежності: {e}"
         )
         raise HTTPException(
@@ -439,7 +440,7 @@ async def login_via_widget(data: TelegramWidgetData):
         for k, v in params.items()
     )
 
-    print(f"[{current_utc_time}] Widget login: user {data.id} ({data.username}) authorized.")
+    logger.info(f"[{current_utc_time}] Widget login: user {data.id} ({data.username}) authorized.")
 
     return {"init_data": init_data}
 

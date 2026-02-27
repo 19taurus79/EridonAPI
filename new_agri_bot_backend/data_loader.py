@@ -12,8 +12,9 @@ from typing import Dict, Any, Tuple, List, Optional
 
 from piccolo.query import Insert
 
-from .config import bot
+from .config import bot, ADMINS_ID, logger
 from .services.ordered_moved_notifications import notifications
+from .services.send_telegram_notification import send_notification
 
 # from piccolo_conf import DB
 
@@ -86,7 +87,13 @@ async def save_processed_data_to_db(
     Асинхронная функция для обработки и сохранения данных в базу данных.
     Оркестрирует вызовы синхронных функций обработки и асинхронных операций с БД.
     """
-    print("Начало обработки и сохранения данных...")
+    log_messages = []
+
+    def log(message):
+        logger.info(message)
+        log_messages.append(message)
+
+    log("🚀 Начало обработки и сохранения данных...")
 
     # 1. Запуск обработки Excel-файлов в отдельном потове
     df_av_stock = await run_in_threadpool(process_av_stock, av_stock_content)
@@ -110,7 +117,7 @@ async def save_processed_data_to_db(
     # df_moved["product"] = df_moved["product"].str.strip()
     df_free_stock["product"] = df_free_stock["product"].str.strip()
 
-    print("Данные Excel обработаны в DataFrame. Начинаем сохранение в БД...")
+    log("✅ Данные Excel обработаны. Начинаем сохранение в БД...")
 
     # 2.1 Создание справочника товаров
     av_stock_tmp = df_av_stock[["product", "line_of_business", "active_substance"]]
@@ -133,9 +140,9 @@ async def save_processed_data_to_db(
             for i in range(0, len(product_guide_raw), BATCH_SIZE):
                 batch = product_guide_raw[i : i + BATCH_SIZE]
                 await ProductGuide.insert().add(*list(batch)).run()
-            print(f"Вставлено {len(records_product_guide)} записей в ProductGuide.")
+            log(f"📦 Вставлено {len(records_product_guide)} записей в ProductGuide.")
         except Exception as e:
-            print(f"!!! Ошибка при сохранении данных в ProductGuide: {e}")
+            log(f"❌ Ошибка при сохранении данных в ProductGuide: {e}")
 
     if not df_av_stock.empty:
         try:
@@ -158,11 +165,11 @@ async def save_processed_data_to_db(
             for i in range(0, len(av_stock_raw), BATCH_SIZE):
                 batch = av_stock_raw[i : i + BATCH_SIZE]
                 await AvailableStock.insert().add(*list(batch)).run()
-            print(f"Вставлено {len(records_av_stock)} записей в AvailableStock.")
+            log(f"📉 Вставлено {len(records_av_stock)} записей в AvailableStock.")
         except Exception as e:
-            print(f"!!! Ошибка при сохранении данных в AvailableStock: {e}")
+            log(f"❌ Ошибка при сохранении данных в AvailableStock: {e}")
     else:
-        print("DataFrame для AvailableStock пуст, пропускаем вставку.")
+        log("⚠️ DataFrame для AvailableStock пуст.")
 
     if not df_remains.empty:
         try:
@@ -185,11 +192,11 @@ async def save_processed_data_to_db(
             for i in range(0, len(remains_raw), BATCH_SIZE):
                 batch = remains_raw[i : i + BATCH_SIZE]
                 await Remains.insert().add(*list(batch)).run()
-            print(f"Вставлено {len(records_remains)} записей в Remains.")
+            log(f"🏠 Вставлено {len(records_remains)} записей в Remains.")
         except Exception as e:
-            print(f"!!! Ошибка при сохранении данных в Remains: {e}")
+            log(f"❌ Ошибка при сохранении данных в Remains: {e}")
     else:
-        print("DataFrame для Remains пуст, пропускаем вставку.")
+        log("⚠️ DataFrame для Remains пуст.")
 
     if not df_submissions.empty:
         try:
@@ -231,11 +238,11 @@ async def save_processed_data_to_db(
             for i in range(0, len(submissions_raw), BATCH_SIZE):
                 batch = submissions_raw[i : i + BATCH_SIZE]
                 await Submissions.insert().add(*list(batch)).run()
-            print(f"Вставлено {len(records_submissions)} записей в Submissions.")
+            log(f"📑 Вставлено {len(records_submissions)} записей в Submissions.")
         except Exception as e:
-            print(f"!!! Ошибка при сохранении данных в Submissions: {e}")
+            log(f"❌ Ошибка при сохранении данных в Submissions: {e}")
     else:
-        print("DataFrame для Submissions пуст, пропускаем вставку.")
+        log("⚠️ DataFrame для Submissions пуст.")
 
     if not df_payment.empty:
         try:
@@ -246,11 +253,11 @@ async def save_processed_data_to_db(
             for i in range(0, len(payment_raw), BATCH_SIZE):
                 batch = payment_raw[i : i + BATCH_SIZE]
                 await Payment.insert().add(*list(batch)).run()
-            print(f"Вставлено {len(records_payment)} записей в Payment.")
+            log(f"💳 Вставлено {len(records_payment)} записей в Payment.")
         except Exception as e:
-            print(f"!!! Ошибка при сохранении данных в Payment: {e}")
+            log(f"❌ Ошибка при сохранении данных в Payment: {e}")
     else:
-        print("DataFrame для Payment пуст, пропускаем вставку.")
+        log("⚠️ DataFrame для Payment пуст.")
         
     moved = await MovedData.select().run()
     df_moved = pd.DataFrame(moved)
@@ -283,11 +290,11 @@ async def save_processed_data_to_db(
             for i in range(0, len(moved_raw), BATCH_SIZE):
                 batch = moved_raw[i : i + BATCH_SIZE]
                 await MovedData.insert().add(*list(batch)).run()
-            print(f"Вставлено {len(records_moved)} записей в MovedData.")
+            log(f"🚚 Вставлено {len(records_moved)} записей в MovedData.")
         except Exception as e:
-            print(f"!!! Ошибка при сохранении данных в MovedData: {e}")
+            log(f"❌ Ошибка при сохранении данных в MovedData: {e}")
     else:
-        print("DataFrame для MovedData пуст, пропускаем вставку.")
+        log("⚠️ DataFrame для MovedData пуст.")
 
     if not df_free_stock.empty:
         try:
@@ -312,11 +319,11 @@ async def save_processed_data_to_db(
                 batch = free_stock_raw[i : i + BATCH_SIZE]
                 await FreeStock.insert().add(*list(batch)).run()
 
-            print(f"Вставлено {len(records_free_stock)} записей в FreeStock.")
+            log(f"📦 Вставлено {len(records_free_stock)} записей в FreeStock.")
         except Exception as e:
-            print(f"!!! Ошибка при сохранении данных в FreeStock: {e}")
+            log(f"❌ Ошибка при сохранении данных в FreeStock: {e}")
     else:
-        print("DataFrame для FreeStock пуст, пропускаем вставку.")
+        log("⚠️ DataFrame для FreeStock пуст.")
 
     df_manual_matches = pd.DataFrame()
     if manual_matches_json:
@@ -331,11 +338,11 @@ async def save_processed_data_to_db(
                     df_manual_matches["Дата"] = pd.to_datetime(
                         df_manual_matches["Дата"], errors="coerce"
                     )
-                print(
-                    f"Создан DataFrame 'df_manual_matches' из ручных сопоставлений, размер: {df_manual_matches.shape}."
+                log(
+                    f"🤝 Создан DataFrame 'df_manual_matches' из ручных сопоставлений, размер: {df_manual_matches.shape}."
                 )
         except (json.JSONDecodeError, AttributeError) as e:
-            print(f"Ошибка при парсинге JSON из manual_matches_json: {e}")
+            log(f"❌ Ошибка при парсинге JSON из manual_matches_json: {e}")
 
     if not df_manual_matches.empty:
         try:
@@ -419,8 +426,8 @@ async def save_processed_data_to_db(
                 df_new_matches_to_add = df_matches.copy()
 
             if not df_new_matches_to_add.empty:
-                print(
-                    f"Найдено {len(df_new_matches_to_add)} новых записей для добавления в MovedData."
+                log(
+                    f"🔍 Найдено {len(df_new_matches_to_add)} новых записей для добавления в MovedData."
                 )
                 df_new_matches_to_add = df_new_matches_to_add.replace({np.nan: None})
 
@@ -452,14 +459,34 @@ async def save_processed_data_to_db(
                 await MovedData.insert(
                     *[MovedData(**rec) for rec in cleaned_records]
                 ).run()
-                print("Новые записи успешно добавлены в MovedData.")
+                log("✅ Новые записи успешно добавлены в MovedData.")
                 await notifications(bot=bot, frame=df_new_matches_to_add)
             else:
-                print("Новых записей для добавления в MovedData не найдено.")
+                log("ℹ️ Новых записей для добавления в MovedData не найдено.")
 
         except Exception as e:
-            print(f"Ошибка при финальной обработке df_manual_matches: {e}")
+            log(f"❌ Ошибка при финальной обработке df_manual_matches: {e}")
     else:
-        print("Данные для ручного сопоставления не предоставлены или DataFrame пуст.")
+        log("ℹ️ Данные для ручного сопоставления не предоставлены или DataFrame пуст.")
 
-    print("Все данные успешно сохранены в базу данных.")
+    log("🏁 Все данные успешно сохранены в базу данных.")
+
+    # --- ОТПРАВКА ЛОГОВ В TELEGRAM ---
+    if ADMINS_ID:
+        try:
+            admin_ids = json.loads(ADMINS_ID)
+            if isinstance(admin_ids, list):
+                # Формируем итоговый текст
+                full_log_text = "📊 *Отчет о загрузке данных*\n\n" + "\n".join(log_messages)
+                
+                # Если текст слишком длинный, aiogram может выдать ошибку, 
+                # но здесь объем обычно небольшой. На всякий случай можно было бы разбить,
+                # но пока отправим целиком.
+                await send_notification(
+                    bot=bot,
+                    chat_ids=[int(uid) for uid in admin_ids],
+                    text=full_log_text,
+                    parse_mode="Markdown"
+                )
+        except Exception as e:
+            logger.error(f"!!! Ошибка при отправке логов админам: {e}")
