@@ -152,6 +152,7 @@ class UpdateItem(BaseModel):
 class UpdateDeliveryRequest(BaseModel):
     delivery_id: int
     status: str
+    total_weight: Optional[float] = None
     items: List[UpdateItem]
 
 
@@ -1582,9 +1583,14 @@ async def update_delivery(data: UpdateDeliveryRequest):
     try:
         # Початок транзакції для забезпечення атомарності
         async with Deliveries._meta.db.transaction():
-            # 1. Оновлення статусу доставки
+            # 1. Оновлення статусу та ваги доставки
             delivery_data = await Deliveries.objects().where(Deliveries.id == data.delivery_id).first()
-            await Deliveries.update({Deliveries.status: data.status}).where(
+            
+            update_fields = {Deliveries.status: data.status}
+            if data.total_weight is not None:
+                update_fields[Deliveries.total_weight] = data.total_weight
+                
+            await Deliveries.update(update_fields).where(
                 Deliveries.id == data.delivery_id
             ).run()
             # logger.info(delivery_data)
