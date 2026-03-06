@@ -281,6 +281,7 @@ async def auth(data: InitDataModel):
         "first_name": user_in_db.first_name,
         "last_name": user_in_db.last_name,
         "is_allowed": user_in_db.is_allowed,
+        "is_guest": getattr(user_in_db, "is_guest", False),
         "is_admin": user_in_db.is_admin,
         "full_name_for_orders": user_in_db.full_name_for_orders,
     }
@@ -356,6 +357,21 @@ async def get_current_telegram_user(
         )
 
     return user_in_db  # Повертаємо об'єкт користувача з БД
+
+
+async def check_not_guest(
+    current_user=Depends(get_current_telegram_user),
+):
+    """
+    Залежність для перевірки, що користувач не є гостем (is_guest=False).
+    Використовується для захисту ендпоінтів, що змінюють дані (POST, PUT, DELETE).
+    """
+    if getattr(current_user, "is_guest", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Доступ заборонено (тільки для читання). Гостьовий акаунт не має прав на зміну даних.",
+        )
+    return current_user
 
 
 @router.post("/auth/login-widget", summary="Авторизація через Telegram Login Widget")

@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 from new_agri_bot_backend.config import bot, LOGISTICS_TELEGRAM_IDS
 from new_agri_bot_backend.tables import Users, Submissions, OrderChatMessage
-from new_agri_bot_backend.telegram_auth import get_current_telegram_user
+from new_agri_bot_backend.telegram_auth import get_current_telegram_user, check_not_guest
 
 WEBAPP_URL = os.getenv("WEBAPP_URL")
 
@@ -115,7 +115,7 @@ from fastapi import APIRouter, HTTPException, Depends
 router = APIRouter(prefix="/orders", tags=["chat"])
 
 
-@router.post("/{order_ref}/chat/messages/{message_id}/notify")
+@router.post("/{order_ref}/chat/messages/{message_id}/notify", dependencies=[Depends(check_not_guest)])
 async def notify_chat_message(
     order_ref: str, message_id: str, current_user=Depends(get_current_telegram_user)
 ):
