@@ -34,8 +34,11 @@ from .tables import (
     Deliveries,
     DeliveryItems,
     OrderComments,
+    Users,
 )
-from aiogram.types import FSInputFile, BufferedInputFile
+from aiogram.types import FSInputFile, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
 from fastapi import (
     FastAPI,
     UploadFile,
@@ -476,6 +479,10 @@ BACKEND_URL = os.getenv("BACKEND_URL", "")
 # aiogram Dispatcher для обработки входящих сообщений бота
 dp = Dispatcher()
 
+ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID", "")
+
+class RegistrationStates(StatesGroup):
+    waiting_for_fio = State()
 
 @dp.message(CommandStart())
 async def handle_bot_start(message):
@@ -495,7 +502,114 @@ async def handle_bot_start(message):
                 "❌ Посилання не знайдено або вже використано. Спробуйте ще раз."
             )
     else:
-        await message.answer("Вітаю! Я бот авторизації Eridon.\n\nЯкщо ви намагаєтесь увійти в систему, відправте мені 4-значний код з екрану.")
+        telegram_id = message.from_user.id
+        user_in_db = await Users.objects().where(Users.telegram_id == telegram_id).first().run()
+        
+        if not user_in_db:
+            # Создаем нового пользователя
+            new_user = Users(
+                telegram_id=telegram_id,
+                username=message.from_user.username,
+                first_name=message.from_user.first_name,
+                last_name=message.from_user.last_name,
+                is_allowed=False,
+                is_guest=False
+            )
+            await new_user.save().run()
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Отправить запрос", callback_data="request_access")]
+            ])
+            await message.answer(
+                "🤖 Вас нет в системе. Пожалуйста, обратитесь к разработчику для предоставления доступа.",
+                reply_markup=keyboard
+            )
+        elif not user_in_db.is_allowed:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Отправить запрос", callback_data="request_access")]
+            ])
+            await message.answer(
+                "🤖 Ваш аккаунт ожидает подтверждения. Можете отправить повторный запрос.",
+                reply_markup=keyboard
+            )
+        else:
+            await message.answer("Вітаю! Я бот авторизації Eridon.\n\nЯкщо ви намагаєтесь увійти в систему, відправте мені 4-значний код з екрану.")
+
+@dp.callback_query(F.data == "request_access")
+async def process_request_access(callback: CallbackQuery, state: FSMContext):
+    await callback.message.answer(
+        "Напишите, пожалуйста, кто вы (ФИО, должность), чтобы администратор смог вас идентифицировать."
+    )
+    await state.set_state(RegistrationStates.waiting_for_fio)
+    await callback.answer()
+
+@dp.message(RegistrationStates.waiting_for_fio)
+async def process_fio_input(message: Message, state: FSMContext):
+    fio = message.text
+    telegram_id = message.from_user.id
+    username = message.from_user.username or "без username"
+    
+    if not ADMIN_TELEGRAM_ID:
+        await message.answer("❌ Ошибка: ADMIN_TELEGRAM_ID не настроен. Свяжитесь напрямую с администратором.")
+        await state.clear()
+        return
+
+    # Отправляем запрос админу
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Дать доступ", callback_data=f"approve_{telegram_id}"),
+            InlineKeyboardButton(text="❌ Не дать", callback_data=f"reject_{telegram_id}")
+        ]
+    ])
+    try:
+        await bot.send_message(
+            chat_id=ADMIN_TELEGRAM_ID,
+            text=f"Запрос на доступ от @{username} (ID: {telegram_id}).\nСообщение: {fio}",
+            reply_markup=keyboard
+        )
+        await message.answer("Ваш запрос отправлен. Ожидайте решения администратора.")
+    except Exception as e:
+        logger.error(f"Не удалось отправить сообщение админу: {e}")
+        await message.answer("❌ Ошибка при отправке запроса администратору.")
+        
+    await state.clear()
+
+@dp.callback_query(F.data.startswith("approve_"))
+async def approve_user(callback: CallbackQuery):
+    user_id = int(callback.data.split("_")[1])
+    user_in_db = await Users.objects().where(Users.telegram_id == user_id).first().run()
+    
+    if user_in_db:
+        user_in_db.is_allowed = True
+        await user_in_db.save().run()
+        
+        await callback.message.edit_text(
+            f"{callback.message.text}\n\n✅ Доступ предоставлен."
+        )
+        
+        try:
+            await bot.send_message(
+                chat_id=user_id,
+                text="🎉 Вам предоставлен доступ! Теперь вы можете открыть приложение /start"
+            )
+        except Exception as e:
+            logger.error(f"Не удалось уведомить пользователя {user_id}: {e}")
+    else:
+        await callback.answer("Пользователь не найден в БД", show_alert=True)
+        
+@dp.callback_query(F.data.startswith("reject_"))
+async def reject_user(callback: CallbackQuery):
+    user_id = int(callback.data.split("_")[1])
+    await callback.message.edit_text(
+        f"{callback.message.text}\n\n❌ В доступе отказано."
+    )
+    try:
+        await bot.send_message(
+            chat_id=user_id,
+            text="❌ В доступе отказано."
+        )
+    except Exception as e:
+        logger.error(f"Не удалось уведомить пользователя {user_id}: {e}")
 
 from aiogram import F
 import re
