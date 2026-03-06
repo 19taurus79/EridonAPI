@@ -4,7 +4,7 @@ from typing import Optional
 from uuid import UUID
 
 from new_agri_bot_backend.tables import OrderChatMessage, Users
-from new_agri_bot_backend.telegram_auth import get_current_telegram_user
+from new_agri_bot_backend.telegram_auth import get_current_telegram_user, check_not_guest
 
 
 class ChatMessageBase(BaseModel):
@@ -61,7 +61,7 @@ async def get_chat_messages(
 
 
 # Створення повідомлення
-@router.post("/{order_ref}/chat/messages", response_model=ChatMessageResponse)
+@router.post("/{order_ref}/chat/messages", response_model=ChatMessageResponse, dependencies=[Depends(check_not_guest)])
 async def create_chat_message(
     order_ref: str,
     request: CreateChatMessageRequest,
@@ -98,7 +98,7 @@ async def create_chat_message(
 
 # Редагування повідомлення
 @router.put(
-    "/{order_ref}/chat/messages/{message_id}", response_model=ChatMessageResponse
+    "/{order_ref}/chat/messages/{message_id}", response_model=ChatMessageResponse, dependencies=[Depends(check_not_guest)]
 )
 async def update_chat_message(
     order_ref: str,
@@ -142,7 +142,7 @@ async def update_chat_message(
 
 
 # Видалення повідомлення
-@router.delete("/{order_ref}/chat/messages/{message_id}")
+@router.delete("/{order_ref}/chat/messages/{message_id}", dependencies=[Depends(check_not_guest)])
 async def delete_chat_message(
     order_ref: str,
     message_id: UUID,

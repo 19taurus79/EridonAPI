@@ -34,7 +34,7 @@ from .tables import (
     Tasks,
     Events,
 )
-from .telegram_auth import get_current_telegram_user
+from .telegram_auth import get_current_telegram_user, check_not_guest
 from .test import (
     get_all_tasks,
     create_task,
@@ -668,7 +668,7 @@ class TaskCreate(BaseModel):
     note: str
 
 
-@router.post("/add_task")
+@router.post("/add_task", dependencies=[Depends(check_not_guest)])
 async def add_task(task_data: TaskCreate, user=Depends(get_current_telegram_user)):
     date_iso = (
         task_data.date.astimezone(timezone.utc).isoformat()
@@ -687,7 +687,7 @@ def get_task(task_id):
     return task
 
 
-@router.patch("/task_in_progress")
+@router.patch("/task_in_progress", dependencies=[Depends(check_not_guest)])
 async def task_in_progress(task_id, user=Depends(get_current_telegram_user)):
     await Tasks.update(
         {
@@ -700,7 +700,7 @@ async def task_in_progress(task_id, user=Depends(get_current_telegram_user)):
     in_progress_task(task_id, user)
 
 
-@router.patch("/task_completed")
+@router.patch("/task_completed", dependencies=[Depends(check_not_guest)])
 async def task_completed(task_id, user=Depends(get_current_telegram_user)):
     await Tasks.update(
         {
@@ -713,7 +713,7 @@ async def task_completed(task_id, user=Depends(get_current_telegram_user)):
     complete_task(task_id, user)
 
 
-@router.patch("/event_in_progress")
+@router.patch("/event_in_progress", dependencies=[Depends(check_not_guest)])
 async def event_in_progress(event_id, user=Depends(get_current_telegram_user)):
     await Events.update(
         {
@@ -730,7 +730,7 @@ async def event_in_progress(event_id, user=Depends(get_current_telegram_user)):
     )
 
 
-@router.patch("/event_completed")
+@router.patch("/event_completed", dependencies=[Depends(check_not_guest)])
 async def event_completed(event_id, user=Depends(get_current_telegram_user)):
     await Events.update(
         {
@@ -748,7 +748,7 @@ async def event_completed(event_id, user=Depends(get_current_telegram_user)):
     )
 
 
-@router.patch("/event_changed_date")
+@router.patch("/event_changed_date", dependencies=[Depends(check_not_guest)])
 async def event_changed_date(
     event_id: str, new_date: ChangeDateRequest, user=Depends(get_current_telegram_user)
 ):

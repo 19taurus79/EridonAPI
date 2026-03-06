@@ -68,6 +68,7 @@ from .telegram_auth import (
     InitDataModel,
     check_telegram_auth,
     get_current_telegram_user,
+    check_not_guest,
 )
 from .data_retrieval import router as data_retrieval_router
 from .data_loader import save_processed_data_to_db
@@ -1073,7 +1074,7 @@ async def get_address_by_client(client):
     return address
 
 
-@app.put("/update_address_for_client/{id}")
+@app.put("/update_address_for_client/{id}", dependencies=[Depends(check_not_guest)])
 async def update_address_for_client(address_data: AddressCreate, id: int):
     obj = await ClientAddress.objects().get(where=(ClientAddress.id == id))
     data_dict = address_data.dict()
@@ -1107,7 +1108,7 @@ async def update_address_for_client(address_data: AddressCreate, id: int):
     await obj.save()
 
 
-@app.post("/add_address_for_client")
+@app.post("/add_address_for_client", dependencies=[Depends(check_not_guest)])
 async def create_address_for_client(address_data: AddressCreate):
     """
     Создает новый адрес для клиента, "умно" разбирая строку полного адреса.
@@ -1253,7 +1254,7 @@ async def get_data_for_delivery(X_Telegram_Init_Data: str = Header()):
     return combined_data
 
 
-@app.post("/delivery/send")
+@app.post("/delivery/send", dependencies=[Depends(check_not_guest)])
 async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Header()):
     parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
     user_info_str = parsed_init_data.get("user")
@@ -1573,7 +1574,7 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
     return {"status": "ok"}
 
 
-@app.delete("/delivery/delete", tags=["Delivery"])
+@app.delete("/delivery/delete", tags=["Delivery"], dependencies=[Depends(check_not_guest)])
 async def delete_delivery(deliveryId: DeleteDeliveryRequest):
     data = (
         await Deliveries.objects()
@@ -1594,7 +1595,7 @@ async def delete_delivery(deliveryId: DeleteDeliveryRequest):
     delete_calendar_event_by_id(event_id=data.calendar_id)
 
 
-@app.post("/delivery/update", tags=["Delivery"])
+@app.post("/delivery/update", tags=["Delivery"], dependencies=[Depends(check_not_guest)])
 async def update_delivery(data: UpdateDeliveryRequest):
     """
     Оновлює доставку, повністю замінюючи її позиції однією транзакцією.
@@ -1707,7 +1708,7 @@ async def update_delivery(data: UpdateDeliveryRequest):
     return {"status": "ok", "message": "Delivery items updated successfully."}
 
 
-@app.post("/delivery/change_date", tags=["Delivery"])
+@app.post("/delivery/change_date", tags=["Delivery"], dependencies=[Depends(check_not_guest)])
 async def update_delivery_date(
     data: ChangeDeliveryDateRequest,
     X_Telegram_Init_Data: str = Header()
@@ -1774,7 +1775,7 @@ async def update_delivery_date(
     status_code=status.HTTP_201_CREATED,
     summary="Створити коментар",
     description="Створює новий коментар до заявки або товару",
-    dependencies=[Depends(get_current_telegram_user)],
+    dependencies=[Depends(check_not_guest)],
 )
 async def create_comment(
     request: CreateCommentRequest, user: dict = Depends(get_current_telegram_user)
@@ -1861,7 +1862,7 @@ async def get_comments(
     response_model=CommentResponse,
     summary="Оновити коментар",
     description="Оновлює текст коментаря (тільки власник може редагувати)",
-    dependencies=[Depends(get_current_telegram_user)],
+    dependencies=[Depends(check_not_guest)],
 )
 async def update_comment(
     comment_id: int,
@@ -1920,7 +1921,7 @@ async def update_comment(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Видалити коментар",
     description="Видаляє коментар (тільки власник може видалити)",
-    dependencies=[Depends(get_current_telegram_user)],
+    dependencies=[Depends(check_not_guest)],
 )
 async def delete_comment(
     comment_id: int, user: dict = Depends(get_current_telegram_user)
