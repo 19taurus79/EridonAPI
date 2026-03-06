@@ -538,7 +538,14 @@ async def generate_login_token():
     for t in expired:
         login_tokens.pop(t, None)
 
-    token = str(uuid.uuid4()).replace("-", "")[:24]
+    import random
+    
+    # Generate a unique 4-digit code
+    while True:
+        token = str(random.randint(1000, 9999))
+        if token not in login_tokens:
+            break
+            
     login_tokens[token] = {
         "status": "pending",
         "expires": now + timedelta(minutes=5),
@@ -546,9 +553,9 @@ async def generate_login_token():
         "user_id": None,
     }
 
-    bot_name = os.getenv("TELEGRAM_BOT_NAME", "EridonKharkiv_bot")
-    tg_link = f"tg://resolve?domain={bot_name}&start=weblogin_{token}"
-    web_link = f"https://t.me/{bot_name}?start=weblogin_{token}"
+    bot_name = os.getenv("NEXT_PUBLIC_TELEGRAM_BOT_NAME", "EridonKharkiv_bot")
+    tg_link = f"tg://resolve?domain={bot_name}"
+    web_link = f"https://t.me/{bot_name}"
 
     return {"token": token, "deep_link": tg_link, "web_link": web_link, "expires_in": 300}
 

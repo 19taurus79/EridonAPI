@@ -478,7 +478,7 @@ dp = Dispatcher()
 
 @dp.message(CommandStart())
 async def handle_bot_start(message):
-    """Handle /start weblogin_TOKEN — Bot Deep Link Auth."""
+    """Handle /start command"""
     text = message.text or ""
     parts = text.split(" ", 1)
     if len(parts) == 2 and parts[1].startswith("weblogin_"):
@@ -494,7 +494,26 @@ async def handle_bot_start(message):
                 "❌ Посилання не знайдено або вже використано. Спробуйте ще раз."
             )
     else:
-        await message.answer("Вітаю! Я бот авторизації Eridon.")
+        await message.answer("Вітаю! Я бот авторизації Eridon.\n\nЯкщо ви намагаєтесь увійти в систему, відправте мені 4-значний код з екрану.")
+
+from aiogram import F
+import re
+
+@dp.message(F.text.regexp(r"^\d{4}$"))
+async def handle_login_code(message):
+    """Handle 4-digit login code."""
+    token = message.text
+    telegram_id = message.from_user.id
+    
+    success = await confirm_login_token(token, telegram_id)
+    if success:
+        await message.answer(
+            "✅ Вхід підтверджено! Поверніться в браузер — сторінка завантажиться автоматично."
+        )
+    else:
+        await message.answer(
+            "❌ Код не знайдено або він вже застарів. Спробуйте згенерувати новий код."
+        )
 
 
 # Определяем контекстный менеджер для жизненного цикла приложения
