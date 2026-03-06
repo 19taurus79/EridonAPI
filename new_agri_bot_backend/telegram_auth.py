@@ -246,11 +246,23 @@ async def auth(data: InitDataModel):
 
     if not user_in_db:
         logger.info(
-            f"[{current_utc_time}] Пользователь с Telegram ID {telegram_id} НЕ НАЙДЕН в БД. Доступ запрещен."
+            f"[{current_utc_time}] Пользователь с Telegram ID {telegram_id} НЕ НАЙДЕН в БД. Создаем новую запись с is_allowed=False."
         )
+        
+        # Автоматическая регистрация нового пользователя без доступа
+        new_user = Users(
+            telegram_id=telegram_id,
+            username=user_data.get("username"),
+            first_name=user_data.get("first_name"),
+            last_name=user_data.get("last_name"),
+            is_allowed=False,
+            is_guest=False
+        )
+        await new_user.save().run()
+
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Доступ запрещен. Пользователь с Telegram ID {telegram_id} не зарегистрирован в системе.",
+            detail=f"Доступ запрещен. Ваш аккаунт записан в систему, но ожидает подтверждения администратором.",
         )
     if not user_in_db.is_allowed:
         logger.info(
