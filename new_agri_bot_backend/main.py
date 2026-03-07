@@ -557,7 +557,11 @@ async def process_fio_input(message: Message, state: FSMContext):
     # Отправляем запрос админу
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Надати доступ", callback_data=f"approve_{telegram_id}"),
+            InlineKeyboardButton(text="👑 Адмін", callback_data=f"approve_admin_{telegram_id}"),
+            InlineKeyboardButton(text="👤 Користувач", callback_data=f"approve_user_{telegram_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="👁 Гість", callback_data=f"approve_guest_{telegram_id}"),
             InlineKeyboardButton(text="❌ Відмовити", callback_data=f"reject_{telegram_id}")
         ]
     ])
@@ -574,23 +578,31 @@ async def process_fio_input(message: Message, state: FSMContext):
         
     await state.clear()
 
-@dp.callback_query(F.data.startswith("approve_"))
+@dp.callback_query(F.data.startswith("approve_admin_") | F.data.startswith("approve_user_") | F.data.startswith("approve_guest_"))
 async def approve_user(callback: CallbackQuery):
-    user_id = int(callback.data.split("_")[1])
+    parts = callback.data.split("_")
+    # approve_admin_ID, approve_user_ID, approve_guest_ID
+    role = parts[1]  # admin / user / guest
+    user_id = int(parts[2])
     user_in_db = await Users.objects().where(Users.telegram_id == user_id).first().run()
     
     if user_in_db:
         user_in_db.is_allowed = True
+        user_in_db.is_admin = (role == "admin")
+        user_in_db.is_guest = (role == "guest")
         await user_in_db.save().run()
         
+        role_labels = {"admin": "👑 Адмін", "user": "👤 Користувач", "guest": "👁 Гість"}
+        role_label = role_labels.get(role, role)
+        
         await callback.message.edit_text(
-            f"{callback.message.text}\n\n✅ Доступ надано."
+            f"{callback.message.text}\n\n✅ Доступ надано. Роль: {role_label}"
         )
         
         try:
             await bot.send_message(
                 chat_id=user_id,
-                text="🎉 Вам надано доступ! Тепер ви можете відкрити додаток /start"
+                text=f"🎉 Вам надано доступ ({role_label})! Тепер ви можете відкрити додаток /start"
             )
         except Exception as e:
             logger.error(f"Не вдалось повідомити користувача {user_id}: {e}")
