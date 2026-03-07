@@ -34,11 +34,8 @@ from .tables import (
     Deliveries,
     DeliveryItems,
     OrderComments,
-    Users,
 )
-from aiogram.types import FSInputFile, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.context import FSMContext
+from aiogram.types import FSInputFile, BufferedInputFile
 from fastapi import (
     FastAPI,
     UploadFile,
@@ -479,11 +476,6 @@ BACKEND_URL = os.getenv("BACKEND_URL", "")
 # aiogram Dispatcher для обработки входящих сообщений бота
 dp = Dispatcher()
 
-ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID", "")
-
-class RegistrationStates(StatesGroup):
-    waiting_for_fio = State()
-
 @dp.message(CommandStart())
 async def handle_bot_start(message):
     """Handle /start command"""
@@ -502,130 +494,7 @@ async def handle_bot_start(message):
                 "❌ Посилання не знайдено або вже використано. Спробуйте ще раз."
             )
     else:
-        telegram_id = message.from_user.id
-        user_in_db = await Users.objects().where(Users.telegram_id == telegram_id).first().run()
-        
-        if not user_in_db:
-            # Створюємо нового користувача
-            try:
-                new_user = Users(
-                    telegram_id=telegram_id,
-                    username=message.from_user.username,
-                    first_name=message.from_user.first_name,
-                    last_name=message.from_user.last_name,
-                    is_allowed=False,
-                    is_guest=False
-                )
-                await new_user.save().run()
-                logger.info(f"Новий користувач {telegram_id} зареєстрований в БД з is_allowed=False")
-            except Exception as e:
-                logger.error(f"Помилка збереження нового користувача {telegram_id}: {e}")
-            
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="📨 Надіслати запит", callback_data="request_access")]
-            ])
-            await message.answer(
-                "🤖 Вас немає в системі. Будь ласка, зверніться до розробника для отримання доступу.",
-                reply_markup=keyboard
-            )
-        elif not user_in_db.is_allowed:
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="📨 Надіслати запит", callback_data="request_access")]
-            ])
-            await message.answer(
-                "🤖 Ваш акаунт очікує підтвердження. Можете надіслати повторний запит.",
-                reply_markup=keyboard
-            )
-        else:
-            await message.answer("Вітаю! Я бот авторизації Eridon.\n\nЯкщо ви намагаєтесь увійти в систему, відправте мені 4-значний код з екрану.")
-
-@dp.callback_query(F.data == "request_access")
-async def process_request_access(callback: CallbackQuery, state: FSMContext):
-    await callback.message.answer(
-        "Напишіть, будь ласка, хто ви (ПІБ, посада), щоб адміністратор міг вас ідентифікувати."
-    )
-    await state.set_state(RegistrationStates.waiting_for_fio)
-    await callback.answer()
-
-@dp.message(RegistrationStates.waiting_for_fio)
-async def process_fio_input(message: Message, state: FSMContext):
-    fio = message.text
-    telegram_id = message.from_user.id
-    username = message.from_user.username or "без username"
-    
-    if not ADMIN_TELEGRAM_ID:
-        await message.answer("❌ Помилка: ADMIN_TELEGRAM_ID не налаштований. Зверніться напряму до адміністратора.")
-        await state.clear()
-        return
-
-    # Отправляем запрос админу
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="👑 Адмін", callback_data=f"approve_admin_{telegram_id}"),
-            InlineKeyboardButton(text="👤 Користувач", callback_data=f"approve_user_{telegram_id}"),
-        ],
-        [
-            InlineKeyboardButton(text="👁 Гість", callback_data=f"approve_guest_{telegram_id}"),
-            InlineKeyboardButton(text="❌ Відмовити", callback_data=f"reject_{telegram_id}")
-        ]
-    ])
-    try:
-        await bot.send_message(
-            chat_id=ADMIN_TELEGRAM_ID,
-            text=f"Запит на доступ від @{username} (ID: {telegram_id}).\nПовідомлення: {fio}",
-            reply_markup=keyboard
-        )
-        await message.answer("Ваш запит надіслано. Очікуйте рішення адміністратора.")
-    except Exception as e:
-        logger.error(f"Не вдалось надіслати повідомлення адміну: {e}")
-        await message.answer("❌ Помилка при надсиланні запиту адміністратору.")
-        
-    await state.clear()
-
-@dp.callback_query(F.data.startswith("approve_admin_") | F.data.startswith("approve_user_") | F.data.startswith("approve_guest_"))
-async def approve_user(callback: CallbackQuery):
-    parts = callback.data.split("_")
-    # approve_admin_ID, approve_user_ID, approve_guest_ID
-    role = parts[1]  # admin / user / guest
-    user_id = int(parts[2])
-    user_in_db = await Users.objects().where(Users.telegram_id == user_id).first().run()
-    
-    if user_in_db:
-        user_in_db.is_allowed = True
-        user_in_db.is_admin = (role == "admin")
-        user_in_db.is_guest = (role == "guest")
-        await user_in_db.save().run()
-        
-        role_labels = {"admin": "👑 Адмін", "user": "👤 Користувач", "guest": "👁 Гість"}
-        role_label = role_labels.get(role, role)
-        
-        await callback.message.edit_text(
-            f"{callback.message.text}\n\n✅ Доступ надано. Роль: {role_label}"
-        )
-        
-        try:
-            await bot.send_message(
-                chat_id=user_id,
-                text=f"🎉 Вам надано доступ ({role_label})! Тепер ви можете відкрити додаток /start"
-            )
-        except Exception as e:
-            logger.error(f"Не вдалось повідомити користувача {user_id}: {e}")
-    else:
-        await callback.answer("Користувача не знайдено в БД", show_alert=True)
-        
-@dp.callback_query(F.data.startswith("reject_"))
-async def reject_user(callback: CallbackQuery):
-    user_id = int(callback.data.split("_")[1])
-    await callback.message.edit_text(
-        f"{callback.message.text}\n\n❌ У доступі відмовлено."
-    )
-    try:
-        await bot.send_message(
-            chat_id=user_id,
-            text="❌ У доступі відмовлено."
-        )
-    except Exception as e:
-        logger.error(f"Не вдалось повідомити користувача {user_id}: {e}")
+        await message.answer("Вітаю! Я бот авторизації Eridon.\n\nЯкщо ви намагаєтесь увійти в систему, відправте мені 4-значний код з екрану.")
 
 import re
 
@@ -652,26 +521,23 @@ async def lifespan(app: FastAPI):
     logger.info(
         "Piccolo database engine initialized. Connections will be managed automatically."
     )
-    # Видаляємо вебхук якщо він був встановлений раніше
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Webhook removed, switching to polling mode.")
-    except Exception as e:
-        logger.info(f"Could not delete webhook: {e}")
-
-    # Запускаємо polling в фоновому завданні
-    polling_task = asyncio.create_task(dp.start_polling(bot))
-    logger.info("Telegram bot polling started.")
-
+    # Регистрируем webhook для бота если есть BACKEND_URL
+    if BACKEND_URL:
+        webhook_url = f"{BACKEND_URL}/webhook/bot"
+        try:
+            await bot.set_webhook(webhook_url)
+            logger.info(f"Telegram webhook registered: {webhook_url}")
+        except Exception as e:
+            logger.info(f"Failed to set webhook: {e}")
     yield
-
-    # Зупиняємо polling при завершенні
-    polling_task.cancel()
-    try:
-        await polling_task
-    except asyncio.CancelledError:
-        pass
-    logger.info("Telegram bot polling stopped.")
+    # Видаляем webhook при остановке
+    if BACKEND_URL:
+        try:
+            await bot.delete_webhook()
+            logger.info("Telegram webhook removed.")
+        except Exception:
+            pass
+    logger.info("Piccolo database engine shutdown. Connections are closed automatically.")
 
 
 
