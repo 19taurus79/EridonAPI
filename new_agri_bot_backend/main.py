@@ -506,16 +506,20 @@ async def handle_bot_start(message):
         user_in_db = await Users.objects().where(Users.telegram_id == telegram_id).first().run()
         
         if not user_in_db:
-            # Создаем нового пользователя
-            new_user = Users(
-                telegram_id=telegram_id,
-                username=message.from_user.username,
-                first_name=message.from_user.first_name,
-                last_name=message.from_user.last_name,
-                is_allowed=False,
-                is_guest=False
-            )
-            await new_user.save().run()
+            # Створюємо нового користувача
+            try:
+                new_user = Users(
+                    telegram_id=telegram_id,
+                    username=message.from_user.username,
+                    first_name=message.from_user.first_name,
+                    last_name=message.from_user.last_name,
+                    is_allowed=False,
+                    is_guest=False
+                )
+                await new_user.save().run()
+                logger.info(f"Новий користувач {telegram_id} зареєстрований в БД з is_allowed=False")
+            except Exception as e:
+                logger.error(f"Помилка збереження нового користувача {telegram_id}: {e}")
             
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="📨 Надіслати запит", callback_data="request_access")]
