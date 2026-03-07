@@ -652,23 +652,26 @@ async def lifespan(app: FastAPI):
     logger.info(
         "Piccolo database engine initialized. Connections will be managed automatically."
     )
-    # Регистрируем webhook для бота если есть BACKEND_URL
-    if BACKEND_URL:
-        webhook_url = f"{BACKEND_URL}/webhook/bot"
-        try:
-            await bot.set_webhook(webhook_url)
-            logger.info(f"Telegram webhook registered: {webhook_url}")
-        except Exception as e:
-            logger.info(f"Failed to set webhook: {e}")
+    # Видаляємо вебхук якщо він був встановлений раніше
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Webhook removed, switching to polling mode.")
+    except Exception as e:
+        logger.info(f"Could not delete webhook: {e}")
+
+    # Запускаємо polling в фоновому завданні
+    polling_task = asyncio.create_task(dp.start_polling(bot))
+    logger.info("Telegram bot polling started.")
+
     yield
-    # Удаляем webhook при остановке
-    if BACKEND_URL:
-        try:
-            await bot.delete_webhook()
-            logger.info("Telegram webhook removed.")
-        except Exception:
-            pass
-    logger.info("Piccolo database engine shutdown. Connections are closed automatically.")
+
+    # Зупиняємо polling при завершенні
+    polling_task.cancel()
+    try:
+        await polling_task
+    except asyncio.CancelledError:
+        pass
+    logger.info("Telegram bot polling stopped.")
 
 
 
