@@ -3,7 +3,7 @@ import hmac, hashlib, json, uuid
 from urllib.parse import parse_qsl
 from datetime import datetime, timezone, timedelta
 
-from fastapi import HTTPException, status, APIRouter, Header, Depends
+from fastapi import HTTPException, status, APIRouter, Header, Depends, Body
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
@@ -614,3 +614,16 @@ async def check_login_token(token: str):
         return {"status": "forbidden"}
 
     return {"status": "pending"}
+
+class ConfirmTokenRequest(BaseModel):
+    token: str
+    telegram_id: int
+
+@router.post("/auth/confirm-login-token", summary="Підтвердження токену від телеграм-бота")
+async def api_confirm_login_token(req: ConfirmTokenRequest):
+    """
+    Ендпоінт для окремого бота, щоб підтвердити 4-значний код або weblogin_token.
+    Бот відправляє сюди токен та telegram_id. 
+    """
+    success = await confirm_login_token(req.token, req.telegram_id)
+    return {"success": success}
