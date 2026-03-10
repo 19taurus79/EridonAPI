@@ -97,30 +97,26 @@ def check_telegram_auth(init_data: str) -> dict:
     Проверяет init_data, полученные от Telegram Mini App,
     строго следуя предоставленному алгоритму двухэтапного HMAC-SHA256.
     """
-    if not TELEGRAM_BOT_TOKEN:
+    dev_mode = os.getenv("DEV_MODE", "false").lower() == "true"
+
+    if not TELEGRAM_BOT_TOKEN and not dev_mode:
         raise RuntimeError(
             "TELEGRAM_BOT_TOKEN не установлен. Проверьте config.py или переменные окружения."
         )
 
-    # logger.info("\n--- НАЧАЛО ДЕТАЛЬНОЙ ОТЛАДКИ check_telegram_auth ---")
-    # logger.info(f"1. Получена init_data: '{init_data}'")
-    # logger.info(f"2. Длина init_data: {len(init_data)}")
-    # logger.info(
-    #     f"3. TELEGRAM_BOT_TOKEN (обрезан): '{TELEGRAM_BOT_TOKEN[:5]}...{TELEGRAM_BOT_TOKEN[-5:]}'"
-    # )
-    # logger.info(f"4. Длина TELEGRAM_BOT_TOKEN: {len(TELEGRAM_BOT_TOKEN)}")
-
     parsed = dict(parse_qsl(init_data))
     hash_ = parsed.pop("hash", None)
-    if not hash_:
+
+    if not hash_ and not dev_mode:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Отсутствует 'hash' в данных инициализации Telegram.",
         )
 
-    # logger.info(f"5. Извлечен 'hash_': '{hash_}'")
-    # logger.info(f"6. Распарсенные данные (после удаления 'hash'): {parsed}")
-    # logger.info(f"7. Количество полей для проверки: {len(parsed)}")
+    # В DEV_MODE пропускаем проверку подписи
+    if dev_mode:
+        logger.info("[DEV_MODE] Пропускаем проверку подписи initData")
+        return parsed
 
     sorted_items = sorted(parsed.items())
     data_check_string_parts = []
@@ -130,30 +126,17 @@ def check_telegram_auth(init_data: str) -> dict:
 
     data_check_string = "\n".join(data_check_string_parts)
 
-    # logger.info(f"8. Сформированная data_check_string (длина {len(data_check_string)}):")
-    # logger.info("--- НАЧАЛО data_check_string ---")
-    # logger.info(data_check_string)
-    # logger.info("--- КОНЕЦ data_check_string ---")
-
     secret_key_intermediate = hmac.new(
         key=b"WebAppData",
         msg=TELEGRAM_BOT_TOKEN.encode("utf-8"),
         digestmod=hashlib.sha256,
     ).digest()
 
-    # logger.info(
-    #     f"9. Промежуточный секретный ключ (HMAC(WebAppData, bot_token)) (hex): {secret_key_intermediate.hex()}"
-    # )
-
     calculated_hash = hmac.new(
         key=secret_key_intermediate,
         msg=data_check_string.encode("utf-8"),
         digestmod=hashlib.sha256,
     ).hexdigest()
-
-    # logger.info(f"10. Вычисленный финальный хэш: '{calculated_hash}'")
-    # logger.info(f"11. Хэши совпадают? (Calculated == Received) : {calculated_hash == hash_}")
-    # logger.info("--- КОНЕЦ ДЕТАЛЬНОЙ ОТЛАДКИ check_telegram_auth ---\n")
 
     if calculated_hash != hash_:
         raise HTTPException(
