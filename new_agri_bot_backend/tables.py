@@ -321,7 +321,7 @@ class DeliveryItems(Table):
 
 class OrderComments(Table):
     comment_type = Varchar(length=10)
-    order_ref = Varchar(length=50)
+    order_ref = Varchar(length=255, index=True)
     product_id = UUID()
     product_name = Varchar(length=255)
     comment_text = Text()
