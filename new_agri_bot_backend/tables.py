@@ -55,7 +55,7 @@ class Remains(Table):
     skl = DoublePrecision()
     weight = Varchar(null=True)
     storage = DoublePrecision()
-    product = ForeignKey(references=ProductGuide)
+    product = ForeignKey(references=ProductGuide, index=True)
 
 
 class Submissions(Table):
@@ -63,8 +63,8 @@ class Submissions(Table):
     division = Varchar(null=True)
     manager = Varchar(null=True)
     company_group = Varchar(null=True)
-    client = Varchar(null=True)
-    contract_supplement = Varchar(null=True)
+    client = Varchar(null=True, index=True)
+    contract_supplement = Varchar(null=True, index=True)
     parent_element = Varchar(null=True)
     manufacturer = Varchar(null=True)
     active_ingredient = Varchar(null=True)
@@ -81,7 +81,7 @@ class Submissions(Table):
     plan = DoublePrecision()
     fact = DoublePrecision()
     different = DoublePrecision()
-    product = ForeignKey(references=ProductGuide)
+    product = ForeignKey(references=ProductGuide, index=True)
 
 
 class AvailableStock(Table):
@@ -92,12 +92,12 @@ class AvailableStock(Table):
     division = Varchar(null=True)
     line_of_business = Varchar(null=True)
     available = DoublePrecision()
-    product = ForeignKey(references=ProductGuide)
+    product = ForeignKey(references=ProductGuide, index=True)
 
 
 class ProductUnderSubmissions(Table):
     id = UUID(primary_key=True)
-    product = ForeignKey(references=ProductGuide)
+    product = ForeignKey(references=ProductGuide, index=True)
     quantity = DoublePrecision()
 
 
@@ -112,7 +112,7 @@ class MovedData(Table):
     party_sign = Varchar()
     period = Varchar()
     order = Varchar()
-    product_id = Varchar()
+    product_id = Varchar(index=True)
     is_active = Boolean(default=True)
 
 
@@ -255,7 +255,7 @@ class Tasks(Table):
 
 class FreeStock(Table):
     id = UUID(primary_key=True)
-    product = ForeignKey(references=ProductGuide)
+    product = ForeignKey(references=ProductGuide, index=True)
     division = Varchar()
     warehouse = Varchar()
     date_in_co = Varchar()
@@ -267,11 +267,11 @@ class FreeStock(Table):
 
 class AddressGuide(Table):
     id = Varchar(primary_key=True)
-    level_1_id = ForeignKey(references="AddressGuide")  # Область
-    level_2_id = ForeignKey(references="AddressGuide")  # Район
-    level_3_id = ForeignKey(references="AddressGuide")  # Громада
-    level_4_id = ForeignKey(references="AddressGuide")  # Населенный пункт
-    level_5_id = ForeignKey(references="AddressGuide")  # Район города
+    level_1_id = ForeignKey(references="self", null=True)  # Область
+    level_2_id = ForeignKey(references="self", null=True)  # Район
+    level_3_id = ForeignKey(references="self", null=True)  # Громада
+    level_4_id = ForeignKey(references="self", null=True)  # Населенный пункт
+    level_5_id = ForeignKey(references="self", null=True)  # Район города
     category = Varchar()  # O, K, P, H, M, X, C, B
     name = Varchar()
 
@@ -311,7 +311,7 @@ class Deliveries(Table):
 
 # Таблица товаров в доставке
 class DeliveryItems(Table):
-    delivery = ForeignKey(references=Deliveries, on_delete=OnDelete.cascade)
+    delivery = ForeignKey(references=Deliveries, on_delete=OnDelete.cascade, index=True)
     order_ref = Varchar(length=255, null=True)
     product = Varchar(length=255)
     quantity = Real()
@@ -342,7 +342,7 @@ class OrderChatMessage(Table):
     created_at = Timestamptz(auto_now_add=True)
     updated_at = Timestamptz(auto_now=True)
     is_edited = Boolean(default=False)
-    reply_to_message_id = ForeignKey(references="self", on_delete="SET NULL", null=True)
+    reply_to_message_id = ForeignKey(references="self", on_delete=OnDelete.set_null, null=True)
 
     @classmethod
     def get_readable(cls):
