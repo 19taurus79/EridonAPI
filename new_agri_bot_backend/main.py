@@ -1822,29 +1822,46 @@ async def create_comment(
         )
 
 
-@app.get(
+@app.api_route(
     "/orders/comments/list",
+    methods=["GET", "POST"],
     response_model=List[CommentResponse],
     summary="Отримати коментарі",
-    description="Отримує всі коментарі для вказаної заявки",
+    description="Отримує всі коментарі для вказаної заявки (GET через query або POST через JSON body)",
 )
 async def get_comments(
-    order_ref: List[str] = Query(..., description="Номер заявки (можна передати список)")
-    # user: dict = Depends(get_current_telegram_user)
+    request: Request,
+    order_ref: Optional[List[str]] = Query(None, description="Номер заявки (для GET)"),
 ):
     """
-    Отримання всіх коментарів для заявки або списку заявок
+    Отримання всіх коментарів для заявки або списку заявок.
+    Підтримує GET з параметрами в URL та POST з JSON списком ["ID1", "ID2", ...].
     """
+    refs = order_ref or []
 
-    if not order_ref:
+    if request.method == "POST":
+        try:
+            body = await request.json()
+            if isinstance(body, list):
+                refs = body
+            elif isinstance(body, dict) and "order_ref" in body:
+                refs = body["order_ref"]
+                if not isinstance(refs, list):
+                    refs = [refs]
+        except Exception:
+            pass
+
+    if not refs:
         return []
 
     comments = (
         await OrderComments.select()
-        .where(OrderComments.order_ref.is_in(order_ref))
+        .where(OrderComments.order_ref.is_in(refs))
         .order_by(OrderComments.created_at, ascending=False)
         .run()
     )
+
+    return comments
 
     return comments
 

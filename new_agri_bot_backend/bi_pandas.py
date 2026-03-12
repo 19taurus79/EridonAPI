@@ -93,14 +93,17 @@ async def combined_pandas_endpoint(
 
     filtered_product_names = list(set(item["product"] for item in demand_data))
 
-    # Запрос 3: Общие остатки по ВСЕМ товарам.
-    # Фильтрация будет происходить позже на стороне Pandas.
+    # Запрос 3: Общие остатки только для нужных товаров (тех, на которые есть спрос).
+    # Это значительно ускоряет обработку на реальных данных.
     remains_data = (
         await Remains.select(
             Remains.product.product.as_alias("product"),
             Sum(Remains.buh).as_alias("qty_remain"),
         )
-        .where(Remains.buh > 0)
+        .where(
+            (Remains.buh > 0) &
+            (Remains.product.product.is_in(filtered_product_names))
+        )
         .group_by(Remains.product.product)
         .run()
     )
