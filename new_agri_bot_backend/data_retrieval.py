@@ -35,7 +35,7 @@ from .tables import (
     Events,
 )
 from .telegram_auth import get_current_telegram_user, check_not_guest
-from .test import (
+from .tasks_handler import (
     get_all_tasks,
     create_task,
     get_task_by_id,
