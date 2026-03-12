@@ -444,58 +444,48 @@ async def get_id_in_remains(party: str):
 
 
 def group_products_with_parties(items):
-    grouped = defaultdict(
-        lambda: {
-            "id": None,
-            "nomenclature": None,
-            "party_sign": None,
-            "buying_season": None,
-            "different": None,
-            "client": None,
-            "contract_supplement": None,
-            "manager": None,
-            "product": None,
-            "orders_q": None,
-            "buh": 0.0,
-            "skl": 0.0,
-            "qok": None,
-            "parties": [],
-        }
-    )
+    grouped = {}
 
     for item in items:
         product_uuid = item["product"]
-        group = grouped[product_uuid]
+        contract_supplement = item.get("contract_supplement")
+        
+        # Ключ групування: товар + доповнення (замовлення)
+        # Це важливо при пакетному запиті декількох замовлень
+        group_key = (product_uuid, contract_supplement)
 
-        # Инициализация данных в группе, если не инициализирована
-        if group["product"] is None:
-            group["id"] = str(item.get("id")) if item.get("id") else None
-            group["nomenclature"] = item.get("nomenclature")
-            group["party_sign"] = item.get("party_sign")
-            group["buying_season"] = item.get("buying_season")
-            group["different"] = (
-                float(item.get("different"))
-                if item.get("different") is not None
-                else None
-            )
-            group["client"] = item.get("client")
-            group["contract_supplement"] = item.get("contract_supplement")
-            group["manager"] = item.get("manager")
-            group["product"] = str(product_uuid)
-            group["orders_q"] = (
-                float(item.get("orders_q"))
-                if item.get("orders_q") is not None
-                else None
-            )
-            group["qok"] = str(item.get("qok"))
+        if group_key not in grouped:
+            grouped[group_key] = {
+                "id": str(item.get("id")) if item.get("id") else None,
+                "nomenclature": item.get("nomenclature"),
+                "party_sign": item.get("party_sign"),
+                "buying_season": item.get("buying_season"),
+                "different": 0.0,
+                "client": item.get("client"),
+                "contract_supplement": contract_supplement,
+                "manager": item.get("manager"),
+                "product": str(product_uuid),
+                "orders_q": 0.0,
+                "buh": 0.0,
+                "skl": 0.0,
+                "qok": str(item.get("qok")),
+                "parties": [],
+            }
 
-        # Суммируем buh и skl по всем строкам группы (всі партії)
+        group = grouped[group_key]
+
+        # Сумуємо всі кількісні показники
+        diff_val = item.get("different")
+        ord_val = item.get("orders_q")
         buh_val = item.get("buh")
         skl_val = item.get("skl")
+        
+        group["different"] += float(diff_val) if diff_val is not None else 0.0
+        group["orders_q"] += float(ord_val) if ord_val is not None else 0.0
         group["buh"] += float(buh_val) if buh_val is not None else 0.0
         group["skl"] += float(skl_val) if skl_val is not None else 0.0
 
-        # Добавляем партию
+        # Додаємо партію
         party_data = {
             "moved_q": (
                 float(item.get("moved_q")) if item.get("moved_q") is not None else 0
@@ -504,14 +494,19 @@ def group_products_with_parties(items):
         }
         group["parties"].append(party_data)
 
-    # Возвращаем именно список словарей (без product в качестве ключа)
     return list(grouped.values())
 
 
 @router.get("/details_for_orders/{order}")
 async def get_details_for_order(order: str):
+    # Підтримка списку замовлень через кому: "ID1,ID2,ID3"
+    order_list = [o.strip() for o in order.split(",") if o.strip()]
+    
+    if not order_list:
+        return []
+
     data = await DetailsForOrders.select().where(
-        DetailsForOrders.contract_supplement == order
+        DetailsForOrders.contract_supplement.is_in(order_list)
     )
     result = group_products_with_parties(data)
 
@@ -519,6 +514,7 @@ async def get_details_for_order(order: str):
     # без фільтрації по партії — це дає суму по всіх партіях
     product_ids = [item["product"] for item in result if item.get("product")]
     if product_ids:
+        # 1. Оновлюємо бухоблікові залишки
         remains_totals = (
             await Remains.select(
                 Remains.product.as_alias("product_id"),
@@ -529,16 +525,70 @@ async def get_details_for_order(order: str):
             .group_by(Remains.product)
             .run()
         )
-        # Будуємо словник product_id -> totals
-        totals_map = {
-            str(r["product_id"]): r for r in remains_totals
+        totals_map = {str(r["product_id"]): r for r in remains_totals}
+
+        # 2. Оновлюємо "Потребу" (orders_q) - розраховуємо ЗАГАЛЬНУ потребу по всіх АКТИВНИХ заявках
+        # Рахуємо все, що не скасовано, не відхилено і НЕ "створено менеджером" (на прохання користувача)
+        
+        # Визначаємо статус "створено менеджером" для фільтрації
+        draft_status = "створено менеджером"
+        
+        submissions_data = (
+            await Submissions.select(
+                Submissions.product.as_alias("product_id"),
+                Sum(Submissions.different).as_alias("total_demand")
+            )
+            .where(
+                (Submissions.product.is_in(product_ids)) &
+                (Submissions.document_status.not_like("%скас%")) & # Не скасовано
+                (Submissions.document_status.not_like("%відх%")) & # Не відхилено
+                (Submissions.document_status != draft_status) & # Виключаємо "створено менеджером" із суми
+                (Submissions.different > 0)
+            )
+            .group_by(Submissions.product)
+            .run()
+        )
+        # Мапа product_id -> total_demand
+        demand_map = {
+            str(s["product_id"]): float(s["total_demand"] or 0)
+            for s in submissions_data
         }
-        # Перезаписуємо buh/skl загальними значеннями
+
+        # 3. Перевіряємо наявність статусу "створено менеджером" для підсвічування в UI
+        # Тепер робимо це точково: для конкретного товару в конкретній заявці
+        drafts_data = (
+            await Submissions.select(
+                Submissions.product.as_alias("product_id"),
+                Submissions.contract_supplement.as_alias("contract")
+            )
+            .where(
+                (Submissions.product.is_in(product_ids)) &
+                (Submissions.document_status == draft_status) &
+                (Submissions.different > 0)
+            )
+            .run()
+        )
+        # Набір пар (contract, product_id) де є чернетки
+        draft_pairs = {
+            (str(d["contract"]), str(d["product_id"]))
+            for d in drafts_data
+        }
+
+        # Перезаписуємо значення в результаті
         for item in result:
             pid = str(item.get("product", ""))
+            contract = str(item.get("contract_supplement", ""))
+            
+            # Залишки (загальні по товару)
             if pid in totals_map:
                 item["buh"] = float(totals_map[pid]["total_buh"] or 0)
                 item["skl"] = float(totals_map[pid]["total_skl"] or 0)
+            
+            # Потреба (загальна по всіх замовленнях, без врахування чернеток)
+            item["orders_q"] = demand_map.get(pid, 0.0)
+            
+            # Підсвітка чернетки - тепер ТІЛЬКИ для цієї конкретної заявки
+            item["has_draft"] = (contract, pid) in draft_pairs
 
     return result
 

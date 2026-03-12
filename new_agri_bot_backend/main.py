@@ -1829,25 +1829,19 @@ async def create_comment(
     description="Отримує всі коментарі для вказаної заявки",
 )
 async def get_comments(
-    order_ref: str = Query(..., description="Номер заявки"),
+    order_ref: List[str] = Query(..., description="Номер заявки (можна передати список)")
     # user: dict = Depends(get_current_telegram_user)
 ):
     """
-    Отримання всіх коментарів для заявки
-
-    - **order_ref**: Номер заявки
-
-    Повертає список коментарів, відсортованих за датою створення (найновіші спочатку)
+    Отримання всіх коментарів для заявки або списку заявок
     """
 
-    if not order_ref or not order_ref.strip():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="order_ref обов'язковий параметр",
-        )
+    if not order_ref:
+        return []
+
     comments = (
         await OrderComments.select()
-        .where(OrderComments.order_ref == order_ref)
+        .where(OrderComments.order_ref.is_in(order_ref))
         .order_by(OrderComments.created_at, ascending=False)
         .run()
     )
