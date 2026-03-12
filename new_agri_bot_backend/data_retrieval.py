@@ -497,6 +497,96 @@ def group_products_with_parties(items):
     return list(grouped.values())
 
 
+@router.post("/details_for_orders/batch")
+async def get_details_for_orders_batch(order_list: List[str]):
+    """
+    Пакетне отримання деталей замовлень через POST (для обходу лімітів URL).
+    """
+    if not order_list:
+        return []
+
+    data = await DetailsForOrders.select().where(
+        DetailsForOrders.contract_supplement.is_in(order_list)
+    )
+    result = group_products_with_parties(data)
+    
+    # Решта логіки така ж, як у GET версії
+    return await _process_details_result(result)
+
+
+async def _process_details_result(result):
+    product_ids = [item["product"] for item in result if item.get("product")]
+    if not product_ids:
+        return result
+
+    # 1. Оновлюємо бухоблікові залишки
+    remains_totals = (
+        await Remains.select(
+            Remains.product.as_alias("product_id"),
+            Sum(Remains.buh).as_alias("total_buh"),
+            Sum(Remains.skl).as_alias("total_skl"),
+        )
+        .where(Remains.product.is_in(product_ids))
+        .group_by(Remains.product)
+        .run()
+    )
+    totals_map = {str(r["product_id"]): r for r in remains_totals}
+
+    # 2. Оновлюємо "Потребу" (orders_q)
+    draft_status = "створено менеджером"
+    submissions_data = (
+        await Submissions.select(
+            Submissions.product.as_alias("product_id"),
+            Sum(Submissions.different).as_alias("total_demand")
+        )
+        .where(
+            (Submissions.product.is_in(product_ids)) &
+            (Submissions.document_status.not_like("%скас%")) &
+            (Submissions.document_status.not_like("%відх%")) &
+            (Submissions.document_status != draft_status) &
+            (Submissions.different > 0)
+        )
+        .group_by(Submissions.product)
+        .run()
+    )
+    demand_map = {
+        str(s["product_id"]): float(s["total_demand"] or 0)
+        for s in submissions_data
+    }
+
+    # 3. Перевіряємо наявність статусу "створено менеджером"
+    drafts_data = (
+        await Submissions.select(
+            Submissions.product.as_alias("product_id"),
+            Submissions.contract_supplement.as_alias("contract")
+        )
+        .where(
+            (Submissions.product.is_in(product_ids)) &
+            (Submissions.document_status == draft_status) &
+            (Submissions.different > 0)
+        )
+        .run()
+    )
+    draft_pairs = {
+        (str(d["contract"]), str(d["product_id"]))
+        for d in drafts_data
+    }
+
+    # Перезаписуємо значення в результаті
+    for item in result:
+        pid = str(item.get("product", ""))
+        contract = str(item.get("contract_supplement", ""))
+        
+        if pid in totals_map:
+            item["buh"] = float(totals_map[pid]["total_buh"] or 0)
+            item["skl"] = float(totals_map[pid]["total_skl"] or 0)
+        
+        item["orders_q"] = demand_map.get(pid, 0.0)
+        item["has_draft"] = (contract, pid) in draft_pairs
+
+    return result
+
+
 @router.get("/details_for_orders/{order}")
 async def get_details_for_order(order: str):
     # Підтримка списку замовлень через кому: "ID1,ID2,ID3"
@@ -510,87 +600,7 @@ async def get_details_for_order(order: str):
     )
     result = group_products_with_parties(data)
 
-    # Отримуємо загальні залишки (buh/skl) з таблиці Remains по product_id
-    # без фільтрації по партії — це дає суму по всіх партіях
-    product_ids = [item["product"] for item in result if item.get("product")]
-    if product_ids:
-        # 1. Оновлюємо бухоблікові залишки
-        remains_totals = (
-            await Remains.select(
-                Remains.product.as_alias("product_id"),
-                Sum(Remains.buh).as_alias("total_buh"),
-                Sum(Remains.skl).as_alias("total_skl"),
-            )
-            .where(Remains.product.is_in(product_ids))
-            .group_by(Remains.product)
-            .run()
-        )
-        totals_map = {str(r["product_id"]): r for r in remains_totals}
-
-        # 2. Оновлюємо "Потребу" (orders_q) - розраховуємо ЗАГАЛЬНУ потребу по всіх АКТИВНИХ заявках
-        # Рахуємо все, що не скасовано, не відхилено і НЕ "створено менеджером" (на прохання користувача)
-        
-        # Визначаємо статус "створено менеджером" для фільтрації
-        draft_status = "створено менеджером"
-        
-        submissions_data = (
-            await Submissions.select(
-                Submissions.product.as_alias("product_id"),
-                Sum(Submissions.different).as_alias("total_demand")
-            )
-            .where(
-                (Submissions.product.is_in(product_ids)) &
-                (Submissions.document_status.not_like("%скас%")) & # Не скасовано
-                (Submissions.document_status.not_like("%відх%")) & # Не відхилено
-                (Submissions.document_status != draft_status) & # Виключаємо "створено менеджером" із суми
-                (Submissions.different > 0)
-            )
-            .group_by(Submissions.product)
-            .run()
-        )
-        # Мапа product_id -> total_demand
-        demand_map = {
-            str(s["product_id"]): float(s["total_demand"] or 0)
-            for s in submissions_data
-        }
-
-        # 3. Перевіряємо наявність статусу "створено менеджером" для підсвічування в UI
-        # Тепер робимо це точково: для конкретного товару в конкретній заявці
-        drafts_data = (
-            await Submissions.select(
-                Submissions.product.as_alias("product_id"),
-                Submissions.contract_supplement.as_alias("contract")
-            )
-            .where(
-                (Submissions.product.is_in(product_ids)) &
-                (Submissions.document_status == draft_status) &
-                (Submissions.different > 0)
-            )
-            .run()
-        )
-        # Набір пар (contract, product_id) де є чернетки
-        draft_pairs = {
-            (str(d["contract"]), str(d["product_id"]))
-            for d in drafts_data
-        }
-
-        # Перезаписуємо значення в результаті
-        for item in result:
-            pid = str(item.get("product", ""))
-            contract = str(item.get("contract_supplement", ""))
-            
-            # Залишки (загальні по товару)
-            if pid in totals_map:
-                item["buh"] = float(totals_map[pid]["total_buh"] or 0)
-                item["skl"] = float(totals_map[pid]["total_skl"] or 0)
-            
-            # Потреба (загальна по всіх замовленнях, без врахування чернеток)
-            item["orders_q"] = demand_map.get(pid, 0.0)
-            
-            # Підсвітка чернетки - тепер ТІЛЬКИ для цієї конкретної заявки
-            item["has_draft"] = (contract, pid) in draft_pairs
-
-    return result
+    return await _process_details_result(result)
 
 
 def clean_df_encoding(df: pd.DataFrame) -> pd.DataFrame:
