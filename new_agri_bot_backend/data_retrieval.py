@@ -460,7 +460,7 @@ def group_products_with_parties(items):
                 "nomenclature": item.get("nomenclature"),
                 "party_sign": item.get("party_sign"),
                 "buying_season": item.get("buying_season"),
-                "different": 0.0,
+                "different": float(item.get("different") or 0.0), # Беремо один раз
                 "client": item.get("client"),
                 "contract_supplement": contract_supplement,
                 "manager": item.get("manager"),
@@ -474,13 +474,12 @@ def group_products_with_parties(items):
 
         group = grouped[group_key]
 
-        # Сумуємо всі кількісні показники
-        diff_val = item.get("different")
+        # Сумуємо тільки вільні та бухоблікові показники (вони потім перезаписуються, але для чистоти)
+        # А головне - ми НЕ сумуємо 'different' тут!
         ord_val = item.get("orders_q")
         buh_val = item.get("buh")
         skl_val = item.get("skl")
         
-        group["different"] += float(diff_val) if diff_val is not None else 0.0
         group["orders_q"] += float(ord_val) if ord_val is not None else 0.0
         group["buh"] += float(buh_val) if buh_val is not None else 0.0
         group["skl"] += float(skl_val) if skl_val is not None else 0.0
