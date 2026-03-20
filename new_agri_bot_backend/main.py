@@ -76,6 +76,7 @@ from .bi import router as bi_router
 from .bi_pandas import router as bi_pandas_router
 from .order_chat import router as chat_router
 from .notification import router as notification_router
+from .scheduler import setup_scheduler
 from .utils import send_message_to_managers, create_composite_key_from_dict
 
 # Импорт TELEGRAM_BOT_TOKEN из config.py для инициализации бота
@@ -521,6 +522,8 @@ async def lifespan(app: FastAPI):
     logger.info(
         "Piccolo database engine initialized. Connections will be managed automatically."
     )
+    # Ініціалізація планувальника повідомлень
+    setup_scheduler()
     # Регистрируем webhook для бота если есть BACKEND_URL
     if BACKEND_URL:
         webhook_url = f"{BACKEND_URL}/webhook/bot"
