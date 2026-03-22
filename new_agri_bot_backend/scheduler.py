@@ -59,12 +59,12 @@ async def send_event_summary(subset="all", day="today"):
 scheduler = AsyncIOScheduler(timezone=KIEV_TZ)
 
 def setup_scheduler():
-    # 9:30 - Всі події на сьогодні
-    scheduler.add_job(send_event_summary, 'cron', hour=9, minute=30, args=["all", "today"])
-    # 15:00 - Незакриті події на сьогодні
-    scheduler.add_job(send_event_summary, 'cron', hour=15, minute=0, args=["unclosed", "today"])
-    # 17:00 - Події на завтра
-    scheduler.add_job(send_event_summary, 'cron', hour=17, minute=0, args=["all", "tomorrow"])
+    # 9:30 - Всі події на сьогодні (Пн-Пт)
+    scheduler.add_job(send_event_summary, 'cron', day_of_week='mon-fri', hour=9, minute=30, args=["all", "today"])
+    # 15:00 - Незакриті події на сьогодні (Пн-Пт)
+    scheduler.add_job(send_event_summary, 'cron', day_of_week='mon-fri', hour=15, minute=0, args=["unclosed", "today"])
+    # 17:00 - Події на завтра (Пн-Чт для наступного робочого дня)
+    scheduler.add_job(send_event_summary, 'cron', day_of_week='mon-fri', hour=17, minute=0, args=["all", "tomorrow"])
     
     scheduler.start()
     logger.info("Scheduler started with jobs at 9:30, 15:00, 17:00 (Kiev time)")
