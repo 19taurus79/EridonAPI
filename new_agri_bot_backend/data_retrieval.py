@@ -543,6 +543,7 @@ async def _process_details_result(result):
             (Submissions.document_status.not_like("%скас%")) &
             (Submissions.document_status.not_like("%відх%")) &
             (Submissions.document_status != draft_status) &
+            (Submissions.document_status != "до розгляду") &
             (Submissions.different > 0)
         )
         .group_by(Submissions.product)
@@ -561,7 +562,7 @@ async def _process_details_result(result):
         )
         .where(
             (Submissions.product.is_in(product_ids)) &
-            (Submissions.document_status == draft_status) &
+            ((Submissions.document_status == draft_status) | (Submissions.document_status == "до розгляду")) &
             (Submissions.different > 0)
         )
         .run()
