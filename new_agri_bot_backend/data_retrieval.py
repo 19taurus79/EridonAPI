@@ -93,11 +93,11 @@ async def get_remains_by_product(
 
 
 @router.get(
-    "/remains_by_product/{product}", summary="Отримати залишки за конкретним продуктом"
+    "/remains_by_product", summary="Отримати залишки за конкретним продуктом"
 )
 async def get_remains_by_product(
-    product: str,
-):  # Використовуємо product_id для ясності
+    product: str = Query(..., description="Назва продукту"),
+):
 
     product_id = (
         await ProductGuide.select(ProductGuide.id)
@@ -272,8 +272,8 @@ async def get_product_on_warehouse(
     return product
 
 
-@router.get("/orders/{client}")
-async def get_orders(client):
+@router.get("/orders")
+async def get_orders(client: str = Query(...)):
     orders = (
         await Submissions.select()
         .where((Submissions.client == client) & (Submissions.different > 0))
@@ -282,8 +282,8 @@ async def get_orders(client):
     return orders
 
 
-@router.get("/contracts/{client}")
-async def get_contracts(client):
+@router.get("/contracts")
+async def get_contracts(client: str = Query(...)):
     client_from_guide = await ClientManagerGuide.select(
         ClientManagerGuide.client
     ).where(ClientManagerGuide.id == int(client))
@@ -331,8 +331,8 @@ async def get_contract_detail(contract):
     return detail
 
 
-@router.get("/sum_order_by_product/{product}")
-async def get_sum_order_products(product):
+@router.get("/sum_order_by_product")
+async def get_sum_order_products(product: str = Query(...)):
     # data = (
     #     await Submissions.select()
     #     .where(
@@ -360,8 +360,8 @@ async def get_sum_order_products(product):
     return total_sum
 
 
-@router.get("/order_by_product/{product}")
-async def get_sum_order_products(product):
+@router.get("/order_by_product")
+async def get_sum_order_products(product: str = Query(...)):
     data = (
         await Submissions.select()
         .where(
@@ -623,8 +623,8 @@ def clean_df_encoding(df: pd.DataFrame) -> pd.DataFrame:
     return df_copy
 
 
-@router.get("/moved_products/{product_id}")
-async def get_moved_products(product_id: str):
+@router.get("/moved_products")
+async def get_moved_products(product_id: str = Query(...)):
     orders = (
         await Submissions.select()
         .where((Submissions.product == product_id) & (Submissions.different > 0))
