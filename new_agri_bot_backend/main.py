@@ -133,6 +133,7 @@ class DeliveryRequest(BaseModel):
     longitude: float
     total_weight: float
     orders: List[DeliveryOrder]
+    override_created_by: Optional[int] = None  # Перевизначає автора (для розділення доставки адміном)
 
 
 class UpdateParty(BaseModel):
@@ -1464,7 +1465,7 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
             await Events.insert(
                 Events(
                     event_id=calendar["id"],
-                    event_creator=telegram_id,
+                    event_creator=data.override_created_by if data.override_created_by else telegram_id,
                     event_creator_name=data.manager,
                     event_status=0,
                     start_event=date,
@@ -1489,7 +1490,7 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
                 latitude=data.latitude,
                 longitude=data.longitude,
                 total_weight=data.total_weight,
-                created_by=telegram_id,
+                created_by=data.override_created_by if data.override_created_by else telegram_id,
                 calendar_id=calendar["id"],
             )
             await new_delivery.save().run()
@@ -1646,6 +1647,21 @@ async def update_delivery(data: UpdateDeliveryRequest):
                     )
                     changed_color_calendar_events_by_id(id=delivery_data.calendar_id,status=1)
                     await Events.update({Events.event_status: 1}).where(Events.event_id == delivery_data.calendar_id).run()
+                elif data.status == 'Доставка з ЦО на клієнта':
+                    items_text = "\n".join([f"• {item.nomenclature}: <b>{item.quantity}</b>" for item in data.items])
+                    await bot.send_message(
+                        chat_id=delivery_data.created_by,
+                        text=(
+                            f"🏢 <b>Доставка з ЦО на клієнта</b>\n\n"
+                            f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
+                            f"📦 Товари:\n{items_text}\n\n"
+                            f"<i>Створено заявку на доставку з ЦО напряму клієнту.</i>\n"),
+                        parse_mode="HTML",
+                    )
+                    changed_color_calendar_events_by_id(id=delivery_data.calendar_id, status=1)
+                    await Events.update({Events.event_status: 1}).where(Events.event_id == delivery_data.calendar_id).run()
+
+
 
             logger.info(
                 f"✅ Статус доставки ID: {data.delivery_id} оновлено на '{data.status}'."
