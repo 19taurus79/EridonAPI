@@ -333,15 +333,6 @@ async def get_contract_detail(contract):
 
 @router.get("/sum_order_by_product")
 async def get_sum_order_products(product: str = Query(...)):
-    # data = (
-    #     await Submissions.select()
-    #     .where(
-    #         (Submissions.product == product)
-    #         & (Submissions.different > 0)
-    #         & (Submissions.document_status == "затверджено")
-    #     )
-    #     .run()
-    # )
     total_sum = (
         await Submissions.select(
             Submissions.product.as_alias("product_id"),
@@ -358,6 +349,44 @@ async def get_sum_order_products(product: str = Query(...)):
     if total_sum == []:
         total_sum = [{"product_id": product, "total_orders": 0}]
     return total_sum
+
+
+@router.get("/sum_orders_tiers_by_product", summary="Потреба по двох рівнях пріоритету")
+async def get_sum_orders_tiers_by_product(product: str = Query(...)):
+    """
+    Повертає сумарну потребу по товару у двох рівнях:
+    - Tier 1 (orders_q):                   статус 'затверджено'
+    - Tier 2 (orders_q_product_confirmed): статус 'продукція затверджена'
+    - orders_q_total:                      сума обох рівнів
+    """
+    # Tier 1
+    t1 = (
+        await Submissions.select(Sum(Submissions.different).as_alias("q"))
+        .where(
+            (Submissions.product == product)
+            & (Submissions.different > 0)
+            & (Submissions.document_status == "затверджено")
+        )
+        .run()
+    )
+    # Tier 2
+    t2 = (
+        await Submissions.select(Sum(Submissions.different).as_alias("q"))
+        .where(
+            (Submissions.product == product)
+            & (Submissions.different > 0)
+            & (Submissions.document_status == "продукція затверджена")
+        )
+        .run()
+    )
+    orders_q = float(t1[0]["q"] or 0) if t1 else 0.0
+    orders_q_product_confirmed = float(t2[0]["q"] or 0) if t2 else 0.0
+    return {
+        "product_id": product,
+        "orders_q": orders_q,
+        "orders_q_product_confirmed": orders_q_product_confirmed,
+        "orders_q_total": orders_q + orders_q_product_confirmed,
+    }
 
 
 @router.get("/order_by_product")
@@ -518,7 +547,7 @@ async def _process_details_result(result):
     if not product_ids:
         return result
 
-    # 1. Оновлюємо бухоблікові залишки
+    # 1. Оновлюємо бухоблікові залишки (сума по всім складам і партіям)
     remains_totals = (
         await Remains.select(
             Remains.product.as_alias("product_id"),
@@ -531,30 +560,46 @@ async def _process_details_result(result):
     )
     totals_map = {str(r["product_id"]): r for r in remains_totals}
 
-    # 2. Оновлюємо "Потребу" (orders_q)
-    draft_status = "створено менеджером"
-    submissions_data = (
+    # 2. TIER 1: Потреба по статусу "затверджено" — основний попит
+    zatverdzeno_data = (
         await Submissions.select(
             Submissions.product.as_alias("product_id"),
             Sum(Submissions.different).as_alias("total_demand")
         )
         .where(
             (Submissions.product.is_in(product_ids)) &
-            (Submissions.document_status.not_like("%скас%")) &
-            (Submissions.document_status.not_like("%відх%")) &
-            (Submissions.document_status != draft_status) &
-            (Submissions.document_status != "до розгляду") &
+            (Submissions.document_status == "затверджено") &
             (Submissions.different > 0)
         )
         .group_by(Submissions.product)
         .run()
     )
-    demand_map = {
+    zatverdzeno_map = {
         str(s["product_id"]): float(s["total_demand"] or 0)
-        for s in submissions_data
+        for s in zatverdzeno_data
     }
 
-    # 3. Перевіряємо наявність статусу "створено менеджером"
+    # 3. TIER 2: Потреба по статусу "продукція затверджена" — додатковий попит
+    product_confirmed_data = (
+        await Submissions.select(
+            Submissions.product.as_alias("product_id"),
+            Sum(Submissions.different).as_alias("total_demand")
+        )
+        .where(
+            (Submissions.product.is_in(product_ids)) &
+            (Submissions.document_status == "продукція затверджена") &
+            (Submissions.different > 0)
+        )
+        .group_by(Submissions.product)
+        .run()
+    )
+    product_confirmed_map = {
+        str(s["product_id"]): float(s["total_demand"] or 0)
+        for s in product_confirmed_data
+    }
+
+    # 4. Перевіряємо наявність чернеток: "створено менеджером", "до розгляду", "розглядається"
+    draft_statuses = ["створено менеджером", "до розгляду", "розглядається"]
     drafts_data = (
         await Submissions.select(
             Submissions.product.as_alias("product_id"),
@@ -562,7 +607,7 @@ async def _process_details_result(result):
         )
         .where(
             (Submissions.product.is_in(product_ids)) &
-            ((Submissions.document_status == draft_status) | (Submissions.document_status == "до розгляду")) &
+            (Submissions.document_status.is_in(draft_statuses)) &
             (Submissions.different > 0)
         )
         .run()
@@ -572,19 +617,29 @@ async def _process_details_result(result):
         for d in drafts_data
     }
 
-    # Перезаписуємо значення в результаті
+    # 5. Перезаписуємо значення в результаті
     for item in result:
         pid = str(item.get("product", ""))
         contract = str(item.get("contract_supplement", ""))
-        
+
         if pid in totals_map:
             item["buh"] = float(totals_map[pid]["total_buh"] or 0)
             item["skl"] = float(totals_map[pid]["total_skl"] or 0)
-        
-        item["orders_q"] = demand_map.get(pid, 0.0)
+
+        # Tier 1: "затверджено" — основний попит
+        item["orders_q"] = zatverdzeno_map.get(pid, 0.0)
+
+        # Tier 2: "продукція затверджена" — додатковий попит
+        item["orders_q_product_confirmed"] = product_confirmed_map.get(pid, 0.0)
+
+        # Загальна потреба (зручно для quick-check)
+        item["orders_q_total"] = item["orders_q"] + item["orders_q_product_confirmed"]
+
+        # Чи є чернетки по цій заявці (для індикатора)
         item["has_draft"] = (contract, pid) in draft_pairs
 
     return result
+
 
 
 @router.get("/details_for_orders/{order}")
