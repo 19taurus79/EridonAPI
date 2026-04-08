@@ -1535,11 +1535,22 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
                 await bot.send_message(chat_id=admin, text=message, parse_mode="HTML")
                 await bot.send_document(chat_id=admin, document=excel_file)
 
-            # Отправка сообщения пользователю
+            # Визначаємо власника (якщо це розділення адміном, то використовуємо override_created_by)
+            owner_id = data.override_created_by if data.override_created_by else telegram_id
+
+            # Відправка повідомлення власнику
             await bot.send_message(
-                chat_id=telegram_id, text="Ви відправили такі данні для доставки:"
+                chat_id=owner_id, text="Ви відправили такі данні для доставки:"
             )
-            await bot.send_message(chat_id=telegram_id, text=message, parse_mode="HTML")
+            await bot.send_message(chat_id=owner_id, text=message, parse_mode="HTML")
+
+            # Якщо адмін розділяє чужу доставку, надсилаємо йому підтвердження
+            if owner_id != telegram_id:
+                await bot.send_message(
+                    chat_id=telegram_id, 
+                    text=f"✅ Ви успішно розділили доставку. Сповіщення надіслано власнику (ID: {owner_id})."
+                )
+                await bot.send_message(chat_id=telegram_id, text=message, parse_mode="HTML")
 
             # Создание события в календаре
             # calendar = await create_calendar_event(data)
@@ -1562,9 +1573,12 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
 
         else:
             # Режим разработки: выводим все в консоль
+            owner_id = data.override_created_by if data.override_created_by else telegram_id
             logger.info("\n--- [DEV] РЕЖИМ: ВІДПРАВКА ПОВІДОМЛЕННЯ ПРО ДОСТАВКУ ---")
             logger.info(f"--- [DEV] Одержувачі (адміни): {os.getenv('ADMINS', '[]')}")
-            logger.info(f"--- [DEV] Одержувач (користувач): {telegram_id}")
+            logger.info(f"--- [DEV] Одержувач (власник): {owner_id}")
+            if owner_id != telegram_id:
+                logger.info(f"--- [DEV] Одержувач (адмін-ініціатор): {telegram_id}")
             logger.info("--- [DEV] Текст повідомлення: ---")
             logger.info(message)
             logger.info(f"--- [DEV] Excel-файл '{filename}' було б надіслано. ---")
