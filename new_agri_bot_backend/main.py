@@ -124,8 +124,8 @@ class DeliveryRequest(BaseModel):
     client: str
     manager: str
     address: str
-    contact: str
-    phone: str
+    contact: str = ""   # Не обов'язково при самовивозі
+    phone: str = ""     # Не обов'язково при самовивозі
     date: str  # ISO-формат строки
     comment: str
     is_custom_address: bool
@@ -133,6 +133,7 @@ class DeliveryRequest(BaseModel):
     longitude: float
     total_weight: float
     orders: List[DeliveryOrder]
+    status: str = "Створено"  # Статус доставки (напр. "Самовивіз")
     override_created_by: Optional[int] = None  # Перевизначає автора (для розділення доставки адміном)
 
 
@@ -1490,6 +1491,7 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
                 latitude=data.latitude,
                 longitude=data.longitude,
                 total_weight=data.total_weight,
+                status=data.status,
                 created_by=data.override_created_by if data.override_created_by else telegram_id,
                 calendar_id=calendar["id"],
             )
