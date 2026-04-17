@@ -247,7 +247,7 @@ async def save_processed_data_to_db(
     if not df_payment.empty:
         try:
             await Payment.delete(force=True).run()
-            df_payment_for_db = df_payment
+            df_payment_for_db = df_payment.replace({np.nan: None})
             records_payment = df_payment_for_db.to_dict(orient="records")
             payment_raw = [Payment(**item) for item in records_payment]
             for i in range(0, len(payment_raw), BATCH_SIZE):
