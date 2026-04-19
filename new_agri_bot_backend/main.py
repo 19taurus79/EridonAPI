@@ -165,6 +165,12 @@ class ChangeDeliveryDateRequest(BaseModel):
     new_date: str
 
 
+class BatchUpdateDeliveryRequest(BaseModel):
+    delivery_ids: List[int]
+    status: Optional[str] = None
+    new_date: Optional[str] = None
+
+
 class CommentType(str, Enum):
     """Тип коментаря"""
 
@@ -1799,6 +1805,107 @@ async def update_delivery_date(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Не вдалося оновити дату доставки: {e}",
+        )
+
+
+@app.post("/delivery/batch_update", tags=["Delivery"], dependencies=[Depends(check_not_guest)])
+async def batch_update_deliveries(
+    data: BatchUpdateDeliveryRequest,
+    X_Telegram_Init_Data: str = Header()
+):
+    """
+    Масове оновлення статусу або дати для списку доставок.
+    Групує сповіщення по менеджерах.
+    """
+    parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
+    if not parsed_init_data:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    if not data.delivery_ids:
+        return {"status": "ok", "message": "No deliveries to update."}
+
+    try:
+        # 1. Отримуємо всі доставки для оновлення
+        deliveries_to_update = await Deliveries.objects().where(
+            Deliveries.id.is_in(data.delivery_ids)
+        ).run()
+
+        if not deliveries_to_update:
+            return {"status": "ok", "message": "No matching deliveries found."}
+
+        # 2. Оновлення в базі та підготовка даних для сповіщень
+        # { manager_id: [delivery_info, ...] }
+        grouped_by_manager = {}
+
+        async with Deliveries._meta.db.transaction():
+            for delivery in deliveries_to_update:
+                changes = []
+                
+                # Оновлення статусу
+                if data.status and delivery.status != data.status:
+                    old_status = delivery.status
+                    delivery.status = data.status
+                    changes.append(f"статус: {old_status} ➔ <b>{data.status}</b>")
+                    
+                    # Google Calendar color update
+                    if delivery.calendar_id:
+                        cal_status = 2 if data.status == "Виконано" else 1
+                        changed_color_calendar_events_by_id(id=delivery.calendar_id, status=cal_status)
+                        await Events.update({Events.event_status: cal_status}).where(
+                            Events.event_id == delivery.calendar_id
+                        ).run()
+
+                # Оновлення дати
+                if data.new_date:
+                    new_date_obj = datetime.strptime(data.new_date, "%Y-%m-%d").date()
+                    if delivery.delivery_date != new_date_obj:
+                        old_date = delivery.delivery_date
+                        delivery.delivery_date = new_date_obj
+                        changes.append(f"дата: {old_date} ➔ <b>{new_date_obj}</b>")
+                        
+                        # Google Calendar date update
+                        if delivery.calendar_id:
+                            changed_date_calendar_events_by_id(delivery.calendar_id, new_date_obj)
+                            await Events.update({Events.start_event: new_date_obj}).where(
+                                Events.event_id == delivery.calendar_id
+                            ).run()
+
+                if changes:
+                    await delivery.save().run()
+                    
+                    manager_id = delivery.created_by
+                    if manager_id:
+                        if manager_id not in grouped_by_manager:
+                            grouped_by_manager[manager_id] = []
+                        grouped_by_manager[manager_id].append({
+                            "id": delivery.id,
+                            "client": delivery.client,
+                            "changes": changes
+                        })
+
+        # 3. Відправка згрупованих сповіщень
+        for manager_id, items in grouped_by_manager.items():
+            message_lines = [f"🔄 <b>Пакетне оновлення доставок ({len(items)})</b>\n"]
+            
+            for item in items:
+                changes_str = ", ".join(item["changes"])
+                message_lines.append(f"📦 ID {item['id']} | <b>{item['client']}</b>")
+                message_lines.append(f"└ {changes_str}\n")
+            
+            await bot.send_message(
+                chat_id=manager_id,
+                text="\n".join(message_lines),
+                parse_mode="HTML"
+            )
+
+        logger.info(f"✅ Успішно оновлено {len(deliveries_to_update)} доставок пакетно.")
+        return {"status": "ok", "message": f"Successfully updated {len(deliveries_to_update)} deliveries."}
+
+    except Exception as e:
+        logger.info(f"❌ Помилка пакетного оновлення доставок: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Не вдалося оновити доставки пакетно: {e}",
         )
 
 
