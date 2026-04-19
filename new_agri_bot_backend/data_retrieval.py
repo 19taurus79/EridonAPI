@@ -178,20 +178,38 @@ async def get_products(category: Optional[str] = None, name_part: Optional[str] 
 
 @router.get("/all_products")
 async def get_all_product_by_guide(
-    category: Optional[str] = None, name_part: Optional[str] = None
+    category: Optional[str] = None, 
+    parent_category: Optional[str] = Query(None),
+    name_part: Optional[str] = None
 ):
     query = ProductGuide.select()
 
     if category:
         query = query.where(ProductGuide.line_of_business == category)
+        
+    if parent_category:
+        query = query.where(ProductGuide.parent_element == parent_category)
 
     if name_part:
         # Використовуємо .ilike() для регістронезалежного пошуку по частині рядка
         # Якщо ваша ORM/БД не підтримує .ilike(), можливо, знадобиться інший підхід
         query = query.where(ProductGuide.product.ilike(f"%{name_part}%"))
 
-    product = await query.run()
+    product = await query.order_by(ProductGuide.product).run()
     return product
+
+
+@router.get("/categories_tree")
+async def get_categories_tree():
+    """
+    Повертає унікальні комбінації бізнес-напрямку та батьківського елемента (підгрупи)
+    для побудови дерева фільтрів.
+    """
+    data = await ProductGuide.select(
+        ProductGuide.line_of_business, 
+        ProductGuide.parent_element
+    ).distinct().run()
+    return data
 
 
 @router.get("/product/{product_id}", summary="Отримати інформацію про продукт за ID")
@@ -250,7 +268,9 @@ async def get_clients(
     dependencies=[Depends(get_current_telegram_user)],
 )
 async def get_product_on_warehouse(
-    category: Optional[str] = None, name_part: Optional[str] = None
+    category: Optional[str] = None, 
+    parent_category: Optional[str] = Query(None),
+    name_part: Optional[str] = None
 ):
     """
     Повертає записи про товари, по яким є залишки на складі, з бази даних.
@@ -263,12 +283,15 @@ async def get_product_on_warehouse(
     if category:
         query = query.where(ProductOnWarehouse.line_of_business == category)
 
+    if parent_category:
+        query = query.where(ProductOnWarehouse.parent_element == parent_category)
+
     if name_part:
         # Використовуємо .ilike() для регістронезалежного пошуку по частині рядка
         # Якщо ваша ORM/БД не підтримує .ilike(), можливо, знадобиться інший підхід
         query = query.where(ProductOnWarehouse.product.ilike(f"%{name_part}%"))
 
-    product = await query.run()
+    product = await query.order_by(ProductOnWarehouse.product).run()
     return product
 
 

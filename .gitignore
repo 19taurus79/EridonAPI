@@ -319,3 +319,5 @@ credentials__.json
 token.json
 *.xlsx
 *.csv
+
+piccolo.sqlite

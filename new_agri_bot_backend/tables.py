@@ -28,6 +28,7 @@ class ProductGuide(Table):
     product = Varchar(null=False)
     line_of_business = Varchar(null=True)
     active_substance = Varchar(null=True)
+    parent_element = Varchar(null=True)
 
 
 #
@@ -163,9 +164,10 @@ class ClientManagerGuide(Table):
 
 
 class ProductOnWarehouse(Table):
-    id = BigInt(primary_key=True)
+    id = UUID(primary_key=True)
     product = Varchar()
     line_of_business = Varchar()
+    parent_element = Varchar(null=True)
 
     class Meta:
         tablename = "product_on_warehouse"
