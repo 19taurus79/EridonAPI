@@ -120,12 +120,27 @@ async def save_processed_data_to_db(
     log("✅ Данные Excel обработаны. Начинаем сохранение в БД...")
 
     # 2.1 Создание справочника товаров
-    av_stock_tmp = df_av_stock[["product", "line_of_business", "active_substance"]]
-    remains_tmp = df_remains[["product", "line_of_business", "active_substance"]]
+    av_stock_tmp = df_av_stock[["product", "line_of_business", "active_substance"]].copy()
+    av_stock_tmp["parent_element"] = None
+
+    if "parent_element" in df_remains.columns:
+        remains_tmp = df_remains[["product", "line_of_business", "active_substance", "parent_element"]]
+    else:
+        remains_tmp = df_remains[["product", "line_of_business", "active_substance"]].copy()
+        remains_tmp["parent_element"] = None
+
     submissions_tmp = df_submissions[
         ["product", "line_of_business", "active_ingredient"]
     ].rename(columns={"active_ingredient": "active_substance"})
-    pr = pd.concat([av_stock_tmp, submissions_tmp, remains_tmp], ignore_index=True)
+    submissions_tmp["parent_element"] = None
+
+    pr = pd.concat([remains_tmp, av_stock_tmp, submissions_tmp], ignore_index=True)
+    
+    # Сортируем так, чтобы непустые parent_element были первыми, чтобы drop_duplicates сохранил их
+    # pd.notna(x) даст список False/True, при сортировке ascending=False (True будет первым)
+    pr['has_parent'] = pr['parent_element'].apply(lambda x: pd.notna(x) and str(x).strip() != "")
+    pr = pr.sort_values("has_parent", ascending=False).drop(columns=['has_parent'])
+    
     product_guide = pr.drop_duplicates(["product"]).reset_index(drop=True)
 
     product_guide["product"] = product_guide["product"].str.strip()
