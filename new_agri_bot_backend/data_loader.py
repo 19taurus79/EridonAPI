@@ -277,6 +277,8 @@ async def save_processed_data_to_db(
     if not df_payment.empty:
         try:
             await Payment.delete(force=True).run()
+            # order_status — NOT NULL в БД, заменяем пустые значения пустой строкой
+            df_payment["order_status"] = df_payment["order_status"].fillna("")
             df_payment_for_db = df_payment.replace({np.nan: None})
             records_payment = df_payment_for_db.to_dict(orient="records")
             payment_raw = [Payment(**item) for item in records_payment]
@@ -296,10 +298,12 @@ async def save_processed_data_to_db(
         df_moved,
         on="product",
         suffixes=["guide", "moved"],
+        how="right",  # Сохраняем ВСЕ записи MovedData, даже если product не совпадает с product_guide
     )
-    df_moved["product_id"] = df_moved["idguide"]
-    df_moved["product_id"] = df_moved["product_id"].astype(str)
-    df_moved = df_moved.drop(columns=["idguide", "idmoved"])
+    # Обновляем product_id из нового product_guide где есть совпадение,
+    # для записей без совпадения — оставляем старый product_id
+    df_moved["product_id"] = df_moved["idguide"].fillna(df_moved["idmoved"]).astype(str)
+    df_moved = df_moved.drop(columns=["idguide", "idmoved"], errors="ignore")
     if not df_moved.empty:
         try:
             await MovedData.delete(force=True).run()
@@ -507,17 +511,13 @@ async def save_processed_data_to_db(
         try:
             admin_ids = json.loads(ADMINS_ID)
             if isinstance(admin_ids, list):
-                # Формируем итоговый текст
-                full_log_text = "📊 *Отчет о загрузке данных*\n\n" + "\n".join(log_messages)
-                
-                # Если текст слишком длинный, aiogram может выдать ошибку, 
-                # но здесь объем обычно небольшой. На всякий случай можно было бы разбить,
-                # но пока отправим целиком.
+                # Отправляем без Markdown, т.к. текст лога может содержать
+                # спецсимволы из ошибок БД (кавычки, скобки, _), которые ломают парсер
+                full_log_text = "📊 Отчет о загрузке данных\n\n" + "\n".join(log_messages)
                 await send_notification(
                     bot=bot,
                     chat_ids=[int(uid) for uid in admin_ids],
                     text=full_log_text,
-                    parse_mode="Markdown"
                 )
         except Exception as e:
             logger.error(f"!!! Ошибка при отправке логов админам: {e}")

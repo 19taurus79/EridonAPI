@@ -13,6 +13,7 @@ from new_agri_bot_backend.tables import (
     Payment,
     MovedData,
     ValidFreeStock,
+    ProductGuide,
 )
 
 router = APIRouter(
@@ -137,13 +138,16 @@ async def combined_pandas_endpoint(
     moved_data = (
         await MovedData.select(
             MovedData.contract.as_alias("contract_supplement"),
-            MovedData.product,
+            MovedData.product_id,
             Sum(Cast(MovedData.qt_moved, Float())).as_alias("moved_qty"),
         )
         .where(MovedData.is_active == True)
-        .group_by(MovedData.contract, MovedData.product)
+        .group_by(MovedData.contract, MovedData.product_id)
         .run()
     )
+    product_guide_data = await ProductGuide.select(
+        ProductGuide.id, ProductGuide.product
+    ).run()
     # delivery_status = await Payment.select(
     #     Payment.contract_supplement, Payment.order_status
     # )
@@ -151,7 +155,21 @@ async def combined_pandas_endpoint(
 
     df_demand = pd.DataFrame(demand_data)
     df_remains = pd.DataFrame(remains_data)
-    df_moved = pd.DataFrame(moved_data)
+    
+    if moved_data:
+        df_moved = pd.DataFrame(moved_data)
+        df_pg = pd.DataFrame(product_guide_data)
+        df_pg["id"] = df_pg["id"].astype(str)
+        df_moved["product_id"] = df_moved["product_id"].astype(str)
+        # Получаем нормализованное имя продукта
+        df_moved = pd.merge(df_moved, df_pg, left_on="product_id", right_on="id", how="left")
+        # Если product_id не найден, оставляем пустую строку чтобы не падал join
+        df_moved["product"] = df_moved["product"].fillna("")
+        df_moved = df_moved.drop(columns=["product_id", "id"], errors="ignore")
+        # Поскольку несколько разных product_id могут ссылаться на один product, группируем еще раз
+        df_moved = df_moved.groupby(["contract_supplement", "product"], as_index=False)["moved_qty"].sum()
+    else:
+        df_moved = pd.DataFrame(columns=["contract_supplement", "product", "moved_qty"])
     # df_delivery_status = pd.DataFrame(delivery_status)
 
     # "Соединяем" таблицы спроса и остатков (LEFT JOIN).
