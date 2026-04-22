@@ -52,10 +52,19 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[Dict, List]:
         f"{col}_{i}" if ordered.columns.duplicated()[i] else col
         for i, col in enumerate(ordered.columns)
     ]
-    ordered = ordered.rename(
-        columns={"Примечание_8": "Примечание_заказано", "Кількість": "Заказано"}
-    )
-    cols_to_drop_ordered = [col for col in ["Примечание"] if col in ordered.columns]
+    
+    # Находим все колонки, начинающиеся с Примечание (включая дубликаты)
+    note_cols_ordered = [c for c in ordered.columns if str(c).startswith("Примечание")]
+    if len(note_cols_ordered) > 1:
+        # Обычно нужные данные в последней колонке Примечание
+        ordered = ordered.rename(columns={note_cols_ordered[-1]: "Примечание_заказано"})
+    elif len(note_cols_ordered) == 1:
+        ordered = ordered.rename(columns={note_cols_ordered[0]: "Примечание_заказано"})
+        
+    ordered = ordered.rename(columns={"Кількість": "Заказано"})
+    
+    # Удаляем остальные колонки Примечание, если они остались
+    cols_to_drop_ordered = [col for col in ordered.columns if str(col).startswith("Примечание") and col != "Примечание_заказано"]
     ordered = ordered.drop(columns=cols_to_drop_ordered)
     ordered["Заказано"] = ordered["Заказано"].replace(["", " "], 0)
 
@@ -88,10 +97,16 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[Dict, List]:
         f"{col}_{i}" if moved.columns.duplicated()[i] else col
         for i, col in enumerate(moved.columns)
     ]
-    moved = moved.rename(
-        columns={"Примечание_8": "Примечание_перемещено", "Количество": "Перемещено"}
-    )
-    cols_to_drop_moved = [col for col in ["Примечание"] if col in moved.columns]
+    
+    note_cols_moved = [c for c in moved.columns if str(c).startswith("Примечание")]
+    if len(note_cols_moved) > 1:
+        moved = moved.rename(columns={note_cols_moved[-1]: "Примечание_перемещено"})
+    elif len(note_cols_moved) == 1:
+        moved = moved.rename(columns={note_cols_moved[0]: "Примечание_перемещено"})
+        
+    moved = moved.rename(columns={"Количество": "Перемещено"})
+    
+    cols_to_drop_moved = [col for col in moved.columns if str(col).startswith("Примечание") and col != "Примечание_перемещено"]
     moved = moved.drop(columns=cols_to_drop_moved)
 
     if not moved.empty:
@@ -170,13 +185,16 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[Dict, List]:
                 current_moved["Примечание_заказано"].iloc[0]
             ):
                 note_text = current_moved["Примечание_заказано"].iloc[0]
-                note_matches = re.findall(r"([А-Я]{2}-\d{8})-(\d+)", str(note_text))
+                # Регулярка теперь поддерживает латиницу и кириллицу, а количество после тире стало необязательным
+                note_matches = re.findall(r"([a-zA-Z\u0410-\u042f]{2}-\d{8})(?:-(\d+))?", str(note_text))
                 if note_matches:
+                    notes_data = []
+                    for order_id, qty in note_matches:
+                        # Если количество в примечании не указано, временно ставим None
+                        notes_data.append([order_id, int(qty) if qty else None])
+                    
                     current_notes = pd.DataFrame(
-                        note_matches, columns=["Договор", "Количество_в_примечании"]
-                    )
-                    current_notes["Количество_в_примечании"] = pd.to_numeric(
-                        current_notes["Количество_в_примечании"]
+                        notes_data, columns=["Договор", "Количество_в_примечании"]
                     )
 
             if not current_moved.empty and not current_notes.empty:
@@ -186,7 +204,9 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[Dict, List]:
                     for _, moved_row in current_moved.iterrows():
                         record = moved_row.to_dict()
                         record["Договор"] = note_row_main["Договор"]
-                        record["Количество"] = moved_row["Перемещено"]
+                        # Если в примечании не было количества, берем из строки перемещения
+                        qty_val = note_row_main["Количество_в_примечании"]
+                        record["Количество"] = qty_val if qty_val is not None else moved_row["Перемещено"]
                         record["Источник"] = "Автоматически (один договор)"
                         matched_list.append(record)
                     # Так как все сопоставлено, очищаем и переходим к следующей заявке
