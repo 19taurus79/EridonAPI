@@ -166,8 +166,9 @@ async def save_processed_data_to_db(
             av_stock_data = df_av_stock.merge(
                 product_guide, on="product", how="left", suffixes=("_av", "_guide")
             )
+            cols_to_drop_av = ["product", "line_of_business_guide", "active_substance", "parent_element"]
             av_stock_data = av_stock_data.drop(
-                ["product", "line_of_business_guide", "active_substance"], axis=1
+                [c for c in cols_to_drop_av if c in av_stock_data.columns], axis=1
             )
             av_stock_data = av_stock_data.rename(columns={"id": "product"})
             av_stock_data = av_stock_data.rename(
@@ -192,8 +193,10 @@ async def save_processed_data_to_db(
             remains_data = df_remains.merge(
                 product_guide, on="product", how="left", suffixes=("_av", "_guide")
             )
+            cols_to_drop_remains = ["product", "line_of_business_guide",
+                                     "active_substance_guide", "parent_element_guide"]
             remains_data = remains_data.drop(
-                ["product", "line_of_business_guide", "active_substance_guide"], axis=1
+                [c for c in cols_to_drop_remains if c in remains_data.columns], axis=1
             )
             remains_data = remains_data.rename(columns={"id": "product"})
             remains_data = remains_data.rename(
@@ -202,6 +205,11 @@ async def save_processed_data_to_db(
             remains_data = remains_data.rename(
                 columns={"line_of_business_av": "line_of_business"}
             )
+            # parent_element из df_remains получил суффикс _av при merge — восстанавливаем
+            if "parent_element_av" in remains_data.columns:
+                remains_data = remains_data.rename(
+                    columns={"parent_element_av": "parent_element"}
+                )
             records_remains = remains_data.to_dict(orient="records")
             remains_raw = [Remains(**item) for item in records_remains]
             for i in range(0, len(remains_raw), BATCH_SIZE):
@@ -219,13 +227,20 @@ async def save_processed_data_to_db(
             submissions_data = df_submissions.merge(
                 product_guide, on="product", how="left", suffixes=("_av", "_guide")
             )
+            cols_to_drop_sub = ["product", "line_of_business_guide", "active_substance",
+                                  "parent_element_guide"]
             submissions_data = submissions_data.drop(
-                ["product", "line_of_business_guide", "active_substance"], axis=1
+                [c for c in cols_to_drop_sub if c in submissions_data.columns], axis=1
             )
             submissions_data = submissions_data.rename(columns={"id": "product"})
             submissions_data = submissions_data.rename(
                 columns={"line_of_business_av": "line_of_business"}
             )
+            # parent_element из df_submissions получил суффикс _av при merge — восстанавливаем
+            if "parent_element_av" in submissions_data.columns:
+                submissions_data = submissions_data.rename(
+                    columns={"parent_element_av": "parent_element"}
+                )
             df_submissions["client"] = df_submissions["client"].str.strip()
             df_payment["client"] = df_payment["client"].str.strip()
             df_payment["contract_supplement"] = (
@@ -317,8 +332,9 @@ async def save_processed_data_to_db(
             free_stock_data = df_free_stock.merge(
                 product_guide, on="product", how="left", suffixes=("_av", "_guide")
             )
+            cols_to_drop_fs = ["product", "line_of_business_guide", "active_substance", "parent_element"]
             free_stock_data = free_stock_data.drop(
-                ["product", "line_of_business_guide", "active_substance"], axis=1
+                [c for c in cols_to_drop_fs if c in free_stock_data.columns], axis=1
             )
             free_stock_data = free_stock_data.rename(columns={"id_guide": "product"})
             free_stock_data = free_stock_data.rename(columns={"id_av": "id"})
