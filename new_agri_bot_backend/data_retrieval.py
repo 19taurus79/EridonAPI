@@ -838,8 +838,13 @@ async def task_in_progress(task_id, user=Depends(get_current_telegram_user)):
     in_progress_task(task_id, user)
 
 
+class TaskComplete(BaseModel):
+    tasks_status: int
+    solution: str
+
+
 @router.patch("/task_completed", dependencies=[Depends(check_not_guest)])
-async def task_completed(task_id, user=Depends(get_current_telegram_user)):
+async def task_completed(task_id: str, body: TaskComplete, user=Depends(get_current_telegram_user)):
     await Tasks.update(
         {
             Tasks.task_status: 2,
@@ -849,6 +854,26 @@ async def task_completed(task_id, user=Depends(get_current_telegram_user)):
         force=True,
     ).where(Tasks.task_id == task_id).run()
     complete_task(task_id, user)
+
+    # Відправляємо сповіщення автору задачі
+    try:
+        task_data = await Tasks.select().where(Tasks.task_id == task_id).run()
+        if task_data:
+            creator_id = task_data[0]["task_creator"]
+            task_title = task_data[0]["task"]
+            notification_text = (
+                f"✅ <b>Завдання виконано!</b>\n\n"
+                f"📋 <b>Задача:</b> {task_title}\n"
+                f"👷 <b>Виконавець:</b> {user.full_name_for_orders}\n"
+                f"💬 <b>Рішення:</b> {body.solution}"
+            )
+            await bot.send_message(
+                chat_id=creator_id,
+                text=notification_text,
+                parse_mode="HTML",
+            )
+    except Exception as e:
+        print(f"Помилка відправки сповіщення: {e}")
 
 
 @router.patch("/event_in_progress", dependencies=[Depends(check_not_guest)])
