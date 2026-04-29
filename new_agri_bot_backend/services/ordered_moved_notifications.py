@@ -53,22 +53,31 @@ async def get_data_from_df(frame: pd.DataFrame):
     """
     Принимает DataFrame, извлекает из него уникальные номера контрактов
     и запрашивает по ним данные о менеджерах и клиентах из БД.
+    Использует связку (контракт + товар) для точной идентификации клиента.
     """
-    # Извлекаем уникальные контракты прямо из DataFrame
+    # Извлекаем уникальные контракты и товары из DataFrame
     orders = frame["contract"].unique().tolist()
+    product_ids = frame["product_id"].unique().tolist()
+    
     try:
         data = (
             await Submissions.select(
-                Submissions.contract_supplement, Submissions.manager, Submissions.client
+                Submissions.contract_supplement, 
+                Submissions.manager, 
+                Submissions.client,
+                Submissions.product
             )
             .where(
                 (Submissions.contract_supplement.is_in(orders))
+                & (Submissions.product.is_in(product_ids))
                 & (Submissions.different > 0)
             )
             .run()
         )
+        
+        # Создаем мапу с композитным ключом (номер_заказа, id_продукта)
         contract_data_map = {
-            item["contract_supplement"]: {
+            (item["contract_supplement"], str(item["product"])): {
                 "manager": item["manager"],
                 "client": item["client"],
             }
@@ -84,19 +93,20 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
     # Проверяем окружение. Если не 'prod', выводим в консоль вместо отправки.
     app_env = os.getenv("APP_ENV", "dev")
 
-    # 1. Получаем словарь { 'номер_контракта': 'имя_менеджера' }
+    # 1. Получаем мапу { (контракт, продукт): {manager, client} }
     contract_data_map = await get_data_from_df(frame)
-    logger.debug("--- Словарь сопоставления Контракт -> Менеджер ---")
+    logger.debug("--- Словарь сопоставления (Контракт, Продукт) -> Менеджер/Клиент ---")
     logger.debug(contract_data_map)
 
-    # 2. Добавляем колонку 'manager' в DataFrame, используя метод .map()
-    # Создаем две новые колонки: 'manager' и 'client'
-    frame["manager"] = frame["contract"].map(
-        lambda x: contract_data_map.get(x, {}).get("manager")
-    )
-    frame["client"] = frame["contract"].map(
-        lambda x: contract_data_map.get(x, {}).get("client")
-    )
+    # 2. Добавляем колонки 'manager' и 'client' в DataFrame, используя композитный ключ
+    # Используем .apply для доступа к нескольким колонкам в каждой строке
+    def get_info(row, field):
+        key = (str(row["contract"]), str(row["product_id"]))
+        return contract_data_map.get(key, {}).get(field)
+
+    frame["manager"] = frame.apply(lambda row: get_info(row, "manager"), axis=1)
+    frame["client"] = frame.apply(lambda row: get_info(row, "client"), axis=1)
+
     # Заполняем пропуски, если для какого-то контракта не нашелся менеджер
     frame["manager"] = frame["manager"].fillna("Менеджер не определен")
     frame["client"] = frame["client"].fillna("Клиент не определен")

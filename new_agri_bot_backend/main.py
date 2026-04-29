@@ -76,6 +76,7 @@ from .bi import router as bi_router
 from .bi_pandas import router as bi_pandas_router
 from .order_chat import router as chat_router
 from .notification import router as notification_router
+from .nova_poshta import router as nova_poshta_router
 from .scheduler import setup_scheduler
 from .utils import send_message_to_managers, create_composite_key_from_dict
 
@@ -591,6 +592,7 @@ app.include_router(bi_router)
 app.include_router(bi_pandas_router)
 app.include_router(chat_router)
 app.include_router(notification_router)
+app.include_router(nova_poshta_router)
 app.mount("/admin", admin_router)
 
 
@@ -1664,6 +1666,7 @@ async def update_delivery(data: UpdateDeliveryRequest):
                         text=(
                             f"✅ <b>Доставка в роботі</b>\n\n"
                             f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
+                            f"📅 Планова дата: <b>{delivery_data.delivery_date}</b>\n\n"
                             f"Дані по доставці передані бухгалтеру, та будуть передані на склад для комплектації\n"),
                         parse_mode="HTML",
                     )
@@ -1889,7 +1892,7 @@ async def batch_update_deliveries(
             
             for item in items:
                 changes_str = ", ".join(item["changes"])
-                message_lines.append(f"📦 ID {item['id']} | <b>{item['client']}</b>")
+                message_lines.append(f"📦 <b>{item['client']}</b>")
                 message_lines.append(f"└ {changes_str}\n")
             
             await bot.send_message(
