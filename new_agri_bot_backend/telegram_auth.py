@@ -115,7 +115,10 @@ def check_telegram_auth(init_data: str) -> dict:
 
     # В DEV_MODE пропускаем проверку подписи
     if dev_mode:
-        logger.info("[DEV_MODE] Пропускаем проверку подписи initData")
+        if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != "MOCK":
+             logger.warning(f"[SECURITY] DEV_MODE is active for user {parsed.get('id')} while a real bot token is set!")
+        else:
+             logger.info(f"[DEV_MODE] Skipping signature check for user {parsed.get('id')}")
         return parsed
 
     sorted_items = sorted(parsed.items())
@@ -549,11 +552,12 @@ async def generate_login_token():
     for t in expired:
         login_tokens.pop(t, None)
 
-    import random
+    import secrets
+    import string
     
-    # Generate a unique 4-digit code
+    # Generate a unique 6-digit numeric code
     while True:
-        token = str(random.randint(1000, 9999))
+        token = "".join(secrets.choice(string.digits) for _ in range(6))
         if token not in login_tokens:
             break
             
