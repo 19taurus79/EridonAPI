@@ -54,6 +54,7 @@ from .tables import (
     Deliveries,
     DeliveryItems,
     OrderComments,
+    ScheduledDeletions,
 )
 from aiogram.types import FSInputFile
 from fastapi import (
@@ -172,6 +173,12 @@ async def lifespan(app: FastAPI):
     logger.info(
         "Piccolo database engine initialized. Connections will be managed automatically."
     )
+    # Перевірка наявності таблиць для сповіщень
+    try:
+        await ScheduledDeletions.create_table(if_not_exists=True).run()
+    except Exception as e:
+        logger.error(f"Failed to ensure ScheduledDeletions table: {e}")
+
     # Ініціалізація планувальника повідомлень
     setup_scheduler()
     # Регистрируем webhook для бота если есть BACKEND_URL
