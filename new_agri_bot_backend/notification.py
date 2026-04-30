@@ -5,7 +5,7 @@ import html
 from typing import Dict, Any, Optional
 from urllib.parse import quote
 
-from new_agri_bot_backend.config import bot, LOGISTICS_TELEGRAM_IDS
+from new_agri_bot_backend.config import bot, LOGISTICS_TELEGRAM_IDS, SEND_NOTIFICATIONS, logger
 from new_agri_bot_backend.tables import Users, Submissions, OrderChatMessage
 from new_agri_bot_backend.telegram_auth import get_current_telegram_user, check_not_guest
 
@@ -20,17 +20,10 @@ async def send_chat_notification(
 ) -> Dict[str, Any]:
     """
     Відправити сповіщення про нове повідомлення в чаті через aiogram
-
-    Args:
-        telegram_id: Telegram ID отримувача
-        order_ref: Номер заявки
-        message_text: Текст повідомлення
-        sender_name: Ім'я відправника
-        client_name: Назва клієнта
-
-    Returns:
-        Dict з результатом відправки
     """
+    if not SEND_NOTIFICATIONS:
+        logger.info(f"🔇 Сповіщення вимкнено. Чат-сповіщення для {telegram_id} пропущено.")
+        return {"telegram_id": telegram_id, "status": "skipped", "reason": "SEND_NOTIFICATIONS=false"}
 
     # 1. Формування URL для відкриття чату
     # Telegram API не приймає 'localhost', замінюємо на '127.0.0.1' для локальної розробки

@@ -116,6 +116,7 @@ LOGISTICS_TELEGRAM_IDS = [
     1060393824,  # Логіст 3
     # Додайте інші ID логістів тут
 ]
+SEND_NOTIFICATIONS = os.getenv("SEND_NOTIFICATIONS", "true").lower() == "true"
 
 # --- Настройка логирования ---
 import logging

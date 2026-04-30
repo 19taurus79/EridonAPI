@@ -514,10 +514,15 @@ async def save_processed_data_to_db(
                 # Отправляем без Markdown, т.к. текст лога может содержать
                 # спецсимволы из ошибок БД (кавычки, скобки, _), которые ломают парсер
                 full_log_text = "📊 Отчет о загрузке данных\n\n" + "\n".join(log_messages)
-                await send_notification(
+                sent_msgs = await send_notification(
                     bot=bot,
                     chat_ids=[int(uid) for uid in admin_ids],
                     text=full_log_text,
                 )
+                
+                # Запланувати видалення через 30 хвилин
+                from .utils import schedule_message_deletion
+                for msg in sent_msgs:
+                    await schedule_message_deletion(chat_id=msg.chat.id, message_id=msg.message_id, delay_minutes=30)
         except Exception as e:
             logger.error(f"!!! Ошибка при отправке логов админам: {e}")
