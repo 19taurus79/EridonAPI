@@ -13,7 +13,7 @@ import uvicorn
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 from asyncpg import UniqueViolationError
 from piccolo.columns.defaults import TimestampNow
@@ -68,12 +68,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone, timedelta
 from piccolo_admin.endpoints import create_admin
 
-from openpyxl import Workbook
-
-# from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, Field, validator
-from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-from openpyxl.utils import get_column_letter
 
 # Импорты из ваших новых модулей
 from .telegram_auth import (
@@ -95,7 +90,15 @@ from .utils import send_message_to_managers, create_composite_key_from_dict
 from .delivery_notifications import notify_new_delivery, notify_delivery_status_change, delete_delivery_notifications
 
 # Импорт TELEGRAM_BOT_TOKEN из config.py для инициализации бота
-from .config import TELEGRAM_BOT_TOKEN, bot, logger, SEND_NOTIFICATIONS, LOGISTICS_TELEGRAM_IDS
+# Импорт констант из config.py
+from .config import (
+    TELEGRAM_BOT_TOKEN, 
+    bot, 
+    logger, 
+    SEND_NOTIFICATIONS, 
+    LOGISTICS_TELEGRAM_IDS,
+    BACKEND_URL
+)
 
 # Инициализация Telegram Bot (используется в utils.py, но может быть нужен здесь для глобальной инициализации)
 from aiogram import Bot, Dispatcher, F
@@ -203,7 +206,7 @@ async def create_calendar_event(data: DeliveryRequest) -> Optional[str]:
         return created_event
 
     except Exception as e:
-        logger.info("Ошибка при добавлении в календарь:", e)
+        logger.error(f"❌ Помилка при додаванні в календар Google: {e}")
         return None
 
 
@@ -268,8 +271,8 @@ def get_calendar_events(
         return events
 
     except Exception as e:
-        logger.info("Ошибка при получении событий из календаря:", e)
-        return None
+        logger.error(f"❌ Помилка при отриманні подій з календаря Google: {e}")
+        return []
 
 
 def get_calendar_events_by_id(id: str):
@@ -304,11 +307,10 @@ def get_calendar_events_by_id(id: str):
         return events_result
 
     except Exception as e:
-        logger.info("Ошибка при получении событий из календаря:", e)
+        logger.error(f"❌ Помилка при отриманні події {id} з календаря Google: {e}")
         return None
 
 
-BACKEND_URL = os.getenv("BACKEND_URL", "")
 
 # aiogram Dispatcher для обработки входящих сообщений бота
 dp = Dispatcher()
@@ -436,6 +438,49 @@ app.include_router(nova_poshta_router)
 app.mount("/admin", admin_router)
 
 
+def json_to_csv_temp(data: List[ClientData]) -> str:
+    """
+    Зберігає дані у тимчасовий CSV файл.
+    """
+    fd, path = tempfile.mkstemp(suffix=".csv", prefix="orders_")
+    try:
+        with os.fdopen(fd, mode="w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                [
+                    "Клиент",
+                    "Менеджер",
+                    "Заказ",
+                    "Продукт",
+                    "Количество",
+                    "Адрес доставки",
+                    "Контактное лицо",
+                    "Дата доставки",
+                ]
+            )
+
+            for client in data:
+                for order in client.orders:
+                    for product in order.products:
+                        writer.writerow(
+                            [
+                                client.client,
+                                client.manager,
+                                order.order,
+                                product.product,
+                                product.quantity,
+                                client.deliveryAddress or "",
+                                client.contactPerson or "",
+                                client.deliveryDate or "",
+                            ]
+                        )
+        return path
+    except Exception as e:
+        os.close(fd)
+        logger.error(f"Помилка створення тимчасового CSV: {e}")
+        raise
+
+
 @app.post("/webhook/bot", include_in_schema=False)
 async def bot_webhook(request: Request):
     """Отримує оновлення від Telegram та передає до aiogram Dispatcher."""
@@ -491,42 +536,6 @@ def format_message(data: List[ClientData]) -> str:
     return "\n".join(lines)
 
 
-def json_to_csv_save_local_d_drive(data: List[ClientData]) -> str:
-    filepath = Path("D:/orders.csv")
-
-    with open(filepath, mode="w", encoding="utf-8", newline="") as f:
-        writer = csv.writer(f)
-
-        writer.writerow(
-            [
-                "Клиент",
-                "Менеджер",
-                "Заказ",
-                "Продукт",
-                "Количество",
-                "Адрес доставки",
-                "Контактное лицо",
-                "Дата доставки",
-            ]
-        )
-
-        for client in data:
-            for order in client.orders:
-                for product in order.products:
-                    writer.writerow(
-                        [
-                            client.client,
-                            client.manager,
-                            order.order,
-                            product.product,
-                            product.quantity,
-                            client.deliveryAddress or "",
-                            client.contactPerson or "",
-                            client.deliveryDate or "",
-                        ]
-                    )
-
-    return str(filepath)  # возвращаем путь к файлу
 
 
 @app.post("/send_telegram_message/")
@@ -535,16 +544,22 @@ async def send_telegram_message(
     chat_id: int = Query(..., description="Telegram chat id для отправки сообщения"),
 ):
     message_text = format_message(data)
-    csv_file = json_to_csv_save_local_d_drive(data)
-
+    csv_path = None
     try:
-        # await bot.send_message(chat_id=chat_id, text=message_text, parse_mode="HTML")
+        csv_path = json_to_csv_temp(data)
         await bot.send_document(
-            chat_id=chat_id, document=FSInputFile(csv_file, filename=csv_file.name)
+            chat_id=chat_id, document=FSInputFile(csv_path, filename="orders.csv")
         )
-        return {"status": "ok", "message": "Сообщение и CSV файл отправлены"}
+        return {"status": "ok", "message": "Повідомлення та CSV файл відправлені"}
     except Exception as e:
+        logger.error(f"Error in send_telegram_message: {e}")
         return {"status": "error", "details": str(e)}
+    finally:
+        if csv_path and os.path.exists(csv_path):
+            try:
+                os.remove(csv_path)
+            except Exception:
+                pass
 
 
 class TelegramMessage(BaseModel):  # ← ДОБАВЬ ЭТО
@@ -1391,147 +1406,136 @@ async def send_delivery(
     if owner_id not in all_recipients:
         if SEND_NOTIFICATIONS:
             try:
-                await bot.send_message(chat_id=owner_id, text="<b>Ви відправили такі дані для доставки:</b>", parse_mode="HTML")
-                await bot.send_message(chat_id=owner_id, text=message, parse_mode="HTML")
+                await bot.send_message(chat_id=owner_id, text='<b>Ви успішно зареєстрували доставку:</b>', parse_mode='HTML')
+                await bot.send_message(chat_id=owner_id, text=message, parse_mode='HTML')
             except Exception as e:
-                logger.error(f"❌ Помилка відправки власнику {owner_id}: {e}")
+                logger.error(f'Помилка при сповіщенні власника {owner_id}: {e}')
     
-    # Якщо адмін розділяє чужу доставку, надсилаємо йому підтвердження (якщо він не отримувач)
-    if owner_id != telegram_id and telegram_id not in all_recipients:
-        try:
-            await bot.send_message(
-                chat_id=telegram_id, 
-                text=f"✅ Ви успішно розділили доставку. Сповіщення надіслано власнику (ID: {owner_id})."
-            )
-            if SEND_NOTIFICATIONS:
-                await bot.send_message(chat_id=telegram_id, text=message, parse_mode="HTML")
-        except Exception as e:
-            logger.error(f"❌ Помилка відправки ініціатору {telegram_id}: {e}")
-
-    # --- Генерація та надсилання Excel (тимчасово вимкнено, але код збережено в сервісі) ---
-    # from .services.excel_service import send_delivery_excel_report
-    # background_tasks.add_task(send_delivery_excel_report, data, list(set(all_recipients + [owner_id])))
-    # ------------------------------------------------------------------------------
-
-    return {"status": "ok"}
+    if telegram_id not in all_recipients and telegram_id != owner_id:
+        if SEND_NOTIFICATIONS:
+            try:
+                await bot.send_message(
+                    chat_id=telegram_id, 
+                    text='✅ Ви успішно зареєстрували доставку. Дякуємо за роботу!'
+                )
+            except Exception as e:
+                logger.error(f'Помилка при сповіщенні ініціатора {telegram_id}: {e}')
+    
+    return {"status": "ok", "id": new_delivery.id}
 
 
-@app.delete("/delivery/delete", tags=["Delivery"], dependencies=[Depends(check_not_guest)])
-async def delete_delivery(deliveryId: DeleteDeliveryRequest):
-    data = (
-        await Deliveries.objects()
-        .where(Deliveries.id == deliveryId.delivery_id)
-        .first()
-    )
-    if SEND_NOTIFICATIONS:
-        await bot.send_message(
-            chat_id=data.created_by,
-            text=(
-                f"❌ <b>Доставку скасовано</b>\n\n"
-                f"👤 Клієнт: <b>{data.client}</b>\n"
-                f"🗑 <i>Дані про доставку видалено з бази.</i>"
-            ),
-            parse_mode="HTML",
-        )
-    else:
-        logger.info(f"🔇 Сповіщення вимкнено. Скасування доставки {deliveryId.delivery_id} пропущено.")
-    await Deliveries.delete().where(Deliveries.id == deliveryId.delivery_id).run()
-    await Events.delete().where(Events.event_id == data.calendar_id).run()
-    delete_calendar_event_by_id(event_id=data.calendar_id)
-    # Видалення сповіщень з Телеграм
-    await delete_delivery_notifications(deliveryId.delivery_id)
-
-
-@app.post("/delivery/update", tags=["Delivery"], dependencies=[Depends(check_not_guest)])
-async def update_delivery(data: UpdateDeliveryRequest):
+@app.post("/delivery/update", dependencies=[Depends(check_not_guest)])
+async def update_delivery(
+    data: UpdateDeliveryRequest,
+    X_Telegram_Init_Data: str = Header()
+):
     """
-    Оновлює доставку, повністю замінюючи її позиції однією транзакцією.
+    Оновлення доставки: статус, вага та склад (позиції/партії).
+    Збирає попередження (warnings), якщо виникли проблеми з Telegram або Календарем, 
+    але продовжує виконання основної логіки БД.
     """
+    parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
+    if not parsed_init_data:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    warnings = []
+
     try:
-        # Початок транзакції для забезпечення атомарності
-        async with Deliveries._meta.db.transaction():
-            # 1. Оновлення статусу та ваги доставки
-            delivery_data = await Deliveries.objects().where(Deliveries.id == data.delivery_id).first()
+        # 1. Отримуємо існуючу доставку
+        delivery_data = await Deliveries.objects().where(Deliveries.id == data.delivery_id).first().run()
+        if not delivery_data:
+            raise HTTPException(status_code=404, detail="Delivery not found")
+
+        # 2. Оновлюємо статус, якщо змінився
+        if delivery_data.status != data.status:
+            old_status = delivery_data.status
+            delivery_data.status = data.status
             
-            update_fields = {Deliveries.status: data.status}
-            if data.total_weight is not None:
-                update_fields[Deliveries.total_weight] = data.total_weight
-                
-            await Deliveries.update(update_fields).where(
-                Deliveries.id == data.delivery_id
-            ).run()
-            
-            # Сповіщення про зміну статусу
-            if delivery_data.status != data.status:
+            # Повідомлення про зміну статусу
+            try:
                 await notify_delivery_status_change(
                     delivery=delivery_data, 
                     status=data.status, 
                     actor_name=data.actor_name
                 )
-            # logger.info(delivery_data)
-            event_data = await Events.objects().where(Events.event_id == delivery_data.calendar_id).first()
-            # logger.info(event_data)
-            calendar_data = get_calendar_events_by_id(delivery_data.calendar_id)
-            if delivery_data.status == data.status:
-                logger.info(f"⚠️ Статус доставки ID: {data.delivery_id} вже має значення '{data.status}'. Тому повідомлення не відправляється, а статус оновлюється в базі. Створення події в календарі пропущено.")
-                
-            elif delivery_data.status == 'Виконано' and data.status == 'В роботі':
-                logger.info("Скоріш за все відміна виконання доставки, тому повідомлення не відправляється, а статус просто оновлюється в базі.")
-            else:
-                if data.status == 'Виконано':
-                    await bot.send_message(
-                        chat_id=delivery_data.created_by,
-                        text=(
-                            f"🎉 <b>Доставку виконано</b>\n\n"
-                            f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
-                        ),
-                        parse_mode="HTML",
-                    )
-                    changed_color_calendar_events_by_id(id=delivery_data.calendar_id,status=2)
-                    await Events.update({Events.event_status: 2}).where(Events.event_id == delivery_data.calendar_id).run()
-                elif data.status == 'В роботі':
-                    await bot.send_message(
-                        chat_id=delivery_data.created_by,
-                        text=(
-                            f"✅ <b>Доставка в роботі</b>\n\n"
-                            f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
-                            f"📅 Планова дата: <b>{delivery_data.delivery_date}</b>\n\n"
-                            f"Дані по доставці передані бухгалтеру, та будуть передані на склад для комплектації\n"),
-                        parse_mode="HTML",
-                    )
-                    changed_color_calendar_events_by_id(id=delivery_data.calendar_id,status=1)
-                    await Events.update({Events.event_status: 1}).where(Events.event_id == delivery_data.calendar_id).run()
-                elif data.status == 'Доставка з ЦО на клієнта':
-                    items_text = "\n".join([f"• {item.nomenclature}: <b>{item.quantity}</b>" for item in data.items])
-                    await bot.send_message(
-                        chat_id=delivery_data.created_by,
-                        text=(
-                            f"🏢 <b>Доставка з ЦО на клієнта</b>\n\n"
-                            f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
-                            f"📦 Товари:\n{items_text}\n\n"
-                            f"<i>Створено заявку на доставку з ЦО напряму клієнту.</i>\n"),
-                        parse_mode="HTML",
-                    )
-                    changed_color_calendar_events_by_id(id=delivery_data.calendar_id, status=1)
-                    await Events.update({Events.event_status: 1}).where(Events.event_id == delivery_data.calendar_id).run()
+            except Exception as e:
+                logger.error(f"Error notifying status change: {e}")
+                warnings.append(f"Помилка сповіщення Telegram: {e}")
 
+            # Оновлення в календарі
+            if delivery_data.calendar_id:
+                try:
+                    cal_status = 2 if data.status == "Виконано" else 1
+                    changed_color_calendar_events_by_id(id=delivery_data.calendar_id, status=cal_status)
+                    await Events.update({Events.event_status: cal_status}).where(
+                        Events.event_id == delivery_data.calendar_id
+                    ).run()
+                except Exception as e:
+                    logger.error(f"Error updating calendar color: {e}")
+                    warnings.append(f"Помилка оновлення Календаря: {e}")
 
+            # Додаткові сповіщення менеджеру при певних статусах
+            if data.status == 'Виконано':
+                if delivery_data.created_by:
+                    try:
+                        await bot.send_message(
+                            chat_id=delivery_data.created_by,
+                            text=(
+                                f"✅ <b>Доставка завершена</b>\n\n"
+                                f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
+                            ),
+                            parse_mode="HTML",
+                        )
+                    except Exception as tg_err:
+                        logger.warning(f"Error sending completion message: {tg_err}")
 
-            logger.info(
-                f"✅ Статус доставки ID: {data.delivery_id} оновлено на '{data.status}'."
-            )
+            elif data.status == 'В очікуванні':
+                if delivery_data.created_by:
+                    try:
+                        await bot.send_message(
+                            chat_id=delivery_data.created_by,
+                            text=(
+                                f"⏳ <b>Доставка в очікуванні</b>\n\n"
+                                f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
+                                f"📅 Очікувана дата: <b>{delivery_data.delivery_date}</b>\n\n"
+                                f"Коли продукція буде готова до відвантаження, ви отримаєте ще одне повідомлення.\n"),
+                            parse_mode="HTML",
+                        )
+                    except Exception as tg_err:
+                        logger.warning(f"Error sending waiting message: {tg_err}")
 
-            # 2. Видалення всіх існуючих позицій для цієї доставки
+            elif data.status == 'Продукція готова до відвантаження':
+                if delivery_data.created_by:
+                    items_text = "\n".join([f"🔹 {item.product}: <b>{item.quantity}</b>" for item in data.items])
+                    try:
+                        await bot.send_message(
+                            chat_id=delivery_data.created_by,
+                            text=(
+                                f"📦 <b>Продукція готова до відвантаження</b>\n\n"
+                                f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
+                                f"📦 Склад:\n{items_text}\n\n"
+                                f"<i>Підтвердіть дату та час з логістом.</i>\n"),
+                            parse_mode="HTML",
+                        )
+                    except Exception as tg_err:
+                        logger.warning(f"Error sending ready message: {tg_err}")
+
+        # 3. Оновлюємо вагу та зберігаємо зміни доставки
+        if data.total_weight is not None:
+            delivery_data.total_weight = data.total_weight
+        
+        await delivery_data.save().run()
+
+        # 4. Оновлюємо склад доставки (позиції та партії)
+        async with DeliveryItems._meta.db.transaction():
             await DeliveryItems.delete().where(
                 DeliveryItems.delivery == data.delivery_id
             ).run()
 
-            # 3. Підготовка нових позицій для масової вставки
             items_to_insert = []
             for item in data.items:
                 if item.parties:
                     for party in item.parties:
-                        # Додаємо позицію для кожної партії
                         if party.moved_q > 0:
                             items_to_insert.append(
                                 DeliveryItems(
@@ -1544,7 +1548,6 @@ async def update_delivery(data: UpdateDeliveryRequest):
                                 )
                             )
                 else:
-                    # Обробка позицій без партій, якщо необхідно
                     items_to_insert.append(
                         DeliveryItems(
                             delivery=data.delivery_id,
@@ -1554,32 +1557,31 @@ async def update_delivery(data: UpdateDeliveryRequest):
                         )
                     )
 
-            # 4. Виконання масової вставки для всіх нових позицій
             if items_to_insert:
                 await DeliveryItems.insert(*items_to_insert).run()
             else:
-                # Якщо товарів немає, видаляємо саму доставку
                 await Deliveries.delete().where(Deliveries.id == data.delivery_id).run()
-                logger.info(
-                    f"🗑️ Доставка ID: {data.delivery_id} видалена, бо в ній не залишилось товарів."
-                )
                 return {
                     "status": "ok",
                     "message": "Delivery deleted as it became empty.",
+                    "warnings": warnings
                 }
 
+        return {
+            "status": "ok", 
+            "message": "Delivery updated successfully.", 
+            "warnings": warnings
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
-        # Якщо будь-який крок завершується невдачею, транзакція буде автоматично відкочена.
-        logger.info(f"❌ Помилка оновлення доставки: {e}")
+        logger.error(f"Error in update_delivery: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Не вдалося оновити позиції доставки: {e}",
+            detail=f"Помилка при оновленні доставки: {e}",
         )
 
-    return {"status": "ok", "message": "Delivery items updated successfully."}
-
-
-@app.post("/delivery/change_date", tags=["Delivery"], dependencies=[Depends(check_not_guest)])
 async def update_delivery_date(
     data: ChangeDeliveryDateRequest,
     X_Telegram_Init_Data: str = Header()
@@ -1834,8 +1836,6 @@ async def get_comments(
         .order_by(OrderComments.created_at, ascending=False)
         .run()
     )
-
-    return comments
 
     return comments
 
