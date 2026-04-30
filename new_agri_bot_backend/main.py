@@ -1,3 +1,4 @@
+from __future__ import annotations
 import csv
 import json
 import io
@@ -18,24 +19,30 @@ from openpyxl.utils import get_column_letter
 from asyncpg import UniqueViolationError
 from piccolo.columns.defaults import TimestampNow
 from . import models, processing
-from .calendar_utils import (
+from .google_calendar import (
+    create_calendar_event,
+    get_calendar_events,
+    get_calendar_event_by_id,
     changed_color_calendar_events_by_id,
-    delete_calendar_event_by_id,
     changed_date_calendar_events_by_id,
+    delete_calendar_event_by_id,
 )
 from .models import (
     RegionResponse, 
     AddressResponse, 
     AddressCreate, 
     DeliveryRequest, 
-    DeleteDeliveryRequest, 
+    DeleteDeliveryRequest,
     UpdateDeliveryRequest, 
     BatchUpdateDeliveryRequest,
     ChangeDeliveryDateRequest,
     CreateCommentRequest,
     UpdateCommentRequest,
     CommentResponse,
-    CommentType
+    CommentType,
+    ClientData,
+    Order,
+    Product
 )
 from .tables import (
     Remains,
@@ -48,7 +55,7 @@ from .tables import (
     DeliveryItems,
     OrderComments,
 )
-from aiogram.types import FSInputFile, BufferedInputFile, CallbackQuery
+from aiogram.types import FSInputFile
 from fastapi import (
     FastAPI,
     UploadFile,
@@ -85,7 +92,7 @@ from .bi_pandas import router as bi_pandas_router
 from .order_chat import router as chat_router
 from .notification import router as notification_router
 from .nova_poshta import router as nova_poshta_router
-from .scheduler import setup_scheduler
+from .bot_handlers import setup_bot_handlers
 from .utils import send_message_to_managers, create_composite_key_from_dict
 from .delivery_notifications import notify_new_delivery, notify_delivery_status_change, delete_delivery_notifications
 
@@ -118,10 +125,7 @@ from datetime import date
 
 
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "credentials.json")
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
-CALENDAR_ID = "dca9aa4129540be8ec133f20092e7f0a500897595fc1736cd295a739d9dc9466@group.calendar.google.com"  # или укажи явный ID календаря
+
 
 admin_router = create_admin([Remains], allowed_hosts=["localhost"])
 
@@ -155,216 +159,9 @@ def get_fallback_weight(line_of_business: str, nomenclature: str) -> float:
     return 0.0
 
 
-async def create_calendar_event(data: DeliveryRequest) -> Optional[str]:
-    try:
-        credentials = service_account.Credentials.from_service_account_file(
-            SERVICE_ACCOUNT_FILE, scopes=SCOPES
-        )
-        service = build("calendar", "v3", credentials=credentials)
-
-        delivery_date = datetime.strptime(data.date, "%Y-%m-%d").date()
-        end_date = delivery_date + timedelta(days=1)
-
-        # 📝 Основная информация
-        lines = [
-            f"Контрагент: {data.client}",
-            f"Менеджер: {data.manager}",
-            f"Адреса: {data.address}",
-            f"Контакт: {data.contact}",
-            f"Телефон: {data.phone}",
-            f"Дата доставки: {data.date}",
-            f"Коментар : {data.comment}",
-            "",
-        ]
-
-        # 📦 Добавляем заказы и товары
-        for order in data.orders:
-            lines.append(f"📦 Доповнення: {order.order}")
-            for item in order.items:
-                lines.append(f" • {item.product} — {item.quantity}")
-            lines.append("")  # пустая строка между заказами
-
-        description = "\n".join(lines)
-
-        event = {
-            "summary": f"🚚 Доставка: {data.client}",
-            "location": data.address,
-            "description": description,
-            "start": {
-                "date": delivery_date.isoformat(),
-            },
-            "end": {
-                "date": end_date.isoformat(),
-            },
-            "colorId": "11",
-        }
-
-        created_event = (
-            service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
-        )
-
-        return created_event
-
-    except Exception as e:
-        logger.error(f"❌ Помилка при додаванні в календар Google: {e}")
-        return None
-
-
-def get_calendar_events(
-    start_date: Optional[str] = None, end_date: Optional[str] = None
-) -> Optional[List[Dict]]:
-    """
-    Получает список событий из календаря в заданном диапазоне дат.
-
-    Args:
-        start_date (str, optional): Начальная дата в формате 'YYYY-MM-DD'.
-        end_date (str, optional): Конечная дата в формате 'YYYY-MM-DD'.
-
-    Returns:
-        Optional[List[Dict]]: Список событий или None в случае ошибки.
-    """
-    try:
-        # 1. Подключение к API
-        credentials = service_account.Credentials.from_service_account_file(
-            SERVICE_ACCOUNT_FILE, scopes=SCOPES
-        )
-        service = build("calendar", "v3", credentials=credentials)
-
-        # 2. Определение временного диапазона
-        now = datetime.utcnow()
-        time_min = (datetime.utcnow() - timedelta(days=3)).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        ).isoformat() + "Z"  # По умолчанию за последние 7 дней
-        time_max = (now + timedelta(days=3)).replace(
-            hour=23, minute=59, second=0, microsecond=0
-        ).isoformat() + "Z"  # До текущего момента
-
-        if start_date:
-            start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-            time_min = (
-                start_dt.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-                + "Z"
-            )
-
-        if end_date:
-            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-            time_max = (
-                end_dt.replace(hour=23, minute=59, second=0, microsecond=0).isoformat()
-                + "Z"
-            )
-
-        # 3. Выполнение запроса к API
-        events_result = (
-            service.events()
-            .list(
-                calendarId=CALENDAR_ID,
-                timeMin=time_min,
-                timeMax=time_max,
-                # maxResults=20,  # Максимальное количество событий
-                singleEvents=True,
-                orderBy="startTime",
-            )
-            .execute()
-        )
-
-        events = events_result.get("items", [])
-        return events
-
-    except Exception as e:
-        logger.error(f"❌ Помилка при отриманні подій з календаря Google: {e}")
-        return []
-
-
-def get_calendar_events_by_id(id: str):
-    """
-    Получает список событий из календаря в заданном диапазоне дат.
-
-    Args:
-        start_date (str, optional): Начальная дата в формате 'YYYY-MM-DD'.
-        end_date (str, optional): Конечная дата в формате 'YYYY-MM-DD'.
-
-    Returns:
-        Optional[List[Dict]]: Список событий или None в случае ошибки.
-    """
-    try:
-        # 1. Подключение к API
-        credentials = service_account.Credentials.from_service_account_file(
-            SERVICE_ACCOUNT_FILE, scopes=SCOPES
-        )
-        service = build("calendar", "v3", credentials=credentials)
-
-        # 3. Выполнение запроса к API
-        events_result = (
-            service.events()
-            .get(
-                calendarId=CALENDAR_ID,
-                eventId=id,
-            )
-            .execute()
-        )
-        # logger.info(events_result)
-        # events = events_result.get("items", [])
-        return events_result
-
-    except Exception as e:
-        logger.error(f"❌ Помилка при отриманні події {id} з календаря Google: {e}")
-        return None
-
-
-
 # aiogram Dispatcher для обработки входящих сообщений бота
 dp = Dispatcher()
-
-@dp.message(CommandStart())
-async def handle_bot_start(message):
-    """Handle /start command"""
-    text = message.text or ""
-    parts = text.split(" ", 1)
-    if len(parts) == 2 and parts[1].startswith("weblogin_"):
-        token = parts[1][len("weblogin_"):]
-        telegram_id = message.from_user.id
-        success = await confirm_login_token(token, telegram_id)
-        if success:
-            await message.answer(
-                "✅ Вхід підтверджено! Поверніться в браузер — сторінка завантажиться автоматично."
-            )
-        else:
-            await message.answer(
-                "❌ Посилання не знайдено або вже використано. Спробуйте ще раз."
-            )
-    else:
-        await message.answer("Вітаю! Я бот авторизації Eridon.\n\nЯкщо ви намагаєтесь увійти в систему, відправте мені 4-значний код з екрану.")
-
-import re
-
-@dp.message(F.text.regexp(r"^\d{4}$"))
-async def handle_login_code(message):
-    """Handle 4-digit login code."""
-    token = message.text
-    telegram_id = message.from_user.id
-    
-    success = await confirm_login_token(token, telegram_id)
-    if success:
-        await message.answer(
-            "✅ Вхід підтверджено! Поверніться в браузер — сторінка завантажиться автоматично."
-        )
-    else:
-        await message.answer(
-            "❌ Код не знайдено або він вже застарів. Спробуйте згенерувати новий код."
-        )
-
-@dp.callback_query(F.data == "delete_msg")
-async def handle_delete_msg_callback(callback: CallbackQuery):
-    """Видаляє повідомлення при натисканні на кнопку 'Видалити'"""
-    try:
-        await callback.message.delete()
-    except Exception as e:
-        logger.error(f"Помилка при видаленні повідомлення через кнопку: {e}")
-        # Спроба відповісти, навіть якщо видалення не вдалося
-    try:
-        await callback.answer()
-    except Exception:
-        pass
+setup_bot_handlers(dp)
 
 
 # Определяем контекстный менеджер для жизненного цикла приложения
@@ -495,23 +292,7 @@ async def bot_webhook(request: Request):
 
 
 #
-class Product(BaseModel):
-    product: str
-    quantity: int
 
-
-class Order(BaseModel):
-    order: str
-    products: List[Product]
-
-
-class ClientData(BaseModel):
-    client: str
-    manager: str
-    orders: List[Order]
-    deliveryAddress: Optional[str]
-    contactPerson: Optional[str]
-    deliveryDate: Optional[str]
 
 
 def format_message(data: List[ClientData]) -> str:

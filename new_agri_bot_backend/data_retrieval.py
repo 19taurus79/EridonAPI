@@ -10,7 +10,7 @@ from piccolo.columns.defaults.timestamptz import TimestamptzNow
 from piccolo.query import Sum
 from pydantic import BaseModel, Field
 
-from .calendar_utils import (
+from .google_calendar import (
     changed_color_calendar_events_by_id,
     changed_date_calendar_events_by_id,
 )

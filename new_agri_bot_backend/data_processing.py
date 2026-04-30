@@ -75,10 +75,11 @@ def process_submissions(content: bytes) -> pd.DataFrame:
     submissions.loc[
         submissions["party_sign"] == "Закупівля поточного сезону", "party_sign"
     ] = " "
-    submissions["product"] = submissions.apply(
-        lambda row: f"{str(row['nomenclature']).rstrip()} {str(row['party_sign']).rstrip()} {str(row['buying_season']).rstrip()}",
-        axis=1,
-    )
+    submissions["product"] = (
+        submissions["nomenclature"].str.rstrip() + " " + 
+        submissions["party_sign"].str.rstrip() + " " + 
+        submissions["buying_season"].str.rstrip()
+    ).str.strip()
     submissions.insert(loc=15, column="delivery_status", value="")
     # submissions["contract_supplement"] = submissions["contract_supplement"].str.slice(
     #     23, 34
@@ -115,10 +116,11 @@ def process_av_stock(content: bytes) -> pd.DataFrame:
     av_stock["available"] = pd.to_numeric(
         av_stock["available"], errors="coerce"
     ).fillna(0)
-    av_stock["product"] = av_stock.apply(
-        lambda row: f"{row['nomenclature'].rstrip()} {row['party_sign'].rstrip()} {row['buying_season'].rstrip()}",
-        axis=1,
-    )
+    av_stock["product"] = (
+        av_stock["nomenclature"].str.rstrip() + " " + 
+        av_stock["party_sign"].str.rstrip() + " " + 
+        av_stock["buying_season"].str.rstrip()
+    ).str.strip()
     # av_stock.drop("active_substance", axis=1, inplace=True)
     return av_stock
 
@@ -180,10 +182,11 @@ def process_remains_reg(content: bytes) -> pd.DataFrame:
     ]
     for col in text_columns:
         remains[col] = remains[col].fillna("").astype(str)
-    remains["product"] = remains.apply(
-        lambda row: f"{row['nomenclature'].rstrip()} {row['party_sign'].rstrip()} {row['buying_season'].rstrip()}",
-        axis=1,
-    )
+    remains["product"] = (
+        remains["nomenclature"].str.rstrip() + " " + 
+        remains["party_sign"].str.rstrip() + " " + 
+        remains["buying_season"].str.rstrip()
+    ).str.strip()
     remains = remains.loc[remains["line_of_business"].isin(valid_line_of_business)]
     remains = remains.loc[remains["warehouse"].isin(valid_warehouse)]
     return remains

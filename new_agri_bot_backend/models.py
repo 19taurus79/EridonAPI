@@ -279,3 +279,22 @@ class CommentResponse(BaseModel):
                 "updated_at": None,
             }
         }
+
+
+class Product(BaseModel):
+    product: str
+    quantity: int
+
+
+class Order(BaseModel):
+    order: str
+    products: List[Product]
+
+
+class ClientData(BaseModel):
+    client: str
+    manager: str
+    orders: List[Order]
+    deliveryAddress: Optional[str]
+    contactPerson: Optional[str]
+    deliveryDate: Optional[str]

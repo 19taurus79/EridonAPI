@@ -49,7 +49,9 @@ valid_warehouse = [
 ]
 
 # --- Общие настройки приложения ---
-SECRET_KEY = os.getenv("SECRET_KEY", "your_super_secret_fallback_key")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    logger.warning("SECRET_KEY is not set. Security will be compromised!")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
 POSTGRES_USER = os.getenv("POSTGRES_USER")
