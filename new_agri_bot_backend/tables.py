@@ -172,6 +172,7 @@ class ProductOnWarehouse(Table):
 
     class Meta:
         tablename = "product_on_warehouse"
+        managed = False
 
 
 class AvStockProd(Table):
@@ -213,6 +214,7 @@ class DetailsForOrders(Table):
 
     class Meta:
         tablename = "details_for_orders"
+        managed = False
 
 class ValidFreeStock(Table):
     product = Varchar()
