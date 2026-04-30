@@ -1,6 +1,6 @@
 import os
 from .config import logger
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 import re
 import pytz
 from google.oauth2 import service_account
@@ -53,9 +53,8 @@ def changed_date_calendar_events_by_id(id: str, new_date):
     # Парсим новую дату из строки в формате ГГГГ-ММ-ДД
     # new_date = datetime.strptime(new_date_str, "%Y-%m-%d").date()
 
-    # Формируем datetime для начала (9:00) и конца (10:00) с тайм-зоной
-    start_dt = kiev_tz.localize(datetime.combine(new_date, time(9, 0)))
-    end_dt = kiev_tz.localize(datetime.combine(new_date, time(10, 0)))
+    # Формируем date для события на весь день (start - сегодня, end - завтра)
+    end_date = new_date + timedelta(days=1)
     try:
         # 1. Подключение к API
         credentials = service_account.Credentials.from_service_account_file(
@@ -83,11 +82,8 @@ def changed_date_calendar_events_by_id(id: str, new_date):
                 calendarId=CALENDAR_ID,
                 eventId=id,
                 body={
-                    "start": {
-                        "dateTime": start_dt.isoformat(),
-                        "timeZone": "Europe/Kiev",
-                    },
-                    "end": {"dateTime": end_dt.isoformat(), "timeZone": "Europe/Kiev"},
+                    "start": {"date": new_date.isoformat()},
+                    "end": {"date": end_date.isoformat()},
                     "description": new_description,
                 },
             )
