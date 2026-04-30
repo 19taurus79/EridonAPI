@@ -14,7 +14,7 @@ from .calendar_utils import (
     changed_color_calendar_events_by_id,
     changed_date_calendar_events_by_id,
 )
-from .config import bot, logger
+from .config import bot, logger, SEND_NOTIFICATIONS
 
 # from .main import get_calendar_events
 
@@ -867,11 +867,14 @@ async def task_completed(task_id: str, body: TaskComplete, user=Depends(get_curr
                 f"👷 <b>Виконавець:</b> {user.full_name_for_orders}\n"
                 f"💬 <b>Рішення:</b> {body.solution}"
             )
-            await bot.send_message(
-                chat_id=creator_id,
-                text=notification_text,
-                parse_mode="HTML",
-            )
+            if SEND_NOTIFICATIONS:
+                await bot.send_message(
+                    chat_id=creator_id,
+                    text=notification_text,
+                    parse_mode="HTML",
+                )
+            else:
+                logger.info(f"🔇 Сповіщення вимкнено. Не надсилаємо задачу {task_id} автору {creator_id}")
     except Exception as e:
         print(f"Помилка відправки сповіщення: {e}")
 
@@ -887,10 +890,13 @@ async def event_in_progress(event_id, user=Depends(get_current_telegram_user)):
     ).where(Events.event_id == event_id).run()
     changed_color_calendar_events_by_id(event_id, 1)
     telegram_data = await Events.select().where(Events.event_id == event_id)
-    await bot.send_message(
-        chat_id=telegram_data[0]["event_creator"],
-        text=f"Вашу доставку для {telegram_data[0]['event']} взято в роботу. Виконавець {telegram_data[0]['event_who_changed_name']}",
-    )
+    if SEND_NOTIFICATIONS:
+        await bot.send_message(
+            chat_id=telegram_data[0]["event_creator"],
+            text=f"Вашу доставку для {telegram_data[0]['event']} взято в роботу. Виконавець {telegram_data[0]['event_who_changed_name']}",
+        )
+    else:
+        logger.info(f"🔇 Сповіщення вимкнено. Подія {event_id} взята в роботу.")
 
 
 @router.patch("/event_completed", dependencies=[Depends(check_not_guest)])
@@ -905,10 +911,13 @@ async def event_completed(event_id, user=Depends(get_current_telegram_user)):
     ).where(Events.event_id == event_id).run()
     changed_color_calendar_events_by_id(event_id, 2)
     telegram_data = await Events.select().where(Events.event_id == event_id)
-    await bot.send_message(
-        chat_id=telegram_data[0]["event_creator"],
-        text=f"Ваша доставка для {telegram_data[0]['event']} передана для підготовки документів, та для комплектації. Виконавець {telegram_data[0]['event_who_changed_name']}",
-    )
+    if SEND_NOTIFICATIONS:
+        await bot.send_message(
+            chat_id=telegram_data[0]["event_creator"],
+            text=f"Ваша доставка для {telegram_data[0]['event']} передана для підготовки документів, та для комплектації. Виконавець {telegram_data[0]['event_who_changed_name']}",
+        )
+    else:
+        logger.info(f"🔇 Сповіщення вимкнено. Подія {event_id} завершена.")
 
 
 @router.patch("/event_changed_date", dependencies=[Depends(check_not_guest)])
@@ -924,10 +933,13 @@ async def event_changed_date(
     ).where(Events.event_id == event_id).run()
     changed_date_calendar_events_by_id(id=event_id, new_date=new_date.new_date)
     telegram_data = await Events.select().where(Events.event_id == event_id)
-    await bot.send_message(
-        chat_id=telegram_data[0]["event_creator"],
-        text=f"Для доставки {telegram_data[0]['event']} змінена дата доставки, на {new_date.new_date.day}.{new_date.new_date.month}.{new_date.new_date.year}. Виконавець {telegram_data[0]['event_who_changed_name']}",
-    )
+    if SEND_NOTIFICATIONS:
+        await bot.send_message(
+            chat_id=telegram_data[0]["event_creator"],
+            text=f"Для доставки {telegram_data[0]['event']} змінена дата доставки, на {new_date.new_date.day}.{new_date.new_date.month}.{new_date.new_date.year}. Виконавець {telegram_data[0]['event_who_changed_name']}",
+        )
+    else:
+        logger.info(f"🔇 Сповіщення вимкнено. У події {event_id} змінена дата.")
 
 
 @router.get("/get_task_status")

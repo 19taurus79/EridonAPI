@@ -152,6 +152,7 @@ class Users(Table):
     last_activity_date = Timestamptz()
     is_admin = Boolean(default=False)
     full_name_for_orders = Varchar()
+    status_message_id = Integer(null=True)
 
 
 class ClientManagerGuide(Table):
@@ -356,4 +357,10 @@ class DeliveryNotifications(Table):
     telegram_id = BigInt()
     message_id = BigInt()
     event_type = Varchar(length=50) # 'created', 'in_work', etc.
+    created_at = Timestamp(default=TimestampNow())
+class ScheduledDeletions(Table):
+    """Таблиця для запланованого видалення будь-яких повідомлень"""
+    chat_id = BigInt()
+    message_id = BigInt()
+    delete_at = Timestamp()
     created_at = Timestamp(default=TimestampNow())

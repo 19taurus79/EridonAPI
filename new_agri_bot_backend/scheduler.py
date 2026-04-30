@@ -3,7 +3,7 @@ import json
 import pytz
 from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from .config import bot, logger
+from .config import bot, logger, SEND_NOTIFICATIONS
 from .tables import Events
 
 # Таймзона Київ
@@ -15,6 +15,10 @@ async def send_event_summary(subset="all", day="today"):
     subset: "all" - всі, "unclosed" - лише зі статусом != 2
     day: "today" - на сьогодні, "tomorrow" - на завтра
     """
+    if not SEND_NOTIFICATIONS:
+        logger.info("🔇 Сповіщення вимкнено (SEND_NOTIFICATIONS=false). Пропускаємо send_event_summary.")
+        return
+
     now = datetime.now(KIEV_TZ)
     if day == "today":
         target_date = now.date()
@@ -50,15 +54,57 @@ async def send_event_summary(subset="all", day="today"):
         logger.error(f"Error parsing ADMINS env: {e}")
         return
 
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🗑 Видалити", callback_data="delete_msg")]
+        ]
+    )
+
     for admin_id in admins:
         try:
-            await bot.send_message(chat_id=admin_id, text=msg, parse_mode="HTML")
+            await bot.send_message(chat_id=admin_id, text=msg, parse_mode="HTML", reply_markup=keyboard)
         except Exception as e:
             logger.error(f"Error sending scheduled message to {admin_id}: {e}")
+
+async def check_and_delete_messages():
+    """
+    Перевіряє таблицю ScheduledDeletions та видаляє повідомлення, час яких вийшов.
+    """
+    from .tables import ScheduledDeletions
+    from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
+
+    now = datetime.now()
+    expired_messages = await ScheduledDeletions.select().where(
+        ScheduledDeletions.delete_at <= now
+    ).run()
+
+    if not expired_messages:
+        return
+
+    logger.info(f"🧹 Початок очищення застарілих повідомлень ({len(expired_messages)} шт.)")
+    
+    for msg in expired_messages:
+        try:
+            await bot.delete_message(chat_id=msg['chat_id'], message_id=msg['message_id'])
+            logger.info(f"🗑 Видалено повідомлення {msg['message_id']} у чаті {msg['chat_id']}")
+        except (TelegramForbiddenError, TelegramBadRequest) as e:
+            logger.warning(f"⚠️ Не вдалося видалити повідомлення {msg['message_id']} у {msg['chat_id']}: {e}")
+        except Exception as e:
+            logger.error(f"❌ Помилка при видаленні запланованого повідомлення: {e}")
+        
+        # Видаляємо запис з БД у будь-якому випадку (щоб не пробувати вічно)
+        await ScheduledDeletions.delete().where(
+            ScheduledDeletions.id == msg['id']
+        ).run()
 
 scheduler = AsyncIOScheduler(timezone=KIEV_TZ)
 
 def setup_scheduler():
+    # Очищення повідомлень за розкладом (кожної хвилини)
+    scheduler.add_job(check_and_delete_messages, 'interval', minutes=1)
+
     # 9:30 - Всі події на сьогодні (Пн-Пт)
     scheduler.add_job(send_event_summary, 'cron', day_of_week='mon-fri', hour=9, minute=30, args=["all", "today"])
     # 15:00 - Незакриті події на сьогодні (Пн-Пт)
@@ -67,4 +113,4 @@ def setup_scheduler():
     scheduler.add_job(send_event_summary, 'cron', day_of_week='mon-fri', hour=17, minute=0, args=["all", "tomorrow"])
     
     scheduler.start()
-    logger.info("Scheduler started with jobs at 9:30, 15:00, 17:00 (Kiev time)")
+    logger.info("Scheduler started with cleanup job (1min) and summary jobs.")

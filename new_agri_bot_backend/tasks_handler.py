@@ -10,7 +10,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from .config import TELEGRAM_BOT_TOKEN
+from .config import TELEGRAM_BOT_TOKEN, SEND_NOTIFICATIONS, logger
 from new_agri_bot_backend.tables import Tasks
 
 # If modifying these scopes, delete the file token.json.
@@ -322,16 +322,28 @@ async def create_task(date, note, title, user):
             ]
         )
         for admin in admins:
-            msg = await bot.send_message(
-                chat_id=admin,
-                text="З'явилось нове завдання",
-                parse_mode="HTML",
-                reply_markup=keyboard,
+            if SEND_NOTIFICATIONS:
+                msg = await bot.send_message(
+                    chat_id=admin,
+                    text="З'явилось нове завдання",
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
+                print(msg)
+            else:
+                logger.info(f"🔇 Сповіщення вимкнено. Не надсилаємо задачу адміну {admin}")
+        if SEND_NOTIFICATIONS:
+            user_msg = await bot.send_message(
+                chat_id=user.telegram_id, text="Ви надіслали завдання логісту"
             )
-            print(msg)
-        user_msg = await bot.send_message(
-            chat_id=user.telegram_id, text="Ви надіслали завдання логісту"
-        )
+        else:
+            logger.info(f"🔇 Сповіщення вимкнено. Користувач {user.telegram_id} надіслав задачу.")
+            # Створюємо фейковий об'єкт повідомлення для БД, якщо потрібно
+            class FakeMsg:
+                def __init__(self):
+                    self.chat = type('obj', (object,), {'id': 0})()
+                    self.message_id = 0
+            user_msg = FakeMsg()
         await Tasks.insert(
             Tasks(
                 task_id=results["id"],

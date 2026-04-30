@@ -238,11 +238,15 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
                     logger.info(
                         f"\n--- Відправка зведеного звіту адміністраторам ({', '.join(map(str, admin_chat_ids))}) ---"
                     )
-                    await send_notification(
+                    sent_msgs = await send_notification(
                         bot=bot,
                         chat_ids=admin_chat_ids,  # Передаем список ID напрямую
                         text=chunk,
                     )
+                    # Запланувати видалення через 30 хвилин
+                    from ..utils import schedule_message_deletion
+                    for msg in sent_msgs:
+                        await schedule_message_deletion(chat_id=msg.chat.id, message_id=msg.message_id, delay_minutes=30)
                     logger.info("✅ Частину зведеного звіту успішно відправлено.")
                 else:
                     logger.info(

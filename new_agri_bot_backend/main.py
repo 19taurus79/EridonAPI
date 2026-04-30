@@ -23,7 +23,19 @@ from .calendar_utils import (
     delete_calendar_event_by_id,
     changed_date_calendar_events_by_id,
 )
-from .models import RegionResponse, AddressResponse, AddressCreate
+from .models import (
+    RegionResponse, 
+    AddressResponse, 
+    AddressCreate, 
+    DeliveryRequest, 
+    DeleteDeliveryRequest, 
+    UpdateDeliveryRequest, 
+    BatchUpdateDeliveryRequest,
+    CreateCommentRequest,
+    UpdateCommentRequest,
+    CommentResponse,
+    CommentType
+)
 from .tables import (
     Remains,
     Events,
@@ -35,7 +47,7 @@ from .tables import (
     DeliveryItems,
     OrderComments,
 )
-from aiogram.types import FSInputFile, BufferedInputFile
+from aiogram.types import FSInputFile, BufferedInputFile, CallbackQuery
 from fastapi import (
     FastAPI,
     UploadFile,
@@ -82,7 +94,7 @@ from .utils import send_message_to_managers, create_composite_key_from_dict
 from .delivery_notifications import notify_new_delivery, notify_delivery_status_change, delete_delivery_notifications
 
 # Импорт TELEGRAM_BOT_TOKEN из config.py для инициализации бота
-from .config import TELEGRAM_BOT_TOKEN, bot, logger
+from .config import TELEGRAM_BOT_TOKEN, bot, logger, SEND_NOTIFICATIONS, LOGISTICS_TELEGRAM_IDS
 
 # Инициализация Telegram Bot (используется в utils.py, но может быть нужен здесь для глобальной инициализации)
 from aiogram import Bot, Dispatcher, F
@@ -97,194 +109,9 @@ from datetime import date
 # Важно: если бот не используется напрямую в main, эту строку можно убрать
 
 
-class ChangeDateRequest(BaseModel):
-    new_date: date
 
+# models.py contains all the Pydantic models for the API
 
-class Party(BaseModel):
-    moved_q: float
-    party: str
-
-
-class DeliveryItem(BaseModel):
-    product: str
-    quantity: float
-    weight: float
-    parties: List[Party]
-
-
-class DeliveryOrder(BaseModel):
-    order: str
-    items: List[DeliveryItem]
-
-
-class DeleteDeliveryRequest(BaseModel):
-    delivery_id: int
-
-
-class DeliveryRequest(BaseModel):
-    client: str
-    manager: str
-    address: str
-    contact: str = ""   # Не обов'язково при самовивозі
-    phone: str = ""     # Не обов'язково при самовивозі
-    date: str  # ISO-формат строки
-    comment: str
-    is_custom_address: bool
-    latitude: float
-    longitude: float
-    total_weight: float
-    orders: List[DeliveryOrder]
-    status: str = "Створено"  # Статус доставки (напр. "Самовивіз")
-    override_created_by: Optional[int] = None  # Перевизначає автора (для розділення доставки адміном)
-
-
-class UpdateParty(BaseModel):
-    party: str
-    moved_q: float
-
-
-class UpdateItem(BaseModel):
-    product: str
-    nomenclature: str
-    quantity: float
-    manager: str
-    client: str
-    order_ref: Optional[str] = Field(None, alias="orderRef")
-    weight: float
-    parties: List[UpdateParty]
-
-
-class UpdateDeliveryRequest(BaseModel):
-    delivery_id: int
-    status: str
-    total_weight: Optional[float] = None
-    items: List[UpdateItem]
-    actor_name: Optional[str] = None
-
-
-class ChangeDeliveryDateRequest(BaseModel):
-    delivery_id: int
-    new_date: str
-
-
-class BatchUpdateDeliveryRequest(BaseModel):
-    delivery_ids: List[int]
-    status: Optional[str] = None
-    new_date: Optional[str] = None
-
-
-class CommentType(str, Enum):
-    """Тип коментаря"""
-
-    ORDER = "order"
-    PRODUCT = "product"
-
-
-class CreateCommentRequest(BaseModel):
-    """Запит на створення коментаря"""
-
-    comment_type: CommentType = Field(
-        ..., description="Тип коментаря: order або product"
-    )
-    order_ref: str = Field(..., min_length=1, max_length=50, description="Номер заявки")
-    product_id: Optional[str] = Field(None, description="UUID товару (для дашборду)")
-    product_name: Optional[str] = Field(
-        None, max_length=255, description="Назва товару (для BI)"
-    )
-    comment_text: str = Field(..., min_length=1, description="Текст коментаря")
-
-    @validator("comment_text")
-    def validate_comment_text(cls, v):
-        """Валідація тексту коментаря"""
-        if not v or not v.strip():
-            raise ValueError("Текст коментаря не може бути порожнім")
-        return v.strip()
-
-    @validator("product_id", "product_name")
-    def validate_product_fields(cls, v, values):
-        """Валідація полів товару залежно від типу коментаря"""
-        comment_type = values.get("comment_type")
-
-        # Для коментарів заявки product_id та product_name мають бути None
-        if comment_type == CommentType.ORDER and v is not None:
-            raise ValueError(
-                "Для коментарів заявки product_id та product_name мають бути null"
-            )
-
-        return v
-
-    @validator("product_name")
-    def validate_product_comment(cls, v, values):
-        """Для коментарів товару хоча б одне поле має бути заповнене"""
-        comment_type = values.get("comment_type")
-        product_id = values.get("product_id")
-
-        if comment_type == CommentType.PRODUCT:
-            if not product_id and not v:
-                raise ValueError(
-                    "Для коментарів товару product_id або product_name обов'язкові"
-                )
-
-        return v
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "comment_type": "product",
-                "order_ref": "ТЕ-00071300",
-                "product_id": "9aa0c0fc-1239-42cb-a4ec-59c614d77423",
-                "product_name": "Аклон 60%, к.с. (5 л)",
-                "comment_text": "Потрібно терміново відвантажити",
-            }
-        }
-
-
-class UpdateCommentRequest(BaseModel):
-    """Запит на оновлення коментаря"""
-
-    comment_text: str = Field(..., min_length=1, description="Новий текст коментаря")
-
-    @validator("comment_text")
-    def validate_comment_text(cls, v):
-        if not v or not v.strip():
-            raise ValueError("Текст коментаря не може бути порожнім")
-        return v.strip()
-
-    class Config:
-        json_schema_extra = {"example": {"comment_text": "Оновлений текст коментаря"}}
-
-
-class CommentResponse(BaseModel):
-    """Відповідь з даними коментаря"""
-
-    id: int = Field(..., description="ID коментаря")
-    comment_type: CommentType = Field(..., description="Тип коментаря")
-    order_ref: str = Field(..., description="Номер заявки")
-    product_id: Optional[uuid.UUID] = Field(None, description="UUID товару")
-    product_name: Optional[str] = Field(None, description="Назва товару")
-    comment_text: str = Field(..., description="Текст коментаря")
-    created_by: int = Field(..., description="Telegram ID автора")
-    created_by_name: str = Field(..., description="Ім'я автора")
-    created_at: datetime = Field(..., description="Дата створення")
-    updated_at: Optional[datetime] = Field(None, description="Дата оновлення")
-
-    class Config:
-        from_attributes = True
-        json_schema_extra = {
-            "example": {
-                "id": 123,
-                "comment_type": "product",
-                "order_ref": "ТЕ-00071300",
-                "product_id": "9aa0c0fc-1239-42cb-a4ec-59c614d77423",
-                "product_name": "Аклон 60%, к.с. (5 л)",
-                "comment_text": "Потрібно терміново відвантажити",
-                "created_by": 123456789,
-                "created_by_name": "Іван Петренко",
-                "created_at": "2026-02-02T12:00:00.000Z",
-                "updated_at": None,
-            }
-        }
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -523,6 +350,19 @@ async def handle_login_code(message):
             "❌ Код не знайдено або він вже застарів. Спробуйте згенерувати новий код."
         )
 
+@dp.callback_query(F.data == "delete_msg")
+async def handle_delete_msg_callback(callback: CallbackQuery):
+    """Видаляє повідомлення при натисканні на кнопку 'Видалити'"""
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logger.error(f"Помилка при видаленні повідомлення через кнопку: {e}")
+        # Спроба відповісти, навіть якщо видалення не вдалося
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
 
 # Определяем контекстный менеджер для жизненного цикла приложения
 @asynccontextmanager
@@ -713,9 +553,12 @@ class TelegramMessage(BaseModel):  # ← ДОБАВЬ ЭТО
 
 @app.post("/send_telegram_message_by_event")
 async def message(message: TelegramMessage):
-    await bot.send_message(
-        text=message.text, chat_id=message.chat_id, parse_mode="HTML"
-    )
+    if SEND_NOTIFICATIONS:
+        await bot.send_message(
+            text=message.text, chat_id=message.chat_id, parse_mode="HTML"
+        )
+    else:
+        logger.info(f"🔇 Сповіщення вимкнено. Ендпоінт /send_telegram_message_by_event пропущено.")
 
 
 # --- Маршрут для загрузки и обработки данных ---
@@ -1101,7 +944,6 @@ async def update_address_for_client(address_data: AddressCreate, id: int):
     data_dict["area"] = address_parts[1].split()[0]
     data_dict["commune"] = address_parts[2].split()[0]
     data_dict["city"] = address_parts[3]
-    # Обновляем поля из словаря data
     obj.client = data_dict.get("client", obj.client)
     obj.manager = data_dict.get("manager", obj.manager)
     obj.representative = data_dict.get("representative", obj.representative)
@@ -1116,6 +958,146 @@ async def update_address_for_client(address_data: AddressCreate, id: int):
 
     # Сохраняем изменения
     await obj.save()
+
+
+# Excel generation logic moved to services/excel_service.py
+
+
+
+@app.post("/delivery/send", dependencies=[Depends(check_not_guest)])
+async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Header()):
+    parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
+    user_info_str = parsed_init_data.get("user")
+    user_data = json.loads(user_info_str)
+    telegram_id = user_data.get("id")
+    # ----------------------------Сообщение для Телеграм-----------------------
+    logger.info(X_Telegram_Init_Data)
+    message_lines = [
+        f"👤 Менеджер: {data.manager}",
+        f"🚚 Контрагент: <code>{data.client}</code>",
+        f"📍 Адреса: {data.address}",
+        f"👤 Контакт: {data.contact}",
+        f"📞 Телефон: {data.phone}",
+        f"📅 Дата доставки: {data.date}",
+        f"💬 Коментар: {data.comment}",
+        "",
+    ]
+
+    for order in data.orders:
+        message_lines.append(f"📦 <b>Замовлення</b> <code>{order.order}</code>")
+        message_lines.append("─" * 20)
+
+        for item in order.items:
+            message_lines.append(f"🔹 <b>{item.product}</b>")
+            message_lines.append(f"   │ <i>Кількість:</i> {item.quantity} шт.")
+
+            active_parties = [p for p in item.parties if p.moved_q > 0]
+            count = len(active_parties)
+
+            if count > 0:
+                for i, party in enumerate(active_parties):
+                    is_last = i == count - 1
+                    branch_symbol = "└" if is_last else "├"
+                    message_lines.append(
+                        f"   {branch_symbol} 🔖 <code>{party.party}</code>: {party.moved_q} шт."
+                    )
+            else:
+                pass
+            message_lines.append("")
+
+        message_lines.append("════════════════════")
+        message_lines.append("")
+    
+    message = "\n".join(message_lines)
+    # ------------------------------------------------------------------------------
+
+    # --- Генерація та надсилання Excel (винесено в сервіс, тимчасово вимкнено) ---
+    # from .services.excel_service import send_delivery_excel_report
+    # background_tasks.add_task(send_delivery_excel_report, data, admins)
+    # ------------------------------------------------------------------------------
+
+    # Проверяем окружение. Если не 'prod', выводим в консоль вместо отправки.
+    app_env = os.getenv("APP_ENV", "dev")
+
+    calendar = await create_calendar_event(data)
+    if calendar:
+        calendar_link = calendar.get("htmlLink")
+        start_info = calendar.get("start", {})
+        date_str = start_info.get("date") or start_info.get("dateTime")
+        date_val = datetime.fromisoformat(date_str).date()
+        await Events.insert(
+            Events(
+                event_id=calendar["id"],
+                event_creator=data.override_created_by if data.override_created_by else telegram_id,
+                event_creator_name=data.manager,
+                event_status=0,
+                start_event=date_val,
+                event=data.client,
+            )
+        ).run()
+        logger.info(f"📅 Добавлено в календарь: {calendar_link}")
+    else:
+        logger.info("❌ Не удалось добавить в календарь")
+
+    # --- Збереження даних в БД ---
+    try:
+        new_delivery = Deliveries(
+            client=data.client,
+            manager=data.manager,
+            address=data.address,
+            contact=data.contact,
+            phone=data.phone,
+            delivery_date=datetime.strptime(data.date, "%Y-%m-%d").date(),
+            comment=data.comment,
+            is_custom_address=data.is_custom_address,
+            latitude=data.latitude,
+            longitude=data.longitude,
+            total_weight=data.total_weight,
+            status=data.status,
+            created_by=data.override_created_by if data.override_created_by else telegram_id,
+            calendar_id=calendar["id"] if calendar else None,
+        )
+        await new_delivery.save().run()
+        logger.info(f"✅ Основна інформація по доставці ID: {new_delivery.id} збережена.")
+
+        items_to_insert = []
+        for order in data.orders:
+            for item in order.items:
+                if item.parties:
+                    for party in item.parties:
+                        if party.moved_q > 0:
+                            items_to_insert.append(
+                                DeliveryItems(
+                                    delivery=new_delivery.id,
+                                    order_ref=order.order,
+                                    product=item.product,
+                                    quantity=item.quantity,
+                                    party=party.party,
+                                    party_quantity=party.moved_q,
+                                )
+                            )
+        if items_to_insert:
+            await DeliveryItems.insert(*items_to_insert).run()
+            logger.info(f"✅ {len(items_to_insert)} позицій по доставці збережено.")
+            
+        await notify_new_delivery(new_delivery, actor_name=data.actor_name)
+
+    except Exception as e:
+        logger.info(f"❌ Помилка збереження доставки в БД: {e}")
+        raise HTTPException(status_code=500, detail=f"Помилка збереження в БД: {e}")
+
+    # Відправка повідомлення адміністраторам
+    admins_json = os.getenv("ADMINS", "[]")
+    admins = json.loads(admins_json)
+    for admin in admins:
+        if SEND_NOTIFICATIONS:
+            await bot.send_message(chat_id=admin, text=message, parse_mode="HTML")
+        else:
+            logger.info(f"🔇 Сповіщення вимкнено. Submit data для адміна {admin} пропущено.")
+        # --- Відправка Excel тимчасово закоментована ---
+        # await bot.send_document(chat_id=admin, document=excel_file)
+    
+    return {"status": "ok"}
 
 
 @app.post("/add_address_for_client", dependencies=[Depends(check_not_guest)])
@@ -1260,26 +1242,30 @@ async def get_data_for_delivery(X_Telegram_Init_Data: str = Header()):
             delivery_data["items"] = list(grouped_items[delivery_id].values())
 
     combined_data = list(deliveries_map.values())
-
     return combined_data
 
-
 @app.post("/delivery/send", dependencies=[Depends(check_not_guest)])
-async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Header()):
+async def send_delivery(
+    data: DeliveryRequest, 
+    background_tasks: BackgroundTasks,
+    X_Telegram_Init_Data: str = Header()
+):
     parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
     user_info_str = parsed_init_data.get("user")
     user_data = json.loads(user_info_str)
     telegram_id = user_data.get("id")
-    # ----------------------------Сообщение для Телеграм-----------------------
-    # 📝 Формируем текст для Telegram
-    logger.info(X_Telegram_Init_Data)
+
+    # 1. Формування повідомлення для Telegram
     message_lines = [
+        "🆕 <b>Нова заявка на доставку!</b>",
+        "",
         f"👤 Менеджер: {data.manager}",
         f"🚚 Контрагент: <code>{data.client}</code>",
         f"📍 Адреса: {data.address}",
         f"👤 Контакт: {data.contact}",
         f"📞 Телефон: {data.phone}",
         f"📅 Дата доставки: {data.date}",
+        f"⚖️ Вага: {data.total_weight} кг",
         f"💬 Коментар: {data.comment}",
         "",
     ]
@@ -1291,315 +1277,140 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
         for item in order.items:
             message_lines.append(f"🔹 <b>{item.product}</b>")
             message_lines.append(f"   │ <i>Кількість:</i> {item.quantity} шт.")
-            # Обрати внимание: я заменил "└" на "│" у товара,
-            # чтобы визуально связать его с партиями ниже, если они есть.
-            # Если партий нет — это можно подправить, но пока оставим так для связности.
 
-            # Отбираем только партии с движением
             active_parties = [p for p in item.parties if p.moved_q > 0]
-
-            # Считаем сколько их всего
             count = len(active_parties)
 
             if count > 0:
                 for i, party in enumerate(active_parties):
-                    # Проверяем: это последняя партия в списке?
                     is_last = i == count - 1
-
-                    # Если последняя - ставим "уголок" (└), иначе "тройник" (├)
                     branch_symbol = "└" if is_last else "├"
-
                     message_lines.append(
                         f"   {branch_symbol} 🔖 <code>{party.party}</code>: {party.moved_q} шт."
                     )
-            else:
-                # Если партий нет, закрываем ветку товара красиво (опционально)
-                pass
-
             message_lines.append("")
 
         message_lines.append("════════════════════")
         message_lines.append("")
-        message = "\n".join(message_lines)
-    # ------------------------------------------------------------------------------
+    
+    message = "\n".join(message_lines)
 
-    # ---------------------Формирование файла Excel---------------------------------
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Доставка"
+    # 2. Створення події в календарі
+    calendar = await create_calendar_event(data)
+    calendar_id = calendar.get("id") if calendar else None
+    if calendar:
+        logger.info(f"📅 Додано в календарь: {calendar.get('htmlLink')}")
+        
+        # Збереження події в таблицю Events
+        start_info = calendar.get("start", {})
+        date_str = start_info.get("date") or start_info.get("dateTime")
+        date_val = datetime.fromisoformat(date_str).date()
+        
+        await Events.insert(
+            Events(
+                event_id=calendar_id,
+                event_creator=data.override_created_by if data.override_created_by else telegram_id,
+                event_creator_name=data.manager,
+                event_status=0,
+                start_event=date_val,
+                event=data.client,
+            )
+        ).run()
+    else:
+        logger.info("❌ Не удалось добавить в календарь")
 
-    # Заголовок документа (жирный, по центру)
-    header_font = Font(bold=True, size=14)
-    ws.append(["Менеджер", data.manager])
-    ws["A1"].font = header_font
-    ws["B1"].font = Font(bold=True)
-
-    ws.append(["Контрагент", data.client])
-    ws["A2"].font = header_font
-    ws["B2"].font = Font(bold=True)
-
-    ws.append(["Адреса", data.address])
-    ws["A3"].font = header_font
-    ws["B3"].font = Font(bold=True)
-
-    ws.append(["Контакт", data.contact])
-    ws["A4"].font = header_font
-    ws["B4"].font = Font(bold=True)
-
-    ws.append(["Телефон", data.phone])
-    ws["A5"].font = header_font
-    ws["B5"].font = Font(bold=True)
-
-    ws.append(["Дата", data.date])
-    ws["A6"].font = header_font
-    ws["B6"].font = Font(bold=True)
-
-    ws.append(["Коментар", data.comment or ""])
-    ws["A7"].font = header_font
-    ws["B7"].font = Font(bold=True)
-
-    # Пустая строка
-    ws.append([])
-
-    # Заголовок таблицы (с сеткой)
-    header_fill = PatternFill(start_color="DDEBF7", fill_type="solid")
-    title_font = Font(bold=True, size=12)
-    thin_border = Border(
-        left=Side(style="thin"),
-        right=Side(style="thin"),
-        top=Side(style="thin"),
-        bottom=Side(style="thin"),
-    )
-
-    ws.append(["Доповнення", "Товар", "Кількість"])
-    row = ws.max_row
-    for col in range(1, 4):
-        cell = ws.cell(row=row, column=col)
-        cell.font = title_font
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center")
-        cell.border = thin_border
-
-    # Таблица товаров
-    for order in data.orders:
-        for item in order.items:
-            # ОСНОВНАЯ СТРОКА - ВСЕ ЖИРНОЕ, количество ВПРАВО
-            ws.append([order.order, item.product, item.quantity])
-            main_row = ws.max_row
-
-            # Стили основной строки
-            main_bold_font = Font(bold=True)
-            ws[f"A{main_row}"].font = main_bold_font
-            ws[f"A{main_row}"].alignment = Alignment(horizontal="left")
-
-            ws[f"B{main_row}"].font = main_bold_font
-            ws[f"B{main_row}"].alignment = Alignment(horizontal="left")
-
-            ws[f"C{main_row}"].font = main_bold_font
-            ws[f"C{main_row}"].alignment = Alignment(
-                horizontal="right"
-            )  # Количество ВПРАВО
-
-            # Границы основной строки
-            for col in range(1, 4):
-                ws.cell(row=main_row, column=col).border = thin_border
-
-            # Подстроки партий - обычный шрифт, количество ВЛЕВО
-            if item.parties and item.parties[0].moved_q > 0:
-                for party in item.parties:
-                    ws.append(["", f"  ↳ {party.party}", party.moved_q])
-                    party_row = ws.max_row
-
-                    # Партия: обычный шрифт, ВЛЕВО
-                    party_font = Font(italic=True, size=11)
-                    ws[f"B{party_row}"].font = party_font
-                    ws[f"B{party_row}"].alignment = Alignment(horizontal="left")
-
-                    ws[f"C{party_row}"].font = party_font  # НЕ жирный, как название
-                    ws[f"C{party_row}"].alignment = Alignment(
-                        horizontal="left"
-                    )  # ВЛЕВО
-
-                    # Границы партии
-                    for col in range(1, 4):
-                        ws.cell(row=party_row, column=col).border = thin_border
-
-    # Двойная линия снизу таблицы
-    last_row = ws.max_row
-    for col in range(1, 4):
-        ws.cell(row=last_row, column=col).border = Border(
-            left=Side(style="thin"),
-            right=Side(style="thin"),
-            top=Side(style="thin"),
-            bottom=Side(style="double"),
+    # 3. Збереження даних в БД
+    try:
+        new_delivery = Deliveries(
+            client=data.client,
+            manager=data.manager,
+            address=data.address,
+            contact=data.contact,
+            phone=data.phone,
+            delivery_date=datetime.strptime(data.date, "%Y-%m-%d").date(),
+            comment=data.comment,
+            is_custom_address=data.is_custom_address,
+            latitude=data.latitude,
+            longitude=data.longitude,
+            total_weight=data.total_weight,
+            status=data.status,
+            created_by=data.override_created_by if data.override_created_by else telegram_id,
+            calendar_id=calendar_id,
         )
+        await new_delivery.save().run()
+        logger.info(f"✅ Основна інформація по доставці ID: {new_delivery.id} збережена.")
 
-    # Автоподбор ширины
-    for column in ws.columns:
-        max_length = 0
-        column_letter = get_column_letter(column[0].column)
-        for cell in column:
-            try:
-                if len(str(cell.value)) > max_length:
-                    max_length = len(str(cell.value))
-            except:
-                pass
-        adjusted_width = min(max_length + 2, 50)
-        ws.column_dimensions[column_letter].width = adjusted_width
-
-    # wb.save("доставка.xlsx")
-
-    # Сохраняем Excel во временный файл
-    # Название файла с именем менеджера
-    safe_manager = data.manager.replace(" ", "_")
-    filename = (
-        f"Доставка_{safe_manager}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-    )
-
-    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
-        # Сохраняем Excel
-        wb.save(tmp.name)
-        tmp.flush()
-
-        # Проверяем окружение. Если не 'prod', выводим в консоль вместо отправки.
-        app_env = os.getenv("APP_ENV", "dev")
-
-        calendar = await create_calendar_event(data)
-        # Создание события в календаре
-        # calendar = await create_calendar_event(data)
-        if calendar:
-            calendar_link = calendar.get("htmlLink")
-            start_info = calendar.get("start", {})
-            date_str = start_info.get("date") or start_info.get("dateTime")
-            date = datetime.fromisoformat(date_str).date()
-            await Events.insert(
-                Events(
-                    event_id=calendar["id"],
-                    event_creator=data.override_created_by if data.override_created_by else telegram_id,
-                    event_creator_name=data.manager,
-                    event_status=0,
-                    start_event=date,
-                    event=data.client,
-                )
-            ).run()
-            logger.info("📅 Добавлено в календарь:", calendar_link)
-        else:
-            logger.info("❌ Не удалось добавить в календарь")
-        # --- ШАГ 1: Сохранение данных в БД (ВРЕМЕННО ВЫНЕСЕНО ДЛЯ ТЕСТА) ---
-        try:
-            # 1.1 Создаем основную запись о доставке
-            new_delivery = Deliveries(
-                client=data.client,
-                manager=data.manager,
-                address=data.address,
-                contact=data.contact,
-                phone=data.phone,
-                delivery_date=datetime.strptime(data.date, "%Y-%m-%d").date(),
-                comment=data.comment,
-                is_custom_address=data.is_custom_address,
-                latitude=data.latitude,
-                longitude=data.longitude,
-                total_weight=data.total_weight,
-                status=data.status,
-                created_by=data.override_created_by if data.override_created_by else telegram_id,
-                calendar_id=calendar["id"],
-            )
-            await new_delivery.save().run()
-            logger.info(f"✅ Основна інформація по доставці ID: {new_delivery.id} збережена.")
-
-            # 1.2 Готовим список товаров для массовой вставки
-            items_to_insert = []
-            for order in data.orders:
-                for item in order.items:
-                    # Проверяем, есть ли вообще партии для этого товара
-                    if item.parties:
-                        for party in item.parties:
-                            # Добавляем только те партии, где есть движение
-                            if party.moved_q > 0:
-                                items_to_insert.append(
-                                    DeliveryItems(
-                                        delivery=new_delivery.id,  # Связь с основной записью
-                                        order_ref=order.order,
-                                        product=item.product,
-                                        quantity=item.quantity,
-                                        party=party.party,
-                                        party_quantity=party.moved_q,
-                                    )
+        items_to_insert = []
+        for order in data.orders:
+            for item in order.items:
+                if item.parties:
+                    for party in item.parties:
+                        if party.moved_q > 0:
+                            items_to_insert.append(
+                                DeliveryItems(
+                                    delivery=new_delivery.id,
+                                    order_ref=order.order,
+                                    product=item.product,
+                                    quantity=item.quantity,
+                                    party=party.party,
+                                    party_quantity=party.moved_q,
                                 )
-            # 1.3 Сохраняем все товары одним запросом
-            if items_to_insert:
-                await DeliveryItems.insert(*items_to_insert).run()
-                logger.info(f"✅ {len(items_to_insert)} позицій по доставці збережено.")
-                
-            # Сповіщення логістів про нову доставку
-            await notify_new_delivery(new_delivery)
+                            )
+        if items_to_insert:
+            await DeliveryItems.insert(*items_to_insert).run()
+            logger.info(f"✅ {len(items_to_insert)} позицій по доставці збережено.")
+            
+        # notify_new_delivery видалено, бо тепер надсилається одне детальне повідомлення
 
-        except Exception as e:
-            logger.info(f"❌ Помилка збереження доставки в БД: {e}")
-            raise HTTPException(status_code=500, detail=f"Помилка збереження в БД: {e}")
+    except Exception as e:
+        logger.error(f"❌ Помилка збереження доставки в БД: {e}")
+        raise HTTPException(status_code=500, detail=f"Помилка збереження в БД: {e}")
 
-        if app_env == "production":
-            # Готовим файл к отправке
-            excel_file = FSInputFile(tmp.name, filename=filename)
-
-            # Отправка сообщения администраторам
-            admins_json = os.getenv("ADMINS", "[]")
-            admins = json.loads(admins_json)
-            for admin in admins:
-                await bot.send_message(chat_id=admin, text=message, parse_mode="HTML")
-                await bot.send_document(chat_id=admin, document=excel_file)
-
-            # Визначаємо власника (якщо це розділення адміном, то використовуємо override_created_by)
-            owner_id = data.override_created_by if data.override_created_by else telegram_id
-
-            # Відправка повідомлення власнику
-            await bot.send_message(
-                chat_id=owner_id, text="Ви відправили такі данні для доставки:"
-            )
-            await bot.send_message(chat_id=owner_id, text=message, parse_mode="HTML")
-
-            # Якщо адмін розділяє чужу доставку, надсилаємо йому підтвердження
-            if owner_id != telegram_id:
-                await bot.send_message(
-                    chat_id=telegram_id, 
-                    text=f"✅ Ви успішно розділили доставку. Сповіщення надіслано власнику (ID: {owner_id})."
-                )
-                await bot.send_message(chat_id=telegram_id, text=message, parse_mode="HTML")
-
-            # Создание события в календаре
-            # calendar = await create_calendar_event(data)
-            # if calendar:
-            #     calendar_link = calendar.get("htmlLink")
-            #     date = datetime.fromisoformat(calendar["start"]["dateTime"]).date()
-            #     await Events.insert(
-            #         Events(
-            #             event_id=calendar["id"],
-            #             event_creator=telegram_id,
-            #             event_creator_name=data.manager,
-            #             event_status=0,
-            #             start_event=date,
-            #             event=data.client,
-            #         )
-            #     ).run()
-            #     logger.info("📅 Добавлено в календарь:", calendar_link)
-            # else:
-            #     logger.info("❌ Не удалось добавить в календарь")
-
+    # 4. Відправка повідомлень адміністраторам, логістам та власнику
+    # Отримуємо список адміністраторів з оточення
+    admins_json = os.getenv("ADMINS", "[]")
+    admins = json.loads(admins_json)
+    
+    # Об'єднуємо з ідентифікаторами логістів (з конфігу), щоб усі отримували детальне повідомлення
+    # Використовуємо set для унікальності
+    all_recipients = list(set(admins + LOGISTICS_TELEGRAM_IDS))
+    
+    # Відправка всім отримувачам (адміни + логісти)
+    for recipient_id in all_recipients:
+        if SEND_NOTIFICATIONS:
+            try:
+                await bot.send_message(chat_id=recipient_id, text=message, parse_mode="HTML")
+            except Exception as e:
+                logger.error(f"❌ Помилка відправки отримувачу {recipient_id}: {e}")
         else:
-            # Режим разработки: выводим все в консоль
-            owner_id = data.override_created_by if data.override_created_by else telegram_id
-            logger.info("\n--- [DEV] РЕЖИМ: ВІДПРАВКА ПОВІДОМЛЕННЯ ПРО ДОСТАВКУ ---")
-            logger.info(f"--- [DEV] Одержувачі (адміни): {os.getenv('ADMINS', '[]')}")
-            logger.info(f"--- [DEV] Одержувач (власник): {owner_id}")
-            if owner_id != telegram_id:
-                logger.info(f"--- [DEV] Одержувач (адмін-ініціатор): {telegram_id}")
-            logger.info("--- [DEV] Текст повідомлення: ---")
-            logger.info(message)
-            logger.info(f"--- [DEV] Excel-файл '{filename}' було б надіслано. ---")
-            logger.info("--- [DEV] Створення події в календарі пропущено. ---")
+            logger.info(f"🔇 Сповіщення вимкнено. Дані для {recipient_id} пропущено.")
 
-    # Удаляем временный файл
-    os.remove(tmp.name)
+    # Відправка власнику (якщо його немає в списку отримувачів)
+    owner_id = data.override_created_by if data.override_created_by else telegram_id
+    if owner_id not in all_recipients:
+        if SEND_NOTIFICATIONS:
+            try:
+                await bot.send_message(chat_id=owner_id, text="<b>Ви відправили такі дані для доставки:</b>", parse_mode="HTML")
+                await bot.send_message(chat_id=owner_id, text=message, parse_mode="HTML")
+            except Exception as e:
+                logger.error(f"❌ Помилка відправки власнику {owner_id}: {e}")
+    
+    # Якщо адмін розділяє чужу доставку, надсилаємо йому підтвердження (якщо він не отримувач)
+    if owner_id != telegram_id and telegram_id not in all_recipients:
+        try:
+            await bot.send_message(
+                chat_id=telegram_id, 
+                text=f"✅ Ви успішно розділили доставку. Сповіщення надіслано власнику (ID: {owner_id})."
+            )
+            if SEND_NOTIFICATIONS:
+                await bot.send_message(chat_id=telegram_id, text=message, parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"❌ Помилка відправки ініціатору {telegram_id}: {e}")
+
+    # --- Генерація та надсилання Excel (тимчасово вимкнено, але код збережено в сервісі) ---
+    # from .services.excel_service import send_delivery_excel_report
+    # background_tasks.add_task(send_delivery_excel_report, data, list(set(all_recipients + [owner_id])))
+    # ------------------------------------------------------------------------------
 
     return {"status": "ok"}
 
@@ -1611,15 +1422,18 @@ async def delete_delivery(deliveryId: DeleteDeliveryRequest):
         .where(Deliveries.id == deliveryId.delivery_id)
         .first()
     )
-    await bot.send_message(
-        chat_id=data.created_by,
-        text=(
-            f"❌ <b>Доставку скасовано</b>\n\n"
-            f"👤 Клієнт: <b>{data.client}</b>\n"
-            f"🗑 <i>Дані про доставку видалено з бази.</i>"
-        ),
-        parse_mode="HTML",
-    )
+    if SEND_NOTIFICATIONS:
+        await bot.send_message(
+            chat_id=data.created_by,
+            text=(
+                f"❌ <b>Доставку скасовано</b>\n\n"
+                f"👤 Клієнт: <b>{data.client}</b>\n"
+                f"🗑 <i>Дані про доставку видалено з бази.</i>"
+            ),
+            parse_mode="HTML",
+        )
+    else:
+        logger.info(f"🔇 Сповіщення вимкнено. Скасування доставки {deliveryId.delivery_id} пропущено.")
     await Deliveries.delete().where(Deliveries.id == deliveryId.delivery_id).run()
     await Events.delete().where(Events.event_id == data.calendar_id).run()
     delete_calendar_event_by_id(event_id=data.calendar_id)
