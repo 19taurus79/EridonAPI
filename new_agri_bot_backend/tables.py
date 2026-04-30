@@ -349,3 +349,11 @@ class OrderChatMessage(Table):
     @classmethod
     def get_readable(cls):
         return Readable(template="%s", columns=[cls.message_text])
+
+class DeliveryNotifications(Table):
+    """Таблиця для відстеження повідомлень в Telegram для видалення"""
+    delivery_id = BigInt(index=True)
+    telegram_id = BigInt()
+    message_id = BigInt()
+    event_type = Varchar(length=50) # 'created', 'in_work', etc.
+    created_at = Timestamp(default=TimestampNow())
