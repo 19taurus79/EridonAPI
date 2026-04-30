@@ -93,6 +93,7 @@ from .order_chat import router as chat_router
 from .notification import router as notification_router
 from .nova_poshta import router as nova_poshta_router
 from .bot_handlers import setup_bot_handlers
+from .scheduler import setup_scheduler
 from .utils import send_message_to_managers, create_composite_key_from_dict
 from .delivery_notifications import notify_new_delivery, notify_delivery_status_change, delete_delivery_notifications
 
@@ -102,9 +103,10 @@ from .config import (
     TELEGRAM_BOT_TOKEN, 
     bot, 
     logger, 
-    SEND_NOTIFICATIONS, 
+    BACKEND_URL,
+    CORS_ORIGINS,
+    SEND_NOTIFICATIONS,
     LOGISTICS_TELEGRAM_IDS,
-    BACKEND_URL
 )
 
 # Инициализация Telegram Bot (используется в utils.py, но может быть нужен здесь для глобальной инициализации)
@@ -199,30 +201,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# --- Конфигурация CORS ---
-origins = [
-    "https://taurus.pp.ua",
-    "https://eridon-react.vercel.app",
-    "https://eridon-bot-next-js.vercel.app",
-    "http://127.0.0.1:5173",
-    "http://localhost:5173",
-    "http://127.0.0.1:5500",
-    "http://127.0.0.1:8000",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "https://telegram-mini-app-six-inky.vercel.app",
-    "https://geocode-six.vercel.app",
-    "https://paravail-aubrianna-noncrystalline.ngrok-free.dev",
-    "http://eridon-dev.local",
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/health", tags=["System"])
+async def health_check():
+    """Перевірка працездатності сервісу."""
+    return {
+        "status": "ok",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "version": "1.0.0"
+    }
 
 # --- Подключение маршрутов ---
 app.include_router(telegram_auth_router)  # Подключаем маршруты из telegram_auth.py
