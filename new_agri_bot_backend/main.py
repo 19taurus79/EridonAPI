@@ -329,9 +329,8 @@ async def create_calendar_event(data: DeliveryRequest) -> Optional[str]:
         )
         service = build("calendar", "v3", credentials=credentials)
 
-        delivery_date = datetime.strptime(data.date, "%Y-%m-%d")
-        start = delivery_date.replace(hour=9, minute=0)
-        end = start + timedelta(hours=1)
+        delivery_date = datetime.strptime(data.date, "%Y-%m-%d").date()
+        end_date = delivery_date + timedelta(days=1)
 
         # 📝 Основная информация
         lines = [
@@ -359,12 +358,10 @@ async def create_calendar_event(data: DeliveryRequest) -> Optional[str]:
             "location": data.address,
             "description": description,
             "start": {
-                "dateTime": start.isoformat(),
-                "timeZone": "Europe/Kyiv",
+                "date": delivery_date.isoformat(),
             },
             "end": {
-                "dateTime": end.isoformat(),
-                "timeZone": "Europe/Kyiv",
+                "date": end_date.isoformat(),
             },
             "colorId": "11",
         }
@@ -1470,7 +1467,9 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
         # calendar = await create_calendar_event(data)
         if calendar:
             calendar_link = calendar.get("htmlLink")
-            date = datetime.fromisoformat(calendar["start"]["dateTime"]).date()
+            start_info = calendar.get("start", {})
+            date_str = start_info.get("date") or start_info.get("dateTime")
+            date = datetime.fromisoformat(date_str).date()
             await Events.insert(
                 Events(
                     event_id=calendar["id"],
