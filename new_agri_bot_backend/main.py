@@ -79,6 +79,7 @@ from .notification import router as notification_router
 from .nova_poshta import router as nova_poshta_router
 from .scheduler import setup_scheduler
 from .utils import send_message_to_managers, create_composite_key_from_dict
+from .delivery_notifications import notify_new_delivery, notify_delivery_status_change, delete_delivery_notifications
 
 # Импорт TELEGRAM_BOT_TOKEN из config.py для инициализации бота
 from .config import TELEGRAM_BOT_TOKEN, bot, logger
@@ -159,6 +160,7 @@ class UpdateDeliveryRequest(BaseModel):
     status: str
     total_weight: Optional[float] = None
     items: List[UpdateItem]
+    actor_name: Optional[str] = None
 
 
 class ChangeDeliveryDateRequest(BaseModel):
@@ -1528,6 +1530,9 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
             if items_to_insert:
                 await DeliveryItems.insert(*items_to_insert).run()
                 logger.info(f"✅ {len(items_to_insert)} позицій по доставці збережено.")
+                
+            # Сповіщення логістів про нову доставку
+            await notify_new_delivery(new_delivery)
 
         except Exception as e:
             logger.info(f"❌ Помилка збереження доставки в БД: {e}")
@@ -1618,6 +1623,8 @@ async def delete_delivery(deliveryId: DeleteDeliveryRequest):
     await Deliveries.delete().where(Deliveries.id == deliveryId.delivery_id).run()
     await Events.delete().where(Events.event_id == data.calendar_id).run()
     delete_calendar_event_by_id(event_id=data.calendar_id)
+    # Видалення сповіщень з Телеграм
+    await delete_delivery_notifications(deliveryId.delivery_id)
 
 
 @app.post("/delivery/update", tags=["Delivery"], dependencies=[Depends(check_not_guest)])
@@ -1638,6 +1645,14 @@ async def update_delivery(data: UpdateDeliveryRequest):
             await Deliveries.update(update_fields).where(
                 Deliveries.id == data.delivery_id
             ).run()
+            
+            # Сповіщення про зміну статусу
+            if delivery_data.status != data.status:
+                await notify_delivery_status_change(
+                    delivery=delivery_data, 
+                    status=data.status, 
+                    actor_name=data.actor_name
+                )
             # logger.info(delivery_data)
             event_data = await Events.objects().where(Events.event_id == delivery_data.calendar_id).first()
             # logger.info(event_data)
