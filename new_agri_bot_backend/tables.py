@@ -182,6 +182,7 @@ class AvStockProd(Table):
 
     class Meta:
         tablename = "av_stock_prod"
+        managed = False
 
 
 class ProductsForOrders(Table):
@@ -193,6 +194,7 @@ class ProductsForOrders(Table):
 
     class Meta:
         tablename = "products_for_orders"
+        managed = False
 
 
 class DetailsForOrders(Table):
@@ -226,6 +228,7 @@ class ValidFreeStock(Table):
 
     class Meta:
         tablename = "valid_free_stock"
+        managed = False
 
 
 
