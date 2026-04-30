@@ -31,6 +31,7 @@ from .models import (
     DeleteDeliveryRequest, 
     UpdateDeliveryRequest, 
     BatchUpdateDeliveryRequest,
+    ChangeDeliveryDateRequest,
     CreateCommentRequest,
     UpdateCommentRequest,
     CommentResponse,
