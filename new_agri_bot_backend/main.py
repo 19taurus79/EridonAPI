@@ -774,6 +774,7 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
         f"👤 Менеджер: {data.manager}",
         f"🚚 Контрагент: <code>{data.client}</code>",
         f"📍 Адреса: {data.address}",
+        f"⚖️ Вага: {data.total_weight} кг",
         f"👤 Контакт: {data.contact}",
         f"📞 Телефон: {data.phone}",
         f"📅 Дата доставки: {data.date}",
@@ -878,22 +879,11 @@ async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Heade
             await DeliveryItems.insert(*items_to_insert).run()
             logger.info(f"✅ {len(items_to_insert)} позицій по доставці збережено.")
             
-        await notify_new_delivery(new_delivery, actor_name=data.actor_name)
+        await notify_new_delivery(new_delivery, custom_text=message)
 
     except Exception as e:
-        logger.info(f"❌ Помилка збереження доставки в БД: {e}")
+        logger.error(f"❌ Помилка збереження доставки в БД: {e}")
         raise HTTPException(status_code=500, detail=f"Помилка збереження в БД: {e}")
-
-    # Відправка повідомлення адміністраторам
-    admins_json = os.getenv("ADMINS", "[]")
-    admins = json.loads(admins_json)
-    for admin in admins:
-        if SEND_NOTIFICATIONS:
-            await bot.send_message(chat_id=admin, text=message, parse_mode="HTML")
-        else:
-            logger.info(f"🔇 Сповіщення вимкнено. Submit data для адміна {admin} пропущено.")
-        # --- Відправка Excel тимчасово закоментована ---
-        # await bot.send_document(chat_id=admin, document=excel_file)
     
     return {"status": "ok"}
 
@@ -1238,7 +1228,8 @@ async def update_delivery(
                 await notify_delivery_status_change(
                     delivery=delivery_data, 
                     status=data.status, 
-                    actor_name=data.actor_name
+                    actor_name=data.actor_name,
+                    actor_id=parsed_init_data["id"]
                 )
             except Exception as e:
                 logger.error(f"Error notifying status change: {e}")
@@ -1248,7 +1239,7 @@ async def update_delivery(
             if delivery_data.calendar_id:
                 try:
                     cal_status = 2 if data.status == "Виконано" else 1
-                    changed_color_calendar_events_by_id(id=delivery_data.calendar_id, status=cal_status)
+                    changed_color_calendar_events_by_id(event_id=delivery_data.calendar_id, status_code=cal_status)
                     await Events.update({Events.event_status: cal_status}).where(
                         Events.event_id == delivery_data.calendar_id
                     ).run()
@@ -1466,7 +1457,7 @@ async def batch_update_deliveries(
                     # Google Calendar color update
                     if delivery.calendar_id:
                         cal_status = 2 if data.status == "Виконано" else 1
-                        changed_color_calendar_events_by_id(id=delivery.calendar_id, status=cal_status)
+                        changed_color_calendar_events_by_id(event_id=delivery.calendar_id, status_code=cal_status)
                         await Events.update({Events.event_status: cal_status}).where(
                             Events.event_id == delivery.calendar_id
                         ).run()

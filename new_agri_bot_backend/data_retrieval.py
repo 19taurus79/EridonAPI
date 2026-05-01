@@ -931,7 +931,7 @@ async def event_changed_date(
             Events.event_who_changed_name: user.full_name_for_orders,
         }
     ).where(Events.event_id == event_id).run()
-    changed_date_calendar_events_by_id(id=event_id, new_date=new_date.new_date)
+    changed_date_calendar_events_by_id(event_id=event_id, new_date=new_date.new_date)
     telegram_data = await Events.select().where(Events.event_id == event_id)
     if SEND_NOTIFICATIONS:
         await bot.send_message(
