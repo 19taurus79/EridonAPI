@@ -1604,6 +1604,44 @@ async def change_delivery_date(
         )
 
 
+@app.delete("/delivery/delete", dependencies=[Depends(check_not_guest)])
+async def delete_delivery(data: DeleteDeliveryRequest):
+    """
+    Повністю видаляє доставку, пов'язані товари, подію в календарі та сповіщення в Telegram.
+    """
+    try:
+        # 1. Отримуємо дані про доставку перед видаленням (для календаря)
+        delivery = await Deliveries.objects().where(Deliveries.id == data.delivery_id).first().run()
+        if not delivery:
+            raise HTTPException(status_code=404, detail="Доставку не знайдено")
+
+        # 2. Видаляємо сповіщення в Telegram
+        await delete_delivery_notifications(data.delivery_id)
+
+        # 3. Видаляємо з Google Calendar та таблиці Events
+        if delivery.calendar_id:
+            try:
+                delete_calendar_event_by_id(delivery.calendar_id)
+                await Events.delete().where(Events.event_id == delivery.calendar_id).run()
+            except Exception as cal_err:
+                logger.error(f"Error deleting calendar event: {cal_err}")
+
+        # 4. Видаляємо товари та саму доставку (Piccolo не видаляє каскадно автоматично без налаштувань)
+        async with Deliveries._meta.db.transaction():
+            await DeliveryItems.delete().where(DeliveryItems.delivery == data.delivery_id).run()
+            await Deliveries.delete().where(Deliveries.id == data.delivery_id).run()
+
+        logger.info(f"🗑 Доставка ID: {data.delivery_id} ({delivery.client}) повністю видалена.")
+        return {"status": "ok", "message": "Доставка успішно видалена"}
+
+    except Exception as e:
+        logger.error(f"❌ Помилка видалення доставки: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Не вдалося видалити доставку: {e}",
+        )
+
+
 @app.post(
     "/orders/comments/create",
     response_model=CommentResponse,
