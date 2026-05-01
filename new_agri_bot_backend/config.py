@@ -35,8 +35,10 @@ MANAGERS_ID = {
 # Список ID администраторов (из JSON строки в .env)
 ADMINS_JSON = os.getenv("ADMINS", "[]")
 try:
-    ADMINS_ID = json.loads(ADMINS_JSON)
-except Exception:
+    # Декодируем JSON и приводим каждый ID к типу int для надежности
+    ADMINS_ID = [int(admin_id) for admin_id in json.loads(ADMINS_JSON)]
+except Exception as e:
+    logger.error(f"Error parsing ADMINS_ID: {e}")
     ADMINS_ID = []
 
 # ID логістів (з .env або за замовчуванням)
