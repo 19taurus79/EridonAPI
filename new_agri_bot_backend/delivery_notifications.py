@@ -27,7 +27,7 @@ async def delete_delivery_notifications(delivery_id: int):
         DeliveryNotifications.delivery_id == delivery_id
     ).run()
 
-async def notify_new_delivery(delivery: Deliveries, actor_name: str = None):
+async def notify_new_delivery(delivery: Deliveries, actor_name: str = None, custom_text: str = None):
     """Сповістити всіх логістів про нову доставку"""
     if not SEND_NOTIFICATIONS:
         logger.info("🔇 Сповіщення вимкнено (SEND_NOTIFICATIONS=false). Пропускаємо notify_new_delivery.")
@@ -44,19 +44,22 @@ async def notify_new_delivery(delivery: Deliveries, actor_name: str = None):
     # Стандартна логіка для нової заявки
     await delete_delivery_notifications(delivery.id)
     
-    safe_client = html.escape(delivery.client)
-    safe_manager = html.escape(delivery.manager or "Невідомий")
-    safe_address = html.escape(delivery.address or "Не вказано")
-    
-    text = (
-        f"🆕 <b>Нова заявка на доставку!</b>\n\n"
-        f"👤 Клієнт: <b>{safe_client}</b>\n"
-        f"👨‍💼 Менеджер: {safe_manager}\n"
-        f"📍 Адреса: {safe_address}\n"
-        f"📅 Дата: {delivery.delivery_date}\n"
-        f"⚖️ Вага: {delivery.total_weight} кг\n"
-        f"📝 Коментар: {html.escape(delivery.comment or '')}"
-    )
+    if custom_text:
+        text = custom_text
+    else:
+        safe_client = html.escape(delivery.client)
+        safe_manager = html.escape(delivery.manager or "Невідомий")
+        safe_address = html.escape(delivery.address or "Не вказано")
+        
+        text = (
+            f"🆕 <b>Нова заявка на доставку!</b>\n\n"
+            f"👤 Клієнт: <b>{safe_client}</b>\n"
+            f"👨‍💼 Менеджер: {safe_manager}\n"
+            f"📍 Адреса: {safe_address}\n"
+            f"📅 Дата: {delivery.delivery_date}\n"
+            f"⚖️ Вага: {delivery.total_weight} кг\n"
+            f"📝 Коментар: {html.escape(delivery.comment or '')}"
+        )
     
     logger.info(f"🆕 Спроба сповіщення про нову доставку ID: {delivery.id}")
     logger.info(f"👥 Список отримувачів (LOGISTICS_TELEGRAM_IDS): {LOGISTICS_TELEGRAM_IDS}")
@@ -77,23 +80,19 @@ async def notify_new_delivery(delivery: Deliveries, actor_name: str = None):
         except Exception as e:
             logger.error(f"❌ Помилка відправки або збереження повідомлення адміну {admin_id}: {e}")
 
-async def notify_delivery_status_change(delivery: Deliveries, status: str, actor_name: str = None):
-    """Сповістити про зміну статусу та видалити старі повідомлення"""
+async def notify_delivery_status_change(delivery: Deliveries, status: str, actor_name: str = None, actor_id: int = None):
+    """Повідомити всіх логістів про зміну статусу доставки (крім автора зміни)"""
     if not SEND_NOTIFICATIONS:
         logger.info("🔇 Сповіщення вимкнено (SEND_NOTIFICATIONS=false). Пропускаємо notify_delivery_status_change.")
         return
-    # 1. Видаляємо старі повідомлення ("Нова заявка")
+    
+    # 1. Видаляємо всі попередні повідомлення по цій доставці
     await delete_delivery_notifications(delivery.id)
     
-    # 2. Формуємо текст нового повідомлення
+    # 2. Формуємо текст
     safe_client = html.escape(delivery.client)
-    status_text = ""
     
-    if status == "В роботі":
-        status_text = "✅ <b>Взято в роботу</b>"
-    elif status == "Доставка з ЦО на клієнта":
-        status_text = "🏢 <b>Доставка з ЦО</b>"
-    elif status == "Виконано":
+    if status == "Виконано":
         status_text = "🎉 <b>Виконано</b>"
     else:
         status_text = f"🔄 Статус змінено на: <b>{status}</b>"
@@ -107,8 +106,11 @@ async def notify_delivery_status_change(delivery: Deliveries, status: str, actor
         f"📅 Дата: {delivery.delivery_date}"
     )
     
-    # 3. Надсилаємо нове повідомлення всім логістам
+    # 3. Надсилаємо нове повідомлення всім логістам (крім того, хто зробив зміну)
     for admin_id in LOGISTICS_TELEGRAM_IDS:
+        if actor_id and admin_id == actor_id:
+            continue
+            
         try:
             msg = await bot.send_message(chat_id=admin_id, text=text, parse_mode="HTML")
             

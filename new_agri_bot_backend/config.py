@@ -20,6 +20,8 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("agri_bot")
+# Приглушуємо логування APScheduler, щоб він не спамив у консоль щохвилини
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
 # --- Настройки Telegram Бота ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")

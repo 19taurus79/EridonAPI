@@ -37,9 +37,7 @@ async def send_event_summary(subset="all", day="today"):
     events = await query.run()
     
     if not events:
-        if subset == "unclosed":
-            return # Не спамити, якщо все закрито
-        msg = f"<b>{type_str} {day_str} відсутні.</b>"
+        return # Не спамити взагалі, якщо подій немає
     else:
         msg_lines = [f"<b>{type_str} {day_str}:</b>", ""]
         for ev in events:
@@ -106,11 +104,11 @@ def setup_scheduler():
     scheduler.add_job(check_and_delete_messages, 'interval', minutes=1)
 
     # 9:30 - Всі події на сьогодні (Пн-Пт)
-    scheduler.add_job(send_event_summary, 'cron', day_of_week='mon-fri', hour=9, minute=30, args=["all", "today"])
-    # 15:00 - Незакриті події на сьогодні (Пн-Пт)
-    scheduler.add_job(send_event_summary, 'cron', day_of_week='mon-fri', hour=15, minute=0, args=["unclosed", "today"])
+    scheduler.add_job(send_event_summary, 'cron', day_of_week='mon-fri', hour=9, minute=30, args=["all", "today"], misfire_grace_time=60, coalesce=True)
+    # 15:00 - Незакриті події на сегодня (Пн-Пт)
+    scheduler.add_job(send_event_summary, 'cron', day_of_week='mon-fri', hour=15, minute=0, args=["unclosed", "today"], misfire_grace_time=60, coalesce=True)
     # 17:00 - Події на завтра (Пн-Чт для наступного робочого дня)
-    scheduler.add_job(send_event_summary, 'cron', day_of_week='mon-fri', hour=17, minute=0, args=["all", "tomorrow"])
+    scheduler.add_job(send_event_summary, 'cron', day_of_week='mon-fri', hour=17, minute=0, args=["all", "tomorrow"], misfire_grace_time=60, coalesce=True)
     
     scheduler.start()
     logger.info("Scheduler started with cleanup job (1min) and summary jobs.")

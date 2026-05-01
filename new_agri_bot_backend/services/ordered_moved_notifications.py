@@ -6,7 +6,7 @@ import pandas as pd
 from aiogram import Bot
 from pandas import Timestamp
 
-from new_agri_bot_backend.config import TELEGRAM_BOT_TOKEN, ADMINS_ID, logger
+from new_agri_bot_backend.config import TELEGRAM_BOT_TOKEN, ADMINS_ID, logger, SEND_NOTIFICATIONS
 from new_agri_bot_backend.services.send_telegram_notification import send_notification
 from new_agri_bot_backend.tables import Submissions, Users
 
@@ -190,7 +190,7 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
             if telegram_id:
                 message_chunks = await split_message_into_chunks(message_text)
                 for chunk in message_chunks:
-                    if app_env == "production":
+                    if SEND_NOTIFICATIONS:
                         await send_notification(
                             bot=bot,
                             chat_ids=[telegram_id],  # Передаем ID в списке
@@ -234,7 +234,7 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
             report_chunks = await split_message_into_chunks(admin_full_report)
 
             for chunk in report_chunks:
-                if app_env == "production":
+                if SEND_NOTIFICATIONS:
                     logger.info(
                         f"\n--- Відправка зведеного звіту адміністраторам ({', '.join(map(str, admin_chat_ids))}) ---"
                     )
