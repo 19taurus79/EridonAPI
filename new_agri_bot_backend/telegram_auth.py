@@ -609,7 +609,7 @@ class ConfirmTokenRequest(BaseModel):
 @router.post("/auth/confirm-login-token", summary="Підтвердження токену від телеграм-бота")
 async def api_confirm_login_token(req: ConfirmTokenRequest):
     """
-    Ендпоінт для окремого бота, щоб підтвердити 4-значний код або weblogin_token.
+    Ендпоінт для окремого бота, щоб підтвердити 6-значний код або weblogin_token.
     Бот відправляє сюди токен та telegram_id. 
     """
     success = await confirm_login_token(req.token, req.telegram_id)

@@ -96,7 +96,7 @@ from .nova_poshta import router as nova_poshta_router
 from .bot_handlers import setup_bot_handlers
 from .scheduler import setup_scheduler
 from .utils import send_message_to_managers, create_composite_key_from_dict
-from .delivery_notifications import notify_new_delivery, notify_delivery_status_change, delete_delivery_notifications
+from .delivery_notifications import notify_new_delivery, notify_delivery_status_change, delete_delivery_notifications, notify_delivery_date_change
 
 # Импорт TELEGRAM_BOT_TOKEN из config.py для инициализации бота
 # Импорт констант из config.py
@@ -1366,14 +1366,13 @@ async def update_delivery(
 
 async def update_delivery_date(
     data: ChangeDeliveryDateRequest,
-    X_Telegram_Init_Data: str = Header()
+    user: dict = Depends(get_current_telegram_user)
 ):
     """
     Оновлює дату доставки, оновлює подію в Google Calendar та відправляє повідомлення менеджеру.
     """
-    parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
-    if not parsed_init_data:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    user_id = user["telegram_id"]
+    actor_name = user["full_name_for_orders"] or user["first_name"]
 
     try:
         # 1. Знаходимо доставку
@@ -1398,20 +1397,25 @@ async def update_delivery_date(
                 Events.event_id == delivery.calendar_id
             ).run()
 
-        # 4. Відправляємо повідомлення в Telegram
-        manager_id = delivery.created_by
-        if manager_id:
-            message_text = (
-                f"📅 <b>Увага!</b> Змінено дату доставки.\n\n"
-                f"👤 Клієнт: <b>{delivery.client}</b>\n"
-                f"🗓 Стара дата: {old_date}\n"
-                f"🆕 <b>Нова дата: {new_date_obj}</b>"
-            )
-            await bot.send_message(
-                chat_id=manager_id,
-                text=message_text,
-                parse_mode="HTML"
-            )
+        # 4. Сповіщення
+        if SEND_NOTIFICATIONS:
+            # Сповіщення логістам (видаляє старі повідомлення)
+            await notify_delivery_date_change(delivery, new_date_obj, actor_name, user_id)
+
+            # Сповіщення менеджеру
+            manager_id = delivery.created_by
+            if manager_id:
+                message_text = (
+                    f"📅 <b>Увага!</b> Змінено дату доставки.\n\n"
+                    f"👤 Клієнт: <b>{delivery.client}</b>\n"
+                    f"🗓 Стара дата: {old_date}\n"
+                    f"🆕 <b>Нова дата: {new_date_obj}</b>"
+                )
+                await bot.send_message(
+                    chat_id=manager_id,
+                    text=message_text,
+                    parse_mode="HTML"
+                )
 
         logger.info(f"✅ Дата доставки ID: {data.delivery_id} оновлена з {old_date} на {new_date_obj}.")
         return {"status": "ok", "message": "Delivery date updated successfully."}
@@ -1427,15 +1431,14 @@ async def update_delivery_date(
 @app.post("/delivery/batch_update", tags=["Delivery"], dependencies=[Depends(check_not_guest)])
 async def batch_update_deliveries(
     data: BatchUpdateDeliveryRequest,
-    X_Telegram_Init_Data: str = Header()
+    user: dict = Depends(get_current_telegram_user)
 ):
     """
     Масове оновлення статусу або дати для списку доставок.
-    Групує сповіщення по менеджерах.
+    Групує сповіщення по менеджерах та надсилає індивідуальні сповіщення логістам.
     """
-    parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
-    if not parsed_init_data:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    user_id = user["telegram_id"]
+    actor_name = user["full_name_for_orders"] or user["first_name"]
 
     if not data.delivery_ids:
         return {"status": "ok", "message": "No deliveries to update."}
@@ -1489,6 +1492,15 @@ async def batch_update_deliveries(
                 if changes:
                     await delivery.save().run()
                     
+                    # Сповіщення логістам (видаляє старі повідомлення)
+                    if data.status and data.new_date:
+                        # Якщо змінено і те, і інше, надсилаємо про статус (там є дата)
+                        await notify_delivery_status_change(delivery, data.status, actor_name, user_id)
+                    elif data.status:
+                        await notify_delivery_status_change(delivery, data.status, actor_name, user_id)
+                    elif data.new_date:
+                        await notify_delivery_date_change(delivery, data.new_date, actor_name, user_id)
+
                     manager_id = delivery.created_by
                     if manager_id:
                         if manager_id not in grouped_by_manager:
@@ -1528,20 +1540,14 @@ async def batch_update_deliveries(
 @app.post("/delivery/change_date", dependencies=[Depends(check_not_guest)])
 async def change_delivery_date(
     data: ChangeDeliveryDateRequest,
-    X_Telegram_Init_Data: str = Header()
+    user: dict = Depends(get_current_telegram_user)
 ):
     """
     Змінює дату доставки та оновлює її в Google Календарі та таблиці Events.
     """
+    user_id = user["telegram_id"]
+    actor_name = user["full_name_for_orders"] or user["first_name"]
     try:
-        parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
-        user_data_json = parsed_init_data.get("user")
-        user_id = None
-        if user_data_json:
-            try:
-                user_id = json.loads(user_data_json).get("id")
-            except Exception:
-                pass
 
         # 1. Отримуємо доставку
         delivery = await Deliveries.objects().where(Deliveries.id == data.delivery_id).first().run()
@@ -1578,21 +1584,15 @@ async def change_delivery_date(
         )
         
         if SEND_NOTIFICATIONS:
+            # Повідомляємо логістів (видаляє старі повідомлення)
+            await notify_delivery_date_change(delivery, new_date_obj, actor_name, user_id)
+
             # Повідомляємо менеджера
             if delivery.created_by:
                 try:
                     await bot.send_message(chat_id=delivery.created_by, text=message_text, parse_mode="HTML")
                 except Exception as tg_err:
                     logger.warning(f"Error notifying manager about date change: {tg_err}")
-
-            # Повідомляємо логістів (крім автора зміни)
-            for admin_id in LOGISTICS_TELEGRAM_IDS:
-                if user_id and admin_id == user_id:
-                    continue
-                try:
-                    await bot.send_message(chat_id=admin_id, text=message_text, parse_mode="HTML")
-                except Exception as tg_err:
-                    logger.warning(f"Error notifying admin {admin_id} about date change: {tg_err}")
 
         return {"status": "ok", "message": f"Дата успішно змінена на {new_date_obj}"}
 

@@ -80,6 +80,33 @@ async def notify_new_delivery(delivery: Deliveries, actor_name: str = None, cust
         except Exception as e:
             logger.error(f"❌ Помилка відправки або збереження повідомлення адміну {admin_id}: {e}")
 
+async def _send_and_save_notification(delivery_id: int, text: str, actor_id: int = None, event_type: str = "notification"):
+    """Внутрішня функція для розсилки повідомлень всім логістам (крім актора)"""
+    for admin_id in LOGISTICS_TELEGRAM_IDS:
+        if actor_id and admin_id == actor_id:
+            continue
+            
+        try:
+            msg = await bot.send_message(chat_id=admin_id, text=text, parse_mode="HTML")
+            
+            new_note = DeliveryNotifications(
+                delivery_id=delivery_id,
+                telegram_id=admin_id,
+                message_id=msg.message_id,
+                event_type=event_type
+            )
+            await new_note.save().run()
+            
+            # Запланувати видалення через 30 хвилин
+            try:
+                from .utils import schedule_message_deletion
+                await schedule_message_deletion(chat_id=admin_id, message_id=msg.message_id, delay_minutes=30)
+            except Exception as e:
+                logger.warning(f"⚠️ Не вдалося запланувати видалення повідомлення {msg.message_id}: {e}")
+                
+        except Exception as e:
+            logger.error(f"❌ Помилка відправки повідомлення логісту {admin_id}: {e}")
+
 async def notify_delivery_status_change(delivery: Deliveries, status: str, actor_name: str = None, actor_id: int = None):
     """Повідомити всіх логістів про зміну статусу доставки (крім автора зміни)"""
     if not SEND_NOTIFICATIONS:
@@ -106,26 +133,38 @@ async def notify_delivery_status_change(delivery: Deliveries, status: str, actor
         f"📅 Дата: {delivery.delivery_date}"
     )
     
-    # 3. Надсилаємо нове повідомлення всім логістам (крім того, хто зробив зміну)
-    for admin_id in LOGISTICS_TELEGRAM_IDS:
-        if actor_id and admin_id == actor_id:
-            continue
-            
-        try:
-            msg = await bot.send_message(chat_id=admin_id, text=text, parse_mode="HTML")
-            
-            # Зберігаємо повідомлення, щоб його можна було видалити при наступних змінах або видаленні
-            new_note = DeliveryNotifications(
-                delivery_id=delivery.id,
-                telegram_id=admin_id,
-                message_id=msg.message_id,
-                event_type="status_change"
-            )
-            await new_note.save().run()
-            logger.info(f"✅ Статус оновлено та збережено в БД. ID запису: {new_note.id}")
+    # 3. Надсилаємо
+    await _send_and_save_notification(
+        delivery_id=delivery.id, 
+        text=text, 
+        actor_id=actor_id, 
+        event_type="status_change"
+    )
 
-            # Запланувати видалення через 30 хвилин
-            from .utils import schedule_message_deletion
-            await schedule_message_deletion(chat_id=admin_id, message_id=msg.message_id, delay_minutes=30)
-        except Exception as e:
-            logger.error(f"❌ Помилка відправки оновлення адміну {admin_id}: {e}")
+async def notify_delivery_date_change(delivery: Deliveries, new_date, actor_name: str = None, actor_id: int = None):
+    """Повідомити всіх логістів про зміну дати доставки (крім автора зміни)"""
+    if not SEND_NOTIFICATIONS:
+        logger.info("🔇 Сповіщення вимкнено. Пропускаємо notify_delivery_date_change.")
+        return
+        
+    # 1. Видаляємо старі
+    await delete_delivery_notifications(delivery.id)
+    
+    # 2. Формуємо текст
+    safe_client = html.escape(delivery.client)
+    actor_info = f"\n👤 Хто: <b>{html.escape(actor_name)}</b>" if actor_name else ""
+    
+    text = (
+        f"📅 <b>Змінено дату доставки</b>\n\n"
+        f"👤 Клієнт: <b>{safe_client}</b>"
+        f"{actor_info}\n"
+        f"🆕 <b>Дата: {new_date}</b>"
+    )
+    
+    # 3. Надсилаємо
+    await _send_and_save_notification(
+        delivery_id=delivery.id, 
+        text=text, 
+        actor_id=actor_id, 
+        event_type="date_change"
+    )
