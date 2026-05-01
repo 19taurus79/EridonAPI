@@ -1225,11 +1225,20 @@ async def update_delivery(
             
             # Повідомлення про зміну статусу
             try:
+                # Витягуємо ID користувача з JSON-рядка 'user'
+                user_data_json = parsed_init_data.get("user")
+                user_id = None
+                if user_data_json:
+                    try:
+                        user_id = json.loads(user_data_json).get("id")
+                    except Exception:
+                        pass
+
                 await notify_delivery_status_change(
                     delivery=delivery_data, 
                     status=data.status, 
                     actor_name=data.actor_name,
-                    actor_id=parsed_init_data["id"]
+                    actor_id=user_id
                 )
             except Exception as e:
                 logger.error(f"Error notifying status change: {e}")
