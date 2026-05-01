@@ -1525,6 +1525,85 @@ async def batch_update_deliveries(
         )
 
 
+@app.post("/delivery/change_date", dependencies=[Depends(check_not_guest)])
+async def change_delivery_date(
+    data: ChangeDeliveryDateRequest,
+    X_Telegram_Init_Data: str = Header()
+):
+    """
+    Змінює дату доставки та оновлює її в Google Календарі та таблиці Events.
+    """
+    try:
+        parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
+        user_data_json = parsed_init_data.get("user")
+        user_id = None
+        if user_data_json:
+            try:
+                user_id = json.loads(user_data_json).get("id")
+            except Exception:
+                pass
+
+        # 1. Отримуємо доставку
+        delivery = await Deliveries.objects().where(Deliveries.id == data.delivery_id).first().run()
+        if not delivery:
+            raise HTTPException(status_code=404, detail="Доставку не знайдено")
+
+        new_date_obj = datetime.strptime(data.new_date, "%Y-%m-%d").date()
+        old_date = delivery.delivery_date
+        
+        # 2. Оновлюємо в базі Deliveries
+        delivery.delivery_date = new_date_obj
+        await delivery.save().run()
+
+        # 3. Оновлюємо в Google Календарі та таблиці Events
+        if delivery.calendar_id:
+            try:
+                # Оновлюємо Google Calendar
+                changed_date_calendar_events_by_id(event_id=delivery.calendar_id, new_date=new_date_obj)
+                
+                # Оновлюємо таблицю Events (для звітів)
+                await Events.update({Events.start_event: new_date_obj}).where(
+                    Events.event_id == delivery.calendar_id
+                ).run()
+                
+                logger.info(f"📅 Дата доставки {delivery.id} змінена з {old_date} на {new_date_obj} (Календар оновлено)")
+            except Exception as cal_err:
+                logger.error(f"Error updating calendar date: {cal_err}")
+
+        # 4. Сповіщення менеджеру
+        message_text = (
+            f"📅 <b>Змінено дату доставки</b>\n\n"
+            f"👤 Клієнт: <b>{delivery.client}</b>\n"
+            f"🔄 Дата: {old_date} ➔ <b>{new_date_obj}</b>"
+        )
+        
+        if SEND_NOTIFICATIONS:
+            # Повідомляємо менеджера
+            if delivery.created_by:
+                try:
+                    await bot.send_message(chat_id=delivery.created_by, text=message_text, parse_mode="HTML")
+                except Exception as tg_err:
+                    logger.warning(f"Error notifying manager about date change: {tg_err}")
+
+            # Повідомляємо логістів (крім автора зміни)
+            for admin_id in LOGISTICS_TELEGRAM_IDS:
+                if user_id and admin_id == user_id:
+                    continue
+                try:
+                    await bot.send_message(chat_id=admin_id, text=message_text, parse_mode="HTML")
+                except Exception as tg_err:
+                    logger.warning(f"Error notifying admin {admin_id} about date change: {tg_err}")
+
+        return {"status": "ok", "message": f"Дата успішно змінена на {new_date_obj}"}
+
+    except Exception as e:
+        logger.error(f"❌ Помилка зміни дати доставки: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Не вдалося змінити дату: {e}",
+        )
+
+
 @app.post(
     "/orders/comments/create",
     response_model=CommentResponse,
