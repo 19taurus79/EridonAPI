@@ -213,18 +213,8 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
 
     # --- ИСПРАВЛЕНИЕ: Отправляем сводный отчет ОДИН РАЗ после завершения цикла по менеджерам ---
     if len(admin_report_parts) > 1:  # Отправляем, только если были данные
-        admin_chat_ids = []
-        if ADMINS_ID and isinstance(ADMINS_ID, str):
-            try:
-                parsed_ids = json.loads(ADMINS_ID)
-                admin_chat_ids = [int(admin_id) for admin_id in parsed_ids]
-            except (json.JSONDecodeError, TypeError):
-                logger.info(
-                    f'!!! Помилка: Не вдалося розпарсити ADMINS_ID. Перевірте формат у .env файлі. Очікується формат ["id1", "id2"].'
-                )
-
         try:
-            if not admin_chat_ids:
+            if not ADMINS_ID:
                 logger.info(
                     "!!! Увага: Не знайдено жодного адміністратора для відправки звіту."
                 )
@@ -236,11 +226,11 @@ async def notifications(bot: Bot, frame: pd.DataFrame):
             for chunk in report_chunks:
                 if SEND_NOTIFICATIONS:
                     logger.info(
-                        f"\n--- Відправка зведеного звіту адміністраторам ({', '.join(map(str, admin_chat_ids))}) ---"
+                        f"\n--- Відправка зведеного звіту адміністраторам ({', '.join(map(str, ADMINS_ID))}) ---"
                     )
                     sent_msgs = await send_notification(
                         bot=bot,
-                        chat_ids=admin_chat_ids,  # Передаем список ID напрямую
+                        chat_ids=ADMINS_ID,  # Передаем список ID напрямую
                         text=chunk,
                     )
                     # Запланувати видалення через 30 хвилин

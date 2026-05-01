@@ -509,20 +509,20 @@ async def save_processed_data_to_db(
     # --- ОТПРАВКА ЛОГОВ В TELEGRAM ---
     if ADMINS_ID:
         try:
-            admin_ids = json.loads(ADMINS_ID)
-            if isinstance(admin_ids, list):
-                # Отправляем без Markdown, т.к. текст лога может содержать
-                # спецсимволы из ошибок БД (кавычки, скобки, _), которые ломают парсер
-                full_log_text = "📊 Отчет о загрузке данных\n\n" + "\n".join(log_messages)
-                sent_msgs = await send_notification(
-                    bot=bot,
-                    chat_ids=[int(uid) for uid in admin_ids],
-                    text=full_log_text,
-                )
+            # Отправляемотчет администраторам. ADMINS_ID уже является списком интов из config.py
+            # Отправляем без Markdown, т.к. текст лога может содержать
+            # спецсимволы из ошибок БД (кавычки, скобки, _), которые ломают парсер
+            full_log_text = "📊 Отчет о загрузке данных\n\n" + "\n".join(log_messages)
+            sent_msgs = await send_notification(
+                bot=bot,
+                chat_ids=ADMINS_ID,
+                text=full_log_text,
+                parse_mode=None
+            )
                 
-                # Запланувати видалення через 30 хвилин
-                from .utils import schedule_message_deletion
-                for msg in sent_msgs:
-                    await schedule_message_deletion(chat_id=msg.chat.id, message_id=msg.message_id, delay_minutes=30)
+            # Запланувати видалення через 30 хвилин
+            from .utils import schedule_message_deletion
+            for msg in sent_msgs:
+                await schedule_message_deletion(chat_id=msg.chat.id, message_id=msg.message_id, delay_minutes=30)
         except Exception as e:
             logger.error(f"!!! Ошибка при отправке логов админам: {e}")
