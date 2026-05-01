@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field
 from .google_calendar import (
     changed_color_calendar_events_by_id,
     changed_date_calendar_events_by_id,
+    get_calendar_event_by_id,
+    get_calendar_events,
 )
 from .config import bot, logger, SEND_NOTIFICATIONS
 
@@ -758,18 +760,14 @@ async def get_moved_products(product_id: str = Query(...)):
 
 
 @router.get("/calendar_events")
-def get_events(start: Optional[str] = None, end: Optional[str] = None):
-    from .main import get_calendar_events
-
+def get_events_route(start: Optional[str] = None, end: Optional[str] = None):
     data = get_calendar_events(start_date=start, end_date=end)
     return data
 
 
 @router.get("/calendar_event_by_id")
-async def get_calendar_event_by_id(id: str):
-    from .main import get_calendar_events_by_id
-
-    data = get_calendar_events_by_id(id)
+async def get_calendar_event_by_id_route(id: str):
+    data = get_calendar_event_by_id(id)
     return data
 
 
