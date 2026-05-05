@@ -35,6 +35,7 @@ from .tables import (
     DetailsForOrders,
     Tasks,
     Events,
+    Payment,
 )
 from .telegram_auth import get_current_telegram_user, check_not_guest
 from .tasks_handler import (
@@ -312,6 +313,10 @@ async def get_contracts(client: str = Query(...)):
     client_from_guide = await ClientManagerGuide.select(
         ClientManagerGuide.client
     ).where(ClientManagerGuide.id == int(client))
+    
+    if not client_from_guide:
+        return []
+
     contracts = (
         await Submissions.select(
             Submissions.contract_supplement,
@@ -332,6 +337,38 @@ async def get_contracts(client: str = Query(...)):
         .order_by(Submissions.contract_supplement)
         .run()
     )
+
+    if contracts:
+        # Збираємо номери доповнень
+        contract_ids = [item["contract_supplement"] for item in contracts if item.get("contract_supplement")]
+        
+        if contract_ids:
+            # Отримуємо дані про оплату
+            payments = await Payment.select(
+                Payment.contract_supplement,
+                Payment.contract_type,
+                Payment.loan_percentage,
+                Payment.planned_amount,
+                Payment.actual_payment_amount
+            ).where(Payment.contract_supplement.is_in(contract_ids)).run()
+            
+            payment_map = {p["contract_supplement"]: p for p in payments}
+            
+            # Збагачуємо дані контрактів
+            for item in contracts:
+                cs = item.get("contract_supplement")
+                p_info = payment_map.get(cs)
+                if p_info:
+                    item["contract_type"] = p_info["contract_type"]
+                    item["loan_percentage"] = p_info["loan_percentage"]
+                    item["planned_amount"] = p_info["planned_amount"]
+                    item["actual_payment_amount"] = p_info["actual_payment_amount"]
+                else:
+                    item["contract_type"] = None
+                    item["loan_percentage"] = None
+                    item["planned_amount"] = None
+                    item["actual_payment_amount"] = None
+
     return contracts
 
 
@@ -425,15 +462,40 @@ async def get_sum_order_products(product: str = Query(...)):
         )
         .run()
     )
-    # total_sum = (
-    #     await Submissions.select(Sum(Submissions.different))
-    #     .where(
-    #         (Submissions.product == product)
-    #         & (Submissions.different > 0)
-    #         & (Submissions.document_status == "затверджено")
-    #     )
-    #     .run()
-    # )
+    
+    if not data:
+        return []
+
+    # Збираємо номери доповнень
+    contract_ids = [item["contract_supplement"] for item in data if item.get("contract_supplement")]
+    
+    if contract_ids:
+        # Отримуємо дані про оплату
+        payments = await Payment.select(
+            Payment.contract_supplement,
+            Payment.contract_type,
+            Payment.loan_percentage,
+            Payment.planned_amount,
+            Payment.actual_payment_amount
+        ).where(Payment.contract_supplement.is_in(contract_ids)).run()
+        
+        payment_map = {p["contract_supplement"]: p for p in payments}
+        
+        # Збагачуємо дані замовлень
+        for item in data:
+            cs = item.get("contract_supplement")
+            p_info = payment_map.get(cs)
+            if p_info:
+                item["contract_type"] = p_info["contract_type"]
+                item["loan_percentage"] = p_info["loan_percentage"]
+                item["planned_amount"] = p_info["planned_amount"]
+                item["actual_payment_amount"] = p_info["actual_payment_amount"]
+            else:
+                item["contract_type"] = None
+                item["loan_percentage"] = None
+                item["planned_amount"] = None
+                item["actual_payment_amount"] = None
+
     return data
 
 
@@ -642,7 +704,20 @@ async def _process_details_result(result):
         for d in drafts_data
     }
 
-    # 5. Перезаписуємо значення в результаті
+    # 5. Отримуємо дані про оплату для всіх доповнень у списку
+    contract_ids = list(set(item["contract_supplement"] for item in result if item.get("contract_supplement")))
+    payment_map = {}
+    if contract_ids:
+        payments = await Payment.select(
+            Payment.contract_supplement,
+            Payment.contract_type,
+            Payment.loan_percentage,
+            Payment.planned_amount,
+            Payment.actual_payment_amount
+        ).where(Payment.contract_supplement.is_in(contract_ids)).run()
+        payment_map = {p["contract_supplement"]: p for p in payments}
+
+    # 6. Перезаписуємо значення в результаті
     for item in result:
         pid = str(item.get("product", ""))
         contract = str(item.get("contract_supplement", ""))
@@ -656,6 +731,21 @@ async def _process_details_result(result):
 
         # Tier 2: "продукція затверджена" — додатковий попит
         item["orders_q_product_confirmed"] = product_confirmed_map.get(pid, 0.0)
+
+        # Додаємо інформацію про оплату
+        p_info = payment_map.get(item.get("contract_supplement"))
+        if p_info:
+            item["contract_type"] = p_info["contract_type"]
+            item["loan_percentage"] = p_info["loan_percentage"]
+            item["planned_amount"] = p_info["planned_amount"]
+            item["actual_payment_amount"] = p_info["actual_payment_amount"]
+        else:
+            item["contract_type"] = None
+            item["loan_percentage"] = None
+            item["planned_amount"] = None
+            item["actual_payment_amount"] = None
+
+        item["has_draft"] = (contract, pid) in draft_pairs
 
         # Загальна потреба (зручно для quick-check)
         item["orders_q_total"] = item["orders_q"] + item["orders_q_product_confirmed"]

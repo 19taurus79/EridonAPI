@@ -69,7 +69,10 @@ from fastapi import (
     Form,
     Request,
     Header,
+    WebSocket,
+    WebSocketDisconnect,
 )
+from .websocket_manager import manager
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
@@ -224,6 +227,19 @@ async def health_check():
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "1.0.0"
     }
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Ожидаем данных, чтобы соединение не закрывалось (keep-alive)
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        manager.disconnect(websocket)
 
 # --- Подключение маршрутов ---
 app.include_router(telegram_auth_router)  # Подключаем маршруты из telegram_auth.py
@@ -1193,6 +1209,12 @@ async def send_delivery(
             except Exception as e:
                 logger.error(f'Помилка при сповіщенні ініціатора {telegram_id}: {e}')
     
+    # 5. Уведомление через WebSocket
+    await manager.broadcast({
+        "type": "DELIVERY_CREATED",
+        "payload": {"id": new_delivery.id, "client": data.client}
+    })
+
     return {"status": "ok", "id": new_delivery.id}
 
 
@@ -1349,6 +1371,12 @@ async def update_delivery(
                     "warnings": warnings
                 }
 
+        # 5. Уведомление через WebSocket
+        await manager.broadcast({
+            "type": "DELIVERY_UPDATED",
+            "payload": {"id": data.delivery_id, "status": data.status}
+        })
+
         return {
             "status": "ok", 
             "message": "Delivery updated successfully.", 
@@ -1416,6 +1444,12 @@ async def update_delivery_date(
                     text=message_text,
                     parse_mode="HTML"
                 )
+
+        # 5. Уведомление через WebSocket
+        await manager.broadcast({
+            "type": "DELIVERY_UPDATED",
+            "payload": {"id": data.delivery_id, "delivery_date": str(new_date_obj)}
+        })
 
         logger.info(f"✅ Дата доставки ID: {data.delivery_id} оновлена з {old_date} на {new_date_obj}.")
         return {"status": "ok", "message": "Delivery date updated successfully."}
@@ -1526,6 +1560,16 @@ async def batch_update_deliveries(
                 parse_mode="HTML"
             )
 
+        # 4. Уведомление через WebSocket
+        await manager.broadcast({
+            "type": "DELIVERIES_BATCH_UPDATED",
+            "payload": {
+                "ids": data.delivery_ids,
+                "status": data.status,
+                "new_date": data.new_date
+            }
+        })
+
         logger.info(f"✅ Успішно оновлено {len(deliveries_to_update)} доставок пакетно.")
         return {"status": "ok", "message": f"Successfully updated {len(deliveries_to_update)} deliveries."}
 
@@ -1594,6 +1638,12 @@ async def change_delivery_date(
                 except Exception as tg_err:
                     logger.warning(f"Error notifying manager about date change: {tg_err}")
 
+        # 5. Уведомление через WebSocket
+        await manager.broadcast({
+            "type": "DELIVERY_UPDATED",
+            "payload": {"id": delivery.id, "delivery_date": str(new_date_obj)}
+        })
+
         return {"status": "ok", "message": f"Дата успішно змінена на {new_date_obj}"}
 
     except Exception as e:
@@ -1630,6 +1680,12 @@ async def delete_delivery(data: DeleteDeliveryRequest):
         async with Deliveries._meta.db.transaction():
             await DeliveryItems.delete().where(DeliveryItems.delivery == data.delivery_id).run()
             await Deliveries.delete().where(Deliveries.id == data.delivery_id).run()
+
+        # 5. Уведомление через WebSocket
+        await manager.broadcast({
+            "type": "DELIVERY_DELETED",
+            "payload": {"id": data.delivery_id}
+        })
 
         logger.info(f"🗑 Доставка ID: {data.delivery_id} ({delivery.client}) повністю видалена.")
         return {"status": "ok", "message": "Доставка успішно видалена"}
