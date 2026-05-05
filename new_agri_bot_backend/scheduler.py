@@ -110,5 +110,11 @@ def setup_scheduler():
     # 17:00 - Події на завтра (Пн-Чт для наступного робочого дня)
     scheduler.add_job(send_event_summary, 'cron', day_of_week='mon-fri', hour=17, minute=0, args=["all", "tomorrow"], misfire_grace_time=60, coalesce=True)
     
+    # Перевірка статусів доповнень (9:30, 14:00, 17:00)
+    from .services.supplement_check import check_supplements_and_notify
+    scheduler.add_job(check_supplements_and_notify, 'cron', day_of_week='mon-fri', hour=9, minute=30, misfire_grace_time=60, coalesce=True)
+    scheduler.add_job(check_supplements_and_notify, 'cron', day_of_week='mon-fri', hour=14, minute=0, misfire_grace_time=60, coalesce=True)
+    scheduler.add_job(check_supplements_and_notify, 'cron', day_of_week='mon-fri', hour=17, minute=0, misfire_grace_time=60, coalesce=True)
+
     scheduler.start()
-    logger.info("Scheduler started with cleanup job (1min) and summary jobs.")
+    logger.info("Scheduler started with cleanup, summary, and supplement check jobs.")
