@@ -30,19 +30,14 @@ def get_calendar_service():
         return None
 
 async def create_calendar_event(data: DeliveryRequest) -> Optional[Dict]:
-    """Створює подію в Google Calendar для нової доставки."""
+    """Створює подію в Google Calendar для нової доставки (на весь день)."""
     service = get_calendar_service()
     if not service: return None
 
     try:
-        # Отримуємо існуючі події на цей день, щоб розрахувати зміщення
-        existing_events = get_calendar_events(data.date, data.date)
-        offset = len(existing_events)
-
-        # Базовий час — 09:00 ранку + зміщення по 1 хвилині
-        delivery_dt = datetime.strptime(data.date, "%Y-%m-%d")
-        start_time = delivery_dt.replace(hour=9, minute=0, second=0, microsecond=0) + timedelta(minutes=offset)
-        end_time = start_time + timedelta(minutes=15)
+        # Мероприятие на весь день (end date exclusive)
+        start_date = data.date
+        end_date = (datetime.strptime(data.date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
 
         lines = [
             f"Контрагент: {data.client}",
@@ -66,12 +61,10 @@ async def create_calendar_event(data: DeliveryRequest) -> Optional[Dict]:
             "location": data.address,
             "description": "\n".join(lines),
             "start": {
-                "dateTime": start_time.isoformat(),
-                "timeZone": "Europe/Kiev",
+                "date": start_date,
             },
             "end": {
-                "dateTime": end_time.isoformat(),
-                "timeZone": "Europe/Kiev",
+                "date": end_date,
             },
             "colorId": "11",
         }
@@ -127,19 +120,14 @@ def changed_color_calendar_events_by_id(event_id: str, status_code: int):
         return None
 
 def changed_date_calendar_events_by_id(event_id: str, new_delivery_date: date):
-    """Змінює дату та опис події в календарі."""
+    """Змінює дату та опис події в календарі (залишаючи як мероприятие на весь день)."""
     service = get_calendar_service()
     if not service: return None
 
     try:
-        # Отримуємо існуючі події на НОВУ дату, щоб розрахувати зміщення
+        # Новая дата для мероприятия на весь день (end date exclusive)
         new_date_str = new_delivery_date.strftime("%Y-%m-%d")
-        existing_events = get_calendar_events(new_date_str, new_date_str)
-        offset = len(existing_events)
-
-        # Розраховуємо новий час
-        start_time = datetime.combine(new_delivery_date, datetime.min.time()).replace(hour=9, minute=0) + timedelta(minutes=offset)
-        end_time = start_time + timedelta(minutes=15)
+        end_date_str = (new_delivery_date + timedelta(days=1)).strftime("%Y-%m-%d")
 
         event_data = service.events().get(calendarId=CALENDAR_ID, eventId=event_id).execute()
         description = event_data.get("description", "")
@@ -155,12 +143,10 @@ def changed_date_calendar_events_by_id(event_id: str, new_delivery_date: date):
             eventId=event_id,
             body={
                 "start": {
-                    "dateTime": start_time.isoformat(),
-                    "timeZone": "Europe/Kiev",
+                    "date": new_date_str,
                 },
                 "end": {
-                    "dateTime": end_time.isoformat(),
-                    "timeZone": "Europe/Kiev",
+                    "date": end_date_str,
                 },
                 "description": new_description,
             },
