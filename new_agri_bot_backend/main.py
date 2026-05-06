@@ -99,7 +99,7 @@ from .nova_poshta import router as nova_poshta_router
 from .bot_handlers import setup_bot_handlers
 from .scheduler import setup_scheduler
 from .utils import send_message_to_managers, create_composite_key_from_dict
-from .delivery_notifications import notify_new_delivery, notify_delivery_status_change, delete_delivery_notifications, notify_delivery_date_change
+from .delivery_notifications import notify_new_delivery, notify_delivery_status_change, delete_delivery_notifications, notify_delivery_date_change, ALL_RECIPIENTS
 
 # Импорт TELEGRAM_BOT_TOKEN из config.py для инициализации бота
 # Импорт констант из config.py
@@ -1047,34 +1047,18 @@ async def send_delivery(
             await DeliveryItems.insert(*items_to_insert).run()
             logger.info(f"✅ {len(items_to_insert)} позицій по доставці збережено.")
             
-        # notify_new_delivery видалено, бо тепер надсилається одне детальне повідомлення
+        # 4. Відправка повідомлень администраторам та логістам
+        # Використовуємо notify_new_delivery, щоб повідомлення було зареєстровано в БД та могло бути видалено пізніше
+        if SEND_NOTIFICATIONS:
+            await notify_new_delivery(delivery=new_delivery, custom_text=message)
 
     except Exception as e:
         logger.error(f"❌ Помилка збереження доставки в БД: {e}")
         raise HTTPException(status_code=500, detail=f"Помилка збереження в БД: {e}")
 
-    # 4. Відправка повідомлень адміністраторам, логістам та власнику
-    # Отримуємо список адміністраторів з оточення
-    admins_json = os.getenv("ADMINS", "[]")
-    admins = json.loads(admins_json)
-    
-    # Об'єднуємо з ідентифікаторами логістів (з конфігу), щоб усі отримували детальне повідомлення
-    # Використовуємо set для унікальності
-    all_recipients = list(set(admins + LOGISTICS_TELEGRAM_IDS))
-    
-    # Відправка всім отримувачам (адміни + логісти)
-    for recipient_id in all_recipients:
-        if SEND_NOTIFICATIONS:
-            try:
-                await bot.send_message(chat_id=recipient_id, text=message, parse_mode="HTML")
-            except Exception as e:
-                logger.error(f"❌ Помилка відправки отримувачу {recipient_id}: {e}")
-        else:
-            logger.info(f"🔇 Сповіщення вимкнено. Дані для {recipient_id} пропущено.")
-
-    # Відправка власнику (якщо його немає в списку отримувачів)
+    # 5. Відправка повідомлень власнику та ініціатору
     owner_id = data.override_created_by if data.override_created_by else telegram_id
-    if owner_id not in all_recipients:
+    if owner_id not in ALL_RECIPIENTS:
         if SEND_NOTIFICATIONS:
             try:
                 await bot.send_message(chat_id=owner_id, text='<b>Ви успішно зареєстрували доставку:</b>', parse_mode='HTML')
@@ -1082,7 +1066,7 @@ async def send_delivery(
             except Exception as e:
                 logger.error(f'Помилка при сповіщенні власника {owner_id}: {e}')
     
-    if telegram_id not in all_recipients and telegram_id != owner_id:
+    if telegram_id not in ALL_RECIPIENTS and telegram_id != owner_id:
         if SEND_NOTIFICATIONS:
             try:
                 await bot.send_message(
@@ -1091,6 +1075,7 @@ async def send_delivery(
                 )
             except Exception as e:
                 logger.error(f'Помилка при сповіщенні ініціатора {telegram_id}: {e}')
+
     
     # 5. Уведомление через WebSocket
     await manager.broadcast({
