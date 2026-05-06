@@ -230,15 +230,22 @@ async def health_check():
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
+    # Добавляем логирование для отладки
+    client_host = websocket.client.host if websocket.client else "unknown"
+    logger.info(f"🔍 Попытка WebSocket подключения с хоста: {client_host}")
+    
     try:
+        await manager.connect(websocket)
+        logger.info(f"✅ WebSocket соединение успешно установлено для: {client_host}")
+        
         while True:
             # Ожидаем данных, чтобы соединение не закрывалось (keep-alive)
             await websocket.receive_text()
     except WebSocketDisconnect:
+        logger.info(f"🔌 WebSocket соединение закрыто клиентом: {client_host}")
         manager.disconnect(websocket)
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.error(f"❌ Ошибка в WebSocket для {client_host}: {e}")
         manager.disconnect(websocket)
 
 # --- Подключение маршрутов ---
