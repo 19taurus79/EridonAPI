@@ -35,8 +35,14 @@ async def create_calendar_event(data: DeliveryRequest) -> Optional[Dict]:
     if not service: return None
 
     try:
-        delivery_date = datetime.strptime(data.date, "%Y-%m-%d").date()
-        end_date = delivery_date + timedelta(days=1)
+        # Отримуємо існуючі події на цей день, щоб розрахувати зміщення
+        existing_events = get_calendar_events(data.date, data.date)
+        offset = len(existing_events)
+
+        # Базовий час — 09:00 ранку + зміщення по 1 хвилині
+        delivery_dt = datetime.strptime(data.date, "%Y-%m-%d")
+        start_time = delivery_dt.replace(hour=9, minute=0, second=0, microsecond=0) + timedelta(minutes=offset)
+        end_time = start_time + timedelta(minutes=15)
 
         lines = [
             f"Контрагент: {data.client}",
@@ -59,8 +65,14 @@ async def create_calendar_event(data: DeliveryRequest) -> Optional[Dict]:
             "summary": f"🚚 Доставка: {data.client}",
             "location": data.address,
             "description": "\n".join(lines),
-            "start": {"date": delivery_date.isoformat()},
-            "end": {"date": end_date.isoformat()},
+            "start": {
+                "dateTime": start_time.isoformat(),
+                "timeZone": "Europe/Kiev",
+            },
+            "end": {
+                "dateTime": end_time.isoformat(),
+                "timeZone": "Europe/Kiev",
+            },
             "colorId": "11",
         }
 
@@ -120,23 +132,36 @@ def changed_date_calendar_events_by_id(event_id: str, new_delivery_date: date):
     if not service: return None
 
     try:
+        # Отримуємо існуючі події на НОВУ дату, щоб розрахувати зміщення
+        new_date_str = new_delivery_date.strftime("%Y-%m-%d")
+        existing_events = get_calendar_events(new_date_str, new_date_str)
+        offset = len(existing_events)
+
+        # Розраховуємо новий час
+        start_time = datetime.combine(new_delivery_date, datetime.min.time()).replace(hour=9, minute=0) + timedelta(minutes=offset)
+        end_time = start_time + timedelta(minutes=15)
+
         event_data = service.events().get(calendarId=CALENDAR_ID, eventId=event_id).execute()
         description = event_data.get("description", "")
         
         new_description = re.sub(
             r"(Дата доставки:\s*)(\d{4}-\d{2}-\d{2})",
-            lambda m: m.group(1) + new_delivery_date.strftime("%Y-%m-%d"),
+            lambda m: m.group(1) + new_date_str,
             description,
         )
 
-        end_date = new_delivery_date + timedelta(days=1)
-        
         return service.events().patch(
             calendarId=CALENDAR_ID,
             eventId=event_id,
             body={
-                "start": {"date": new_delivery_date.isoformat()},
-                "end": {"date": end_date.isoformat()},
+                "start": {
+                    "dateTime": start_time.isoformat(),
+                    "timeZone": "Europe/Kiev",
+                },
+                "end": {
+                    "dateTime": end_time.isoformat(),
+                    "timeZone": "Europe/Kiev",
+                },
                 "description": new_description,
             },
         ).execute()

@@ -778,133 +778,9 @@ async def update_address_for_client(address_data: AddressCreate, id: int):
 
 
 
-@app.post("/delivery/send", dependencies=[Depends(check_not_guest)])
-async def send_delivery(data: DeliveryRequest, X_Telegram_Init_Data: str = Header()):
-    parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
-    user_info_str = parsed_init_data.get("user")
-    user_data = json.loads(user_info_str)
-    telegram_id = user_data.get("id")
-    # ----------------------------Сообщение для Телеграм-----------------------
-    logger.info(X_Telegram_Init_Data)
-    message_lines = [
-        f"👤 Менеджер: {data.manager}",
-        f"🚚 Контрагент: <code>{data.client}</code>",
-        f"📍 Адреса: {data.address}",
-        f"⚖️ Вага: {data.total_weight} кг",
-        f"👤 Контакт: {data.contact}",
-        f"📞 Телефон: {data.phone}",
-        f"📅 Дата доставки: {data.date}",
-        f"💬 Коментар: {data.comment}",
-        "",
-    ]
-
-    for order in data.orders:
-        message_lines.append(f"📦 <b>Замовлення</b> <code>{order.order}</code>")
-        message_lines.append("─" * 20)
-
-        for item in order.items:
-            message_lines.append(f"🔹 <b>{item.product}</b>")
-            message_lines.append(f"   │ <i>Кількість:</i> {item.quantity} шт.")
-
-            active_parties = [p for p in item.parties if p.moved_q > 0]
-            count = len(active_parties)
-
-            if count > 0:
-                for i, party in enumerate(active_parties):
-                    is_last = i == count - 1
-                    branch_symbol = "└" if is_last else "├"
-                    message_lines.append(
-                        f"   {branch_symbol} 🔖 <code>{party.party}</code>: {party.moved_q} шт."
-                    )
-            else:
-                pass
-            message_lines.append("")
-
-        message_lines.append("════════════════════")
-        message_lines.append("")
-    
-    message = "\n".join(message_lines)
-    # ------------------------------------------------------------------------------
-
-    # --- Генерація та надсилання Excel (винесено в сервіс, тимчасово вимкнено) ---
-    # from .services.excel_service import send_delivery_excel_report
-    # background_tasks.add_task(send_delivery_excel_report, data, admins)
-    # ------------------------------------------------------------------------------
-
-    # Проверяем окружение. Если не 'prod', выводим в консоль вместо отправки.
-    app_env = os.getenv("APP_ENV", "dev")
-
-    calendar = await create_calendar_event(data)
-    if calendar:
-        calendar_link = calendar.get("htmlLink")
-        start_info = calendar.get("start", {})
-        date_str = start_info.get("date") or start_info.get("dateTime")
-        date_val = datetime.fromisoformat(date_str).date()
-        await Events.insert(
-            Events(
-                event_id=calendar["id"],
-                event_creator=data.override_created_by if data.override_created_by else telegram_id,
-                event_creator_name=data.manager,
-                event_status=0,
-                start_event=date_val,
-                event=data.client,
-            )
-        ).run()
-        logger.info(f"📅 Добавлено в календарь: {calendar_link}")
-    else:
-        logger.info("❌ Не удалось добавить в календарь")
-
-    # --- Збереження даних в БД ---
-    try:
-        new_delivery = Deliveries(
-            client=data.client,
-            manager=data.manager,
-            address=data.address,
-            contact=data.contact,
-            phone=data.phone,
-            delivery_date=datetime.strptime(data.date, "%Y-%m-%d").date(),
-            comment=data.comment,
-            is_custom_address=data.is_custom_address,
-            latitude=data.latitude,
-            longitude=data.longitude,
-            total_weight=data.total_weight,
-            status=data.status,
-            created_by=data.override_created_by if data.override_created_by else telegram_id,
-            calendar_id=calendar["id"] if calendar else None,
-        )
-        await new_delivery.save().run()
-        logger.info(f"✅ Основна інформація по доставці ID: {new_delivery.id} збережена.")
-
-        items_to_insert = []
-        for order in data.orders:
-            for item in order.items:
-                if item.parties:
-                    for party in item.parties:
-                        if party.moved_q > 0:
-                            items_to_insert.append(
-                                DeliveryItems(
-                                    delivery=new_delivery.id,
-                                    order_ref=order.order,
-                                    product=item.product,
-                                    quantity=item.quantity,
-                                    party=party.party,
-                                    party_quantity=party.moved_q,
-                                )
-                            )
-        if items_to_insert:
-            await DeliveryItems.insert(*items_to_insert).run()
-            logger.info(f"✅ {len(items_to_insert)} позицій по доставці збережено.")
-            
-        await notify_new_delivery(new_delivery, custom_text=message)
-
-    except Exception as e:
-        logger.error(f"❌ Помилка збереження доставки в БД: {e}")
-        raise HTTPException(status_code=500, detail=f"Помилка збереження в БД: {e}")
-    
-    return {"status": "ok"}
-
 
 @app.post("/add_address_for_client", dependencies=[Depends(check_not_guest)])
+
 async def create_address_for_client(address_data: AddressCreate):
     """
     Создает новый адрес для клиента, "умно" разбирая строку полного адреса.
@@ -1609,7 +1485,7 @@ async def change_delivery_date(
         if delivery.calendar_id:
             try:
                 # Оновлюємо Google Calendar
-                changed_date_calendar_events_by_id(event_id=delivery.calendar_id, new_date=new_date_obj)
+                changed_date_calendar_events_by_id(event_id=delivery.calendar_id, new_delivery_date=new_date_obj)
                 
                 # Оновлюємо таблицю Events (для звітів)
                 await Events.update({Events.start_event: new_date_obj}).where(

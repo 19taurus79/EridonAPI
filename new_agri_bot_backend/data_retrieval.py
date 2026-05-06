@@ -707,7 +707,9 @@ async def _process_details_result(result):
     # 5. Отримуємо дані про оплату для всіх доповнень у списку
     contract_ids = list(set(item["contract_supplement"] for item in result if item.get("contract_supplement")))
     payment_map = {}
+    status_map = {}
     if contract_ids:
+        # Отримуємо дані про оплату
         payments = await Payment.select(
             Payment.contract_supplement,
             Payment.contract_type,
@@ -716,6 +718,14 @@ async def _process_details_result(result):
             Payment.actual_payment_amount
         ).where(Payment.contract_supplement.is_in(contract_ids)).run()
         payment_map = {p["contract_supplement"]: p for p in payments}
+
+        # Отримуємо статуси з таблиці Submissions
+        status_data = await Submissions.select(
+            Submissions.contract_supplement,
+            Submissions.document_status,
+            Submissions.delivery_status
+        ).where(Submissions.contract_supplement.is_in(contract_ids)).distinct().run()
+        status_map = {s["contract_supplement"]: s for s in status_data}
 
     # 6. Перезаписуємо значення в результаті
     for item in result:
@@ -746,7 +756,16 @@ async def _process_details_result(result):
             item["actual_payment_amount"] = None
 
         item["has_draft"] = (contract, pid) in draft_pairs
-
+        
+        # Додаємо статуси з мапи
+        s_info = status_map.get(item.get("contract_supplement"))
+        if s_info:
+            item["document_status"] = s_info["document_status"]
+            item["delivery_status"] = s_info["delivery_status"]
+        else:
+            item["document_status"] = None
+            item["delivery_status"] = None
+        
         # Загальна потреба (зручно для quick-check)
         item["orders_q_total"] = item["orders_q"] + item["orders_q_product_confirmed"]
 
