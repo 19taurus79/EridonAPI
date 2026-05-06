@@ -1,10 +1,14 @@
 from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
-from .config import bot, LOGISTICS_TELEGRAM_IDS, SEND_NOTIFICATIONS
+from .config import bot, LOGISTICS_TELEGRAM_IDS, ADMINS_ID, SEND_NOTIFICATIONS
 from .tables import DeliveryNotifications, Deliveries
 import html
 import logging
 
 logger = logging.getLogger("agri_bot")
+
+# Об'єднуємо всіх отримувачів (адмінів та логістів) в один список унікальних ID
+# Використовуємо set для унікальності, щоб уникнути подвійних повідомлень
+ALL_RECIPIENTS = list(set(LOGISTICS_TELEGRAM_IDS + ADMINS_ID))
 
 async def delete_delivery_notifications(delivery_id: int):
     logger.info(f"🔍 Спроба видалення повідомлень для доставки ID: {delivery_id}")
@@ -28,7 +32,7 @@ async def delete_delivery_notifications(delivery_id: int):
     ).run()
 
 async def notify_new_delivery(delivery: Deliveries, actor_name: str = None, custom_text: str = None):
-    """Сповістити всіх логістів про нову доставку"""
+    """Сповістити всіх логістів та адмінів про нову доставку"""
     if not SEND_NOTIFICATIONS:
         logger.info("🔇 Сповіщення вимкнено (SEND_NOTIFICATIONS=false). Пропускаємо notify_new_delivery.")
         return
@@ -62,13 +66,13 @@ async def notify_new_delivery(delivery: Deliveries, actor_name: str = None, cust
         )
     
     logger.info(f"🆕 Спроба сповіщення про нову доставку ID: {delivery.id}")
-    logger.info(f"👥 Список отримувачів (LOGISTICS_TELEGRAM_IDS): {LOGISTICS_TELEGRAM_IDS}")
-    for admin_id in LOGISTICS_TELEGRAM_IDS:
+    logger.info(f"👥 Список отримувачів: {ALL_RECIPIENTS}")
+    for admin_id in ALL_RECIPIENTS:
         try:
             logger.info(f"📤 Надсилання повідомлення для {admin_id}")
             msg = await bot.send_message(chat_id=admin_id, text=text, parse_mode="HTML")
             
-            # Використовуємо .save() для більшої надійності
+            # Зберігаємо ID повідомлення для видалення в майбутньому
             new_note = DeliveryNotifications(
                 delivery_id=delivery.id,
                 telegram_id=admin_id,
@@ -78,11 +82,11 @@ async def notify_new_delivery(delivery: Deliveries, actor_name: str = None, cust
             await new_note.save().run()
             logger.info(f"✅ Повідомлення надіслано та збережено в БД. ID запису: {new_note.id}, Message ID: {msg.message_id}")
         except Exception as e:
-            logger.error(f"❌ Помилка відправки або збереження повідомлення адміну {admin_id}: {e}")
+            logger.error(f"❌ Помилка відправки або збереження повідомлення отримувачу {admin_id}: {e}")
 
 async def _send_and_save_notification(delivery_id: int, text: str, actor_id: int = None, event_type: str = "notification"):
-    """Внутрішня функція для розсилки повідомлень всім логістам (крім актора)"""
-    for admin_id in LOGISTICS_TELEGRAM_IDS:
+    """Внутрішня функція для розсилки повідомлень всім отримувачам (крім актора)"""
+    for admin_id in ALL_RECIPIENTS:
         if actor_id and admin_id == actor_id:
             continue
             
@@ -105,7 +109,8 @@ async def _send_and_save_notification(delivery_id: int, text: str, actor_id: int
                 logger.warning(f"⚠️ Не вдалося запланувати видалення повідомлення {msg.message_id}: {e}")
                 
         except Exception as e:
-            logger.error(f"❌ Помилка відправки повідомлення логісту {admin_id}: {e}")
+            logger.error(f"❌ Помилка відправки повідомлення отримувачу {admin_id}: {e}")
+
 
 async def notify_delivery_status_change(delivery: Deliveries, status: str, actor_name: str = None, actor_id: int = None):
     """Повідомити всіх логістів про зміну статусу доставки (крім автора зміни)"""
