@@ -88,11 +88,23 @@ def process_submissions(content: bytes) -> pd.DataFrame:
 
 
 def process_av_stock(content: bytes) -> pd.DataFrame:
+    """
+    Обработка файла 'Доступність товару підрозділи'.
+    Новая структура (2026+):
+      Строка 0: Заголовки (Номенклатура, Ознака партії, Сезон закупки, Склад.Підрозділ, Вид діяльності, Діюча речовина, Разом)
+      Строка 1: Подзаголовок (Вільний залишок, б.о.)
+      Строка 2: Excel ID (Excel000004153)
+      Строка 3+: Данные
+    """
     av_stock = read_excel_content(content)
-    av_stock.drop(axis=0, labels=[0, 1, 2, 3, 4, 5, 6], inplace=True)
-    av_stock.drop(
-        axis=1, labels=["Unnamed: 1", "Unnamed: 2", "Unnamed: 4"], inplace=True
-    )
+    # Пропускаем строки 1 (подзаголовок) и 2 (Excel ID). 
+    # Строка 0 ушла в заголовки DataFrame, поэтому индекс 2 — это 3-я строка данных.
+    av_stock = av_stock.iloc[2:].reset_index(drop=True)
+
+    # Убираем полностью пустые колонки если есть
+    av_stock = av_stock.loc[:, av_stock.columns.notna()]
+    av_stock = av_stock.dropna(axis=1, how="all")
+
     av_col_names = [
         "nomenclature",
         "party_sign",
@@ -102,6 +114,13 @@ def process_av_stock(content: bytes) -> pd.DataFrame:
         "active_substance",
         "available",
     ]
+
+    if len(av_stock.columns) != len(av_col_names):
+        logger.error(
+            f"AV STOCK: Ожидалось {len(av_col_names)} столбцов, получено {len(av_stock.columns)}. "
+            f"Текущие столбцы: {list(av_stock.columns)}"
+        )
+
     av_stock.columns = av_col_names
     text_columns = [
         "nomenclature",
@@ -121,7 +140,6 @@ def process_av_stock(content: bytes) -> pd.DataFrame:
         av_stock["party_sign"].str.rstrip() + " " + 
         av_stock["buying_season"].str.rstrip()
     ).str.strip()
-    # av_stock.drop("active_substance", axis=1, inplace=True)
     return av_stock
 
 
@@ -266,95 +284,87 @@ def process_moved_data(content: bytes) -> pd.DataFrame:
 
 
 def process_free_stock(content: bytes) -> pd.DataFrame:
+    """
+    Обработка файла 'Доступно'.
+    Новая структура (2026+):
+      Строка 0: Заголовки (Номенклатура, Ознака партії, Сезон закупки, Підрозділ, Склад,
+                           Дата приходу товару на ЦО, Вид діяльності, Разом, -, -)
+      Строка 1: Подзаголовки для числовых колонок (Вільний залишок, Залишок на складах, Залишок по складському обліку)
+      Строка 2: Excel ID (Excel000004153)
+      Строка 3+: Данные
+    """
     file = read_excel_content(content)
-    file = file.loc[3:]
-    file.columns = file.iloc[0]
-    file = file[1:].reset_index(drop=True)
-    new_columns = file.columns.tolist()
-    new_columns[10] = "Свободно"
-    new_columns[11] = "БухУч"
-    new_columns[12] = "СкладУч"
-    file.columns = new_columns
-    file = file.loc[:, file.columns.notna()]
+    # Пропускаем строку 1 (подзаголовок) и 2 (Excel ID).
+    # Строка 0 ушла в заголовки, поэтому индекс 2 — это 3-я строка данных.
     file = file.iloc[2:].reset_index(drop=True)
-    # Define the columns to convert to numeric
-    numeric_cols = ["Свободно", "БухУч", "СкладУч"]
 
-    # Convert specified columns to numeric and fill NaN with 0
+    # Убираем полностью пустые колонки если есть
+    file = file.loc[:, file.columns.notna()]
+    file = file.dropna(axis=1, how="all")
+
+    # Новая структура: 10 колонок
+    # Col[0]=Номенклатура, Col[1]=Ознака партії, Col[2]=Сезон закупки,
+    # Col[3]=Підрозділ, Col[4]=Склад, Col[5]=Дата приходу,
+    # Col[6]=Вид діяльності, Col[7]=Свободно, Col[8]=БухУч, Col[9]=СкладУч
+    expected_cols = 10
+    actual_cols = len(file.columns)
+
+    if actual_cols != expected_cols:
+        logger.error(
+            f"FREE STOCK: Ожидалось {expected_cols} столбцов, получено {actual_cols}. "
+            f"Текущие столбцы: {list(file.columns)}"
+        )
+
+    # Формируем product из первых 3 колонок (Номенклатура + Ознака партії + Сезон закупки)
+    file["product"] = (
+        file.iloc[:, 0].fillna("").astype(str).str.rstrip() + " " +
+        file.iloc[:, 1].fillna("").astype(str).str.rstrip() + " " +
+        file.iloc[:, 2].fillna("").astype(str).str.rstrip()
+    ).str.strip()
+
+    # Назначаем осмысленные имена
+    col_mapping = {
+        file.columns[0]: "_nomenclature",
+        file.columns[1]: "_party_sign",
+        file.columns[2]: "_buying_season",
+        file.columns[3]: "division",
+        file.columns[4]: "warehouse",
+        file.columns[5]: "date_in_co",
+        file.columns[6]: "line_of_business",
+        file.columns[7]: "free_qty",
+        file.columns[8]: "buh_qty",
+        file.columns[9]: "skl_qty",
+    }
+    file = file.rename(columns=col_mapping)
+
+    # Удаляем исходные 3 колонки номенклатуры (они уже в product)
+    file = file.drop(columns=["_nomenclature", "_party_sign", "_buying_season"])
+
+    # Числовые колонки
+    numeric_cols = ["free_qty", "buh_qty", "skl_qty"]
     for col in numeric_cols:
         if col in file.columns:
-            file[col] = (
-                file[col].apply(lambda x: pd.to_numeric(x, errors="coerce")).fillna(0)
-            )
+            file[col] = pd.to_numeric(file[col], errors="coerce").fillna(0)
 
-    # Fill NaN with empty strings in other columns
-    for col in file.columns:
-        if col not in numeric_cols:
-            file[col] = file[col].fillna("")
-    file["product"] = (
-        file.iloc[:, 0].astype(str)
-        + " "
-        + file.iloc[:, 1].astype(str)
-        + " "
-        + file.iloc[:, 2].astype(str)
-    )
-    # Get the names of the first three columns
-    cols_to_drop = file.columns[:3].tolist()
+    # Текстовые колонки
+    text_cols = ["division", "warehouse", "date_in_co", "line_of_business"]
+    for col in text_cols:
+        if col in file.columns:
+            file[col] = file[col].fillna("").astype(str)
 
-    # Drop the columns
-    file = file.drop(columns=cols_to_drop)
-    # Get the current column names from the DataFrame
-    current_cols = file.columns.tolist()
+    # Ставим product первым столбцом
+    cols_order = ["product"] + [c for c in file.columns if c != "product"]
+    file = file[cols_order]
 
-    # Define the new column names in the desired order
-    new_cols = [
-        "division",
-        "warehouse",
-        "date_in_co",
-        "line_of_business",
-        "free_qty",
-        "buh_qty",
-        "skl_qty",
-        "product",
-    ]
-
-    # Check if the number of current columns matches the number of new names
-    if len(current_cols) == len(new_cols):
-        # Create a dictionary mapping current names to new names based on order
-        rename_map = dict(zip(current_cols, new_cols))
-
-        # Rename the columns
-        file = file.rename(columns=rename_map)
-        logger.info("Столбцы успешно переименованы.")
-    else:
-        logger.error(
-            f"Ошибка: Количество текущих столбцов ({len(current_cols)}) не соответствует количеству новых имен ({len(new_cols)})."
-        )
-    # Get the current column names
-    current_cols = file.columns.tolist()
-
-    # Remove 'product' from the list
-    current_cols.remove("product")
-
-    # Create the new list with 'product' as the first column
-    new_order = ["product"] + current_cols
-
-    # Reindex the DataFrame with the new column order
-    file = file[new_order]
-    import uuid
-
-    # Generate a list of unique UUIDs, one for each row
+    # Генерируем UUID для каждой строки
     uuids = [uuid.uuid4() for _ in range(len(file))]
-
-    # Insert the 'id' column at the beginning of the DataFrame
     file.insert(0, "id", uuids)
 
-    # Define the columns to check
+    # Фильтруем строки, где все числовые колонки == 0
     cols_to_check = ["free_qty", "buh_qty", "skl_qty"]
-
-    # Filter out rows where all specified columns are 0
-    # We keep rows where AT LEAST one of the specified columns is NOT 0
     file = file[(file[cols_to_check] != 0).any(axis=1)].reset_index(drop=True)
+
+    logger.info(f"FREE STOCK: Обработано {len(file)} строк.")
     return file
 
 
