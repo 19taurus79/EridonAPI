@@ -10,6 +10,26 @@ from .config import valid_line_of_business, valid_warehouse, logger  # Импо�
 pd.set_option("future.no_silent_downcasting", True)
 
 
+def _normalize_season(series: "pd.Series") -> "pd.Series":
+    """
+    Приводит buying_season к целому числу если это число.
+    Excel читает год как float (2024.0), .astype(str) даёт '2024.0'.
+    Эта функция даёт '2024' — как в Submissions и Remains.
+    """
+    def fix(val):
+        if not val:
+            return val
+        try:
+            f = float(val)
+            # Если значение целое — убираем .0
+            if f == int(f):
+                return str(int(f))
+            return str(f)
+        except (ValueError, TypeError):
+            return val
+    return series.astype(str).apply(fix)
+
+
 def read_excel_content(content: bytes, sheet_name=0) -> pd.DataFrame:
     """Вспомогательная функция для чтения содержимого Excel в DataFrame."""
     return pd.read_excel(io.BytesIO(content), sheet_name=sheet_name, engine="openpyxl")
@@ -125,13 +145,14 @@ def process_av_stock(content: bytes) -> pd.DataFrame:
     text_columns = [
         "nomenclature",
         "party_sign",
-        "buying_season",
         "division",
         "line_of_business",
         "active_substance",
     ]
     for col in text_columns:
         av_stock[col] = av_stock[col].fillna("").astype(str)
+    # buying_season обрабатываем отдельно: Excel читает год как float
+    av_stock["buying_season"] = _normalize_season(av_stock["buying_season"].fillna(""))
     av_stock["available"] = pd.to_numeric(
         av_stock["available"], errors="coerce"
     ).fillna(0)
@@ -316,10 +337,12 @@ def process_free_stock(content: bytes) -> pd.DataFrame:
         )
 
     # Формируем product из первых 3 колонок (Номенклатура + Ознака партії + Сезон закупки)
+    # buying_season (col[2]) может прийти как float из Excel (2024.0) — нормализуем
+    season_col = _normalize_season(file.iloc[:, 2].fillna(""))
     file["product"] = (
         file.iloc[:, 0].fillna("").astype(str).str.rstrip() + " " +
         file.iloc[:, 1].fillna("").astype(str).str.rstrip() + " " +
-        file.iloc[:, 2].fillna("").astype(str).str.rstrip()
+        season_col.str.rstrip()
     ).str.strip()
 
     # Назначаем осмысленные имена
