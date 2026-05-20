@@ -116,5 +116,19 @@ def setup_scheduler():
     scheduler.add_job(check_supplements_and_notify, 'cron', day_of_week='mon-fri', hour=14, minute=0, misfire_grace_time=60, coalesce=True)
     scheduler.add_job(check_supplements_and_notify, 'cron', day_of_week='mon-fri', hour=17, minute=0, misfire_grace_time=60, coalesce=True)
 
+    # Перевірка завислих заявок (статус "Створено")
+    from .delivery_notifications import check_unresolved_deliveries_and_notify
+    # 15:00 та 17:00 - перевірка на завтра
+    scheduler.add_job(check_unresolved_deliveries_and_notify, 'cron', day_of_week='mon-fri', hour=15, minute=0, args=["tomorrow"], misfire_grace_time=60, coalesce=True)
+    scheduler.add_job(check_unresolved_deliveries_and_notify, 'cron', day_of_week='mon-fri', hour=17, minute=0, args=["tomorrow"], misfire_grace_time=60, coalesce=True)
+    # 17:30 - перевірка на сьогодні
+    scheduler.add_job(check_unresolved_deliveries_and_notify, 'cron', day_of_week='mon-fri', hour=17, minute=30, args=["today"], misfire_grace_time=60, coalesce=True)
+
+    # Перевірка термінових самовивозів (сьогодні на сьогодні, статус "Самовивіз", більше 30 хвилин) кожні 5 хвилин
+    from .delivery_notifications import check_urgent_pickups_and_notify
+    scheduler.add_job(check_urgent_pickups_and_notify, 'interval', minutes=5, misfire_grace_time=60, coalesce=True)
+
     scheduler.start()
-    logger.info("Scheduler started with cleanup, summary, and supplement check jobs.")
+    logger.info("Scheduler started with cleanup, summary, supplement check, delivery status check, and urgent pickup check jobs.")
+
+

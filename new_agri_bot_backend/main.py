@@ -943,8 +943,15 @@ async def send_delivery(
     telegram_id = user_data.get("id")
 
     # 1. Формування повідомлення для Telegram
+    if data.status == "Самовивіз":
+        header = "🚗 <b>Нова заявка на Самовивіз!</b>"
+    elif data.status == "Нова Пошта":
+        header = "📦 <b>Нова заявка на Нову Пошту!</b>"
+    else:
+        header = "🆕 <b>Нова заявка на доставку!</b>"
+
     message_lines = [
-        "🆕 <b>Нова заявка на доставку!</b>",
+        header,
         "",
         f"👤 Менеджер: {data.manager}",
         f"🚚 Контрагент: <code>{data.client}</code>",

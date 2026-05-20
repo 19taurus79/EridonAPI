@@ -36,9 +36,9 @@ async def notify_new_delivery(delivery: Deliveries, actor_name: str = None, cust
     if not SEND_NOTIFICATIONS:
         logger.info("🔇 Сповіщення вимкнено (SEND_NOTIFICATIONS=false). Пропускаємо notify_new_delivery.")
         return
-    # Якщо доставка створюється зі статусом відмінним від "Створено" або "Самовивіз",
+    # Якщо доставка створюється зі статусом відмінним від "Створено", "Самовивіз" або "Нова Пошта",
     # то це фактично створення + зміна статусу.
-    if delivery.status not in ["Створено", "Самовивіз", ""]:
+    if delivery.status not in ["Створено", "Самовивіз", "Нова Пошта", ""]:
         # Видаляємо старі, якщо були
         await delete_delivery_notifications(delivery.id)
         # Надсилаємо сповіщення про статус
@@ -55,8 +55,15 @@ async def notify_new_delivery(delivery: Deliveries, actor_name: str = None, cust
         safe_manager = html.escape(delivery.manager or "Невідомий")
         safe_address = html.escape(delivery.address or "Не вказано")
         
+        if delivery.status == "Самовивіз":
+            header = "🚗 <b>Нова заявка на Самовивіз!</b>"
+        elif delivery.status == "Нова Пошта":
+            header = "📦 <b>Нова заявка на Нову Пошту!</b>"
+        else:
+            header = "🆕 <b>Нова заявка на доставку!</b>"
+
         text = (
-            f"🆕 <b>Нова заявка на доставку!</b>\n\n"
+            f"{header}\n\n"
             f"👤 Клієнт: <b>{safe_client}</b>\n"
             f"👨‍💼 Менеджер: {safe_manager}\n"
             f"📍 Адреса: {safe_address}\n"
@@ -64,6 +71,8 @@ async def notify_new_delivery(delivery: Deliveries, actor_name: str = None, cust
             f"⚖️ Вага: {delivery.total_weight} кг\n"
             f"📝 Коментар: {html.escape(delivery.comment or '')}"
         )
+
+
     
     logger.info(f"🆕 Спроба сповіщення про нову доставку ID: {delivery.id}")
     logger.info(f"👥 Список отримувачів: {ALL_RECIPIENTS}")
@@ -173,3 +182,198 @@ async def notify_delivery_date_change(delivery: Deliveries, new_date, actor_name
         actor_id=actor_id, 
         event_type="date_change"
     )
+
+async def check_unresolved_deliveries_and_notify(target_day: str):
+    """
+    Перевіряє заявки зі статусом 'Створено' на сьогодні або завтра
+    та надсилає сповіщення менеджеру та адміністраторам/логістам.
+    """
+    if not SEND_NOTIFICATIONS:
+        logger.info("🔇 Сповіщення вимкнено (SEND_NOTIFICATIONS=false). Пропускаємо перевірку завислих заявок.")
+        return
+
+    import pytz
+    from datetime import datetime, timedelta
+
+    KIEV_TZ = pytz.timezone("Europe/Kyiv")
+    now = datetime.now(KIEV_TZ)
+
+    if target_day == "today":
+        target_date = now.date()
+    elif target_day == "tomorrow":
+        target_date = (now + timedelta(days=1)).date()
+    else:
+        logger.error(f"❌ Невідомий тип дня для перевірки: {target_day}")
+        return
+
+    logger.info(f"🔍 Запуск перевірки завислих заявок на дату: {target_date} ({target_day})")
+
+    try:
+        # Шукаємо заявки в статусі "Створено" на вказану дату
+        deliveries = await Deliveries.objects().where(
+            (Deliveries.status == "Створено") &
+            (Deliveries.delivery_date == target_date)
+        ).run()
+    except Exception as e:
+        logger.error(f"❌ Помилка отримання заявок з БД: {e}")
+        return
+
+    if not deliveries:
+        logger.info(f"✅ Завислих заявок на {target_date} не знайдено.")
+        return
+
+    logger.info(f"⚠️ Знайдено завислих заявок: {len(deliveries)} на {target_date}")
+
+    for delivery in deliveries:
+        safe_client = html.escape(delivery.client)
+        safe_manager = html.escape(delivery.manager or "Невідомий")
+        
+        # Текст для менеджера
+        manager_text = (
+            f"⚠️ <b>Заявка не прийнята в роботу!</b>\n\n"
+            f"👤 Клієнт: <b>{safe_client}</b>\n"
+            f"👨‍💼 Менеджер: {safe_manager}\n"
+            f"📅 Дата доставки: <b>{delivery.delivery_date}</b>\n"
+            f"⚖️ Вага: {delivery.total_weight or 0} кг\n"
+            f"📝 Статус: <b>Створено</b>\n\n"
+            f"Будь ласка, зв'яжіться з логістом для уточнення деталей доставки."
+        )
+
+        # Текст для адміністраторів та логістів
+        admin_text = (
+            f"⚠️ <b>Заявка не прийнята в роботу!</b>\n\n"
+            f"👤 Клієнт: <b>{safe_client}</b>\n"
+            f"👨‍💼 Менеджер: {safe_manager}\n"
+            f"📅 Дата доставки: <b>{delivery.delivery_date}</b>\n"
+            f"⚖️ Вага: {delivery.total_weight or 0} кг\n"
+            f"📝 Статус: <b>Створено</b>\n\n"
+            f"Будь ласка, перевірте заявку та візьміть її в роботу або зв'яжіться з менеджером."
+        )
+
+        # Відправляємо менеджеру
+        if delivery.created_by:
+            try:
+                await bot.send_message(chat_id=delivery.created_by, text=manager_text, parse_mode="HTML")
+                logger.info(f"✅ Надіслано сповіщення менеджеру {delivery.created_by} для доставки {delivery.id}")
+            except Exception as e:
+                logger.error(f"❌ Помилка надсилання сповіщення менеджеру {delivery.created_by} для доставки {delivery.id}: {e}")
+
+        # Відправляємо логістам та адмінам (виключаємо менеджера, якщо він є серед них, щоб не дублювати)
+        admins_to_notify = [adm_id for adm_id in ALL_RECIPIENTS if adm_id != delivery.created_by]
+        for admin_id in admins_to_notify:
+            try:
+                await bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML")
+                logger.info(f"✅ Надіслано сповіщення адміну/логісту {admin_id} для доставки {delivery.id}")
+            except Exception as e:
+                logger.error(f"❌ Помилка надсилання сповіщення адміну/логісту {admin_id} для доставки {delivery.id}: {e}")
+
+async def check_urgent_pickups_and_notify():
+    """
+    Перевіряє термінові заявки зі статусом 'Самовивіз' на сьогодні,
+    які були створені сьогодні більше 30 хвилин тому і досі не взяті в роботу.
+    Надсилає сповіщення менеджеру та адміністраторам.
+    """
+    if not SEND_NOTIFICATIONS:
+        return
+
+    import pytz
+    from datetime import datetime, timedelta, timezone
+
+    KIEV_TZ = pytz.timezone("Europe/Kyiv")
+    now_kiev = datetime.now(KIEV_TZ)
+    
+    # Сповіщення надсилаємо тільки в будні дні
+    if now_kiev.weekday() >= 5:
+        return
+
+    today_date = now_kiev.date()
+    
+    # 30 хвилин тому в UTC (наївна datetime, так як Piccolo зберігає naive UTC в created_at)
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    thirty_minutes_ago_utc = now_utc - timedelta(minutes=30)
+    
+    # Початок сьогоднішнього дня за київським часом, конвертований в UTC
+    start_of_today_kiev = KIEV_TZ.localize(datetime(today_date.year, today_date.month, today_date.day, 0, 0, 0))
+    start_of_today_utc = start_of_today_kiev.astimezone(timezone.utc).replace(tzinfo=None)
+
+    try:
+        deliveries = await Deliveries.objects().where(
+            (Deliveries.status == "Самовивіз") &
+            (Deliveries.delivery_date == today_date) &
+            (Deliveries.created_at >= start_of_today_utc) &
+            (Deliveries.created_at <= thirty_minutes_ago_utc)
+        ).run()
+    except Exception as e:
+        logger.error(f"❌ Помилка отримання термінових самовивозів з БД: {e}")
+        return
+
+    for delivery in deliveries:
+        # Перевіряємо, чи вже надсилалося сповіщення про перевищення 30 хвилин
+        already_notified = await DeliveryNotifications.objects().where(
+            (DeliveryNotifications.delivery_id == delivery.id) &
+            (DeliveryNotifications.event_type == "pickup_warning")
+        ).first().run()
+
+        if already_notified:
+            continue
+
+        logger.info(f"⚠️ Знайдено завислу термінову заявку 'Самовивіз' ID: {delivery.id} (створена: {delivery.created_at})")
+
+        safe_client = html.escape(delivery.client)
+        safe_manager = html.escape(delivery.manager or "Невідомий")
+
+        # Текст для менеджера
+        manager_text = (
+            f"⚠️ <b>Терміновий самовивіз не прийнято в роботу!</b>\n\n"
+            f"👤 Клієнт: <b>{safe_client}</b>\n"
+            f"👨‍💼 Менеджер: {safe_manager}\n"
+            f"📅 Дата доставки: <b>{delivery.delivery_date} (Сьогодні)</b>\n"
+            f"⚖️ Вага: {delivery.total_weight or 0} кг\n"
+            f"📝 Статус: <b>Самовивіз</b>\n\n"
+            f"Заявка була створена більше 30 хвилин тому. Будь ласка, зв'яжіться з логістом."
+        )
+
+        # Текст для адміністраторів та логістів
+        admin_text = (
+            f"⚠️ <b>Терміновий самовивіз не прийнято в роботу!</b>\n\n"
+            f"👤 Клієнт: <b>{safe_client}</b>\n"
+            f"👨‍💼 Менеджер: {safe_manager}\n"
+            f"📅 Дата доставки: <b>{delivery.delivery_date} (Сьогодні)</b>\n"
+            f"⚖️ Вага: {delivery.total_weight or 0} кг\n"
+            f"📝 Статус: <b>Самовивіз</b>\n\n"
+            f"Заявка була створена більше 30 хвилин тому. Будь ласка, обробіть її або зв'яжіться з менеджером."
+        )
+
+        # Відправляємо менеджеру та зберігаємо в БД
+        if delivery.created_by:
+            try:
+                msg = await bot.send_message(chat_id=delivery.created_by, text=manager_text, parse_mode="HTML")
+                new_note = DeliveryNotifications(
+                    delivery_id=delivery.id,
+                    telegram_id=delivery.created_by,
+                    message_id=msg.message_id,
+                    event_type="pickup_warning"
+                )
+                await new_note.save().run()
+                logger.info(f"✅ Надіслано та збережено сповіщення про самовивіз менеджеру {delivery.created_by}")
+            except Exception as e:
+                logger.error(f"❌ Помилка надсилання сповіщення про самовивіз менеджеру {delivery.created_by}: {e}")
+
+        # Відправляємо адмінам та логістам та зберігаємо в БД (виключаючи менеджера)
+        admins_to_notify = [adm_id for adm_id in ALL_RECIPIENTS if adm_id != delivery.created_by]
+        for admin_id in admins_to_notify:
+            try:
+                msg = await bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML")
+                new_note = DeliveryNotifications(
+                    delivery_id=delivery.id,
+                    telegram_id=admin_id,
+                    message_id=msg.message_id,
+                    event_type="pickup_warning"
+                )
+                await new_note.save().run()
+                logger.info(f"✅ Надіслано та збережено сповіщення про самовивіз адміну/логісту {admin_id}")
+            except Exception as e:
+                logger.error(f"❌ Помилка надсилання сповіщення про самовивіз адміну/логісту {admin_id}: {e}")
+
+
+
