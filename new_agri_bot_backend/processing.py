@@ -53,8 +53,8 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[Dict, List]:
         for i, col in enumerate(ordered.columns)
     ]
     
-    # Находим все колонки, начинающиеся с Примечание (включая дубликаты)
-    note_cols_ordered = [c for c in ordered.columns if str(c).startswith("Примечание")]
+    # Находим все колонки, начинающиеся с Примітка (включая дубликаты)
+    note_cols_ordered = [c for c in ordered.columns if str(c).startswith("Примітка")]
     if len(note_cols_ordered) > 1:
         # Обычно нужные данные в последней колонке Примечание
         ordered = ordered.rename(columns={note_cols_ordered[-1]: "Примечание_заказано"})
@@ -63,8 +63,8 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[Dict, List]:
         
     ordered = ordered.rename(columns={"Кількість": "Заказано"})
     
-    # Удаляем остальные колонки Примечание, если они остались
-    cols_to_drop_ordered = [col for col in ordered.columns if str(col).startswith("Примечание") and col != "Примечание_заказано"]
+    # Удаляем остальные колонки Примітка, если они остались
+    cols_to_drop_ordered = [col for col in ordered.columns if str(col).startswith("Примітка") and col != "Примечание_заказано"]
     ordered = ordered.drop(columns=cols_to_drop_ordered)
     ordered["Заказано"] = ordered["Заказано"].replace(["", " "], 0)
 
@@ -98,15 +98,15 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[Dict, List]:
         for i, col in enumerate(moved.columns)
     ]
     
-    note_cols_moved = [c for c in moved.columns if str(c).startswith("Примечание")]
+    note_cols_moved = [c for c in moved.columns if str(c).startswith("Примітка")]
     if len(note_cols_moved) > 1:
         moved = moved.rename(columns={note_cols_moved[-1]: "Примечание_перемещено"})
     elif len(note_cols_moved) == 1:
         moved = moved.rename(columns={note_cols_moved[0]: "Примечание_перемещено"})
         
-    moved = moved.rename(columns={"Количество": "Перемещено"})
+    moved = moved.rename(columns={"Кількість": "Перемещено"})
     
-    cols_to_drop_moved = [col for col in moved.columns if str(col).startswith("Примечание") and col != "Примечание_перемещено"]
+    cols_to_drop_moved = [col for col in moved.columns if str(col).startswith("Примітка") and col != "Примечание_перемещено"]
     moved = moved.drop(columns=cols_to_drop_moved)
 
     if not moved.empty:
