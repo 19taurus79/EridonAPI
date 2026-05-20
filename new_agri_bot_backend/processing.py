@@ -3,6 +3,8 @@ import re
 from typing import Dict, Any, Tuple, List
 import numpy as np
 from .config import logger
+from .exceptions import ExcelValidationError
+
 
 # --- Вспомогательная функция для конвертации типов ---
 
@@ -43,27 +45,67 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[Dict, List]:
     """
 
     # --- Этап 1: Загрузка и предварительная очистка данных ---
-    ordered = pd.read_excel(ordered_file)
-    ordered = ordered.drop(ordered.index[0:3], axis=0)
-    ordered.columns = ordered.iloc[0]
-    ordered = ordered[2:].reset_index(drop=True)
-    ordered = ordered.dropna(axis=1, how="all").fillna("")
-    ordered.columns = [
-        f"{col}_{i}" if ordered.columns.duplicated()[i] else col
-        for i, col in enumerate(ordered.columns)
-    ]
-    
-    # Находим все колонки, начинающиеся с Примітка (включая дубликаты)
+    # Валидация файла «Заказано»
+    try:
+        ordered = pd.read_excel(ordered_file)
+    except Exception as e:
+        raise ExcelValidationError("ordered", f"Не удалось прочитать файл 'Заказано'. Возможно, он поврежден или имеет неверный формат. Ошибка: {e}")
+
+    if len(ordered) < 4:
+        raise ExcelValidationError(
+            "ordered",
+            "Файл 'Заказано' содержит слишком мало строк. Не удалось найти заголовки таблицы в 4-й строке."
+        )
+
+    try:
+        ordered = ordered.drop(ordered.index[0:3], axis=0)
+        ordered.columns = ordered.iloc[0]
+        ordered = ordered[2:].reset_index(drop=True)
+        ordered = ordered.dropna(axis=1, how="all").fillna("")
+        ordered.columns = [
+            f"{col}_{i}" if ordered.columns.duplicated()[i] else col
+            for i, col in enumerate(ordered.columns)
+        ]
+    except Exception as e:
+        raise ExcelValidationError(
+            "ordered",
+            f"Не удалось разобрать структуру шапки в файле 'Заказано'. Проверьте, что таблица начинается с 4-й строки. Ошибка: {e}"
+        )
+
+    # Проверка обязательных колонок «Заказано»
+    required_ordered_cols = ["Заявка на відвантаження", "Номенклатура", "Ознака партії", "Сезон закупівлі"]
+    missing_ordered = [col for col in required_ordered_cols if col not in ordered.columns]
+    if missing_ordered:
+        raise ExcelValidationError(
+            "ordered",
+            f"В файле 'Заказано' отсутствуют обязательные колонки: {', '.join(missing_ordered)}",
+            missing_columns=missing_ordered
+        )
+
+    # Проверка колонки количества «Заказано»
+    if "Кількість" not in ordered.columns:
+        raise ExcelValidationError(
+            "ordered",
+            "В файле 'Заказано' отсутствует обязательная колонка количества 'Кількість'.",
+            missing_columns=["Кількість"]
+        )
+
+    # Проверка колонки примечания «Заказано»
     note_cols_ordered = [c for c in ordered.columns if str(c).startswith("Примітка")]
+    if not note_cols_ordered:
+        raise ExcelValidationError(
+            "ordered",
+            "В файле 'Заказано' отсутствует обязательная колонка примечания 'Примітка'.",
+            missing_columns=["Примітка"]
+        )
+
     if len(note_cols_ordered) > 1:
-        # Обычно нужные данные в последней колонке Примечание
         ordered = ordered.rename(columns={note_cols_ordered[-1]: "Примечание_заказано"})
-    elif len(note_cols_ordered) == 1:
+    else:
         ordered = ordered.rename(columns={note_cols_ordered[0]: "Примечание_заказано"})
         
     ordered = ordered.rename(columns={"Кількість": "Заказано"})
     
-    # Удаляем остальные колонки Примітка, если они остались
     cols_to_drop_ordered = [col for col in ordered.columns if str(col).startswith("Примітка") and col != "Примечание_заказано"]
     ordered = ordered.drop(columns=cols_to_drop_ordered)
     ordered["Заказано"] = ordered["Заказано"].replace(["", " "], 0)
@@ -88,20 +130,63 @@ def process_uploaded_files(ordered_file, moved_file) -> Tuple[Dict, List]:
         + ordered["Сезон закупівлі"].astype(str)
     )
 
-    moved = pd.read_excel(moved_file)
-    moved = moved.drop(moved.index[0:3], axis=0)
-    moved.columns = moved.iloc[0]
-    moved = moved[2:].reset_index(drop=True)
-    moved = moved.dropna(axis=1, how="all").fillna("")
-    moved.columns = [
-        f"{col}_{i}" if moved.columns.duplicated()[i] else col
-        for i, col in enumerate(moved.columns)
-    ]
-    
+    # Валидация файла «Перемещено»
+    try:
+        moved = pd.read_excel(moved_file)
+    except Exception as e:
+        raise ExcelValidationError("moved", f"Не удалось прочитать файл 'Перемещено'. Возможно, он поврежден или имеет неверный формат. Ошибка: {e}")
+
+    if len(moved) < 4:
+        raise ExcelValidationError(
+            "moved",
+            "Файл 'Перемещено' содержит слишком мало строк. Не удалось найти заголовки таблицы в 4-й строке."
+        )
+
+    try:
+        moved = moved.drop(moved.index[0:3], axis=0)
+        moved.columns = moved.iloc[0]
+        moved = moved[2:].reset_index(drop=True)
+        moved = moved.dropna(axis=1, how="all").fillna("")
+        moved.columns = [
+            f"{col}_{i}" if moved.columns.duplicated()[i] else col
+            for i, col in enumerate(moved.columns)
+        ]
+    except Exception as e:
+        raise ExcelValidationError(
+            "moved",
+            f"Не удалось разобрать структуру шапки в файле 'Перемещено'. Проверьте, что таблица начинается с 4-й строки. Ошибка: {e}"
+        )
+
+    # Проверка обязательных колонок «Перемещено»
+    required_moved_cols = ["Заявка на відвантаження", "Номенклатура", "Ознака партії", "Сезон закупівлі", "Партія номенклатури"]
+    missing_moved = [col for col in required_moved_cols if col not in moved.columns]
+    if missing_moved:
+        raise ExcelValidationError(
+            "moved",
+            f"В файле 'Перемещено' отсутствуют обязательные колонки: {', '.join(missing_moved)}",
+            missing_columns=missing_moved
+        )
+
+    # Проверка количества «Перемещено»
+    if "Кількість" not in moved.columns:
+        raise ExcelValidationError(
+            "moved",
+            "В файле 'Перемещено' отсутствует обязательная колонка количества 'Кількість'.",
+            missing_columns=["Кількість"]
+        )
+
+    # Проверка примечания «Перемещено»
     note_cols_moved = [c for c in moved.columns if str(c).startswith("Примітка")]
+    if not note_cols_moved:
+        raise ExcelValidationError(
+            "moved",
+            "В файле 'Перемещено' отсутствует обязательная колонка примечания 'Примітка'.",
+            missing_columns=["Примітка"]
+        )
+
     if len(note_cols_moved) > 1:
         moved = moved.rename(columns={note_cols_moved[-1]: "Примечание_перемещено"})
-    elif len(note_cols_moved) == 1:
+    else:
         moved = moved.rename(columns={note_cols_moved[0]: "Примечание_перемещено"})
         
     moved = moved.rename(columns={"Кількість": "Перемещено"})
