@@ -19,6 +19,7 @@ from openpyxl.utils import get_column_letter
 from asyncpg import UniqueViolationError
 from piccolo.columns.defaults import TimestampNow
 from . import models, processing
+from .exceptions import ExcelValidationError
 from .google_calendar import (
     create_calendar_event,
     get_calendar_events,
@@ -394,8 +395,24 @@ async def upload_and_process_files(
         leftovers, matched_list = processing.process_uploaded_files(
             ordered_file.file, moved_file.file
         )
+    except ExcelValidationError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_type": "validation_error",
+                "file": e.file_type,
+                "message": e.message,
+                "missing_columns": e.missing_columns
+            }
+        )
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Ошибка при обработке файлов: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_type": "unexpected_error",
+                "message": f"Непредвиденная ошибка при обработке файлов: {e}"
+            }
+        )
 
     # --- НОВОВВЕДЕНИЕ: Фильтрация уже сопоставленных данных ---
     try:
