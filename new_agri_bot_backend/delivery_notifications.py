@@ -267,17 +267,46 @@ async def check_unresolved_deliveries_and_notify(target_day: str):
             except Exception as e:
                 logger.error(f"❌ Помилка надсилання сповіщення адміну/логісту {admin_id} для доставки {delivery.id}: {e}")
 
+def get_working_minutes_elapsed(start_dt, end_dt, tz) -> float:
+    """
+    Рахує кількість робочих хвилин (Пн-Пт, з 09:00 до 18:00 за київським часом)
+    між start_dt та end_dt. Обидві дати мають бути aware (в таймзоні tz).
+    """
+    if start_dt >= end_dt:
+        return 0.0
+
+    import datetime as dt_mod
+    
+    total_seconds = 0.0
+    current_date = start_dt.date()
+    end_date = end_dt.date()
+
+    while current_date <= end_date:
+        if current_date.weekday() < 5:  # Пн-Пт
+            work_start = tz.localize(dt_mod.datetime.combine(current_date, dt_mod.time(9, 0, 0)))
+            work_end = tz.localize(dt_mod.datetime.combine(current_date, dt_mod.time(18, 0, 0)))
+
+            overlap_start = max(start_dt, work_start)
+            overlap_end = min(end_dt, work_end)
+
+            if overlap_start < overlap_end:
+                total_seconds += (overlap_end - overlap_start).total_seconds()
+
+        current_date += dt_mod.timedelta(days=1)
+
+    return total_seconds / 60.0
+
 async def check_urgent_pickups_and_notify():
     """
     Перевіряє термінові заявки зі статусом 'Самовивіз' на сьогодні,
-    які були створені сьогодні більше 30 хвилин тому і досі не взяті в роботу.
+    які не були взяті в роботу протягом 30 робочих хвилин (з 09:00 до 18:00 по буднях).
     Надсилає сповіщення менеджеру та адміністраторам.
     """
     if not SEND_NOTIFICATIONS:
         return
 
     import pytz
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timezone
 
     KIEV_TZ = pytz.timezone("Europe/Kyiv")
     now_kiev = datetime.now(KIEV_TZ)
@@ -287,27 +316,30 @@ async def check_urgent_pickups_and_notify():
         return
 
     today_date = now_kiev.date()
-    
-    # 30 хвилин тому в UTC (наївна datetime, так як Piccolo зберігає naive UTC в created_at)
-    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-    thirty_minutes_ago_utc = now_utc - timedelta(minutes=30)
-    
-    # Початок сьогоднішнього дня за київським часом, конвертований в UTC
-    start_of_today_kiev = KIEV_TZ.localize(datetime(today_date.year, today_date.month, today_date.day, 0, 0, 0))
-    start_of_today_utc = start_of_today_kiev.astimezone(timezone.utc).replace(tzinfo=None)
 
     try:
         deliveries = await Deliveries.objects().where(
             (Deliveries.status == "Самовивіз") &
-            (Deliveries.delivery_date == today_date) &
-            (Deliveries.created_at >= start_of_today_utc) &
-            (Deliveries.created_at <= thirty_minutes_ago_utc)
+            (Deliveries.delivery_date == today_date)
         ).run()
     except Exception as e:
         logger.error(f"❌ Помилка отримання термінових самовивозів з БД: {e}")
         return
 
     for delivery in deliveries:
+        if not delivery.created_at:
+            continue
+
+        # Переводимо naive UTC datetime з БД в aware datetime в KIEV_TZ
+        created_at_utc = delivery.created_at.replace(tzinfo=timezone.utc)
+        created_at_kiev = created_at_utc.astimezone(KIEV_TZ)
+
+        # Рахуємо робочі хвилини
+        working_minutes = get_working_minutes_elapsed(created_at_kiev, now_kiev, KIEV_TZ)
+
+        if working_minutes < 30.0:
+            continue
+
         # Перевіряємо, чи вже надсилалося сповіщення про перевищення 30 хвилин
         already_notified = await DeliveryNotifications.objects().where(
             (DeliveryNotifications.delivery_id == delivery.id) &
@@ -317,7 +349,7 @@ async def check_urgent_pickups_and_notify():
         if already_notified:
             continue
 
-        logger.info(f"⚠️ Знайдено завислу термінову заявку 'Самовивіз' ID: {delivery.id} (створена: {delivery.created_at})")
+        logger.info(f"⚠️ Знайдено завислу термінову заявку 'Самовивіз' ID: {delivery.id} (створена: {delivery.created_at}, робочих хвилин: {working_minutes:.1f})")
 
         safe_client = html.escape(delivery.client)
         safe_manager = html.escape(delivery.manager or "Невідомий")
@@ -330,7 +362,7 @@ async def check_urgent_pickups_and_notify():
             f"📅 Дата доставки: <b>{delivery.delivery_date} (Сьогодні)</b>\n"
             f"⚖️ Вага: {delivery.total_weight or 0} кг\n"
             f"📝 Статус: <b>Самовивіз</b>\n\n"
-            f"Заявка була створена більше 30 хвилин тому. Будь ласка, зв'яжіться з логістом."
+            f"Заявка була створена більше 30 робочих хвилин тому. Будь ласка, зв'яжіться з логістом."
         )
 
         # Текст для адміністраторів та логістів
@@ -341,7 +373,7 @@ async def check_urgent_pickups_and_notify():
             f"📅 Дата доставки: <b>{delivery.delivery_date} (Сьогодні)</b>\n"
             f"⚖️ Вага: {delivery.total_weight or 0} кг\n"
             f"📝 Статус: <b>Самовивіз</b>\n\n"
-            f"Заявка була створена більше 30 хвилин тому. Будь ласка, обробіть її або зв'яжіться з менеджером."
+            f"Заявка була створена більше 30 робочих хвилин тому. Будь ласка, обробіть її або зв'яжіться з менеджером."
         )
 
         # Відправляємо менеджеру та зберігаємо в БД
