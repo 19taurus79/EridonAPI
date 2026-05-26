@@ -91,6 +91,8 @@ CORS_ORIGINS = [
     "http://127.0.0.1:8000",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
     "https://telegram-mini-app-six-inky.vercel.app",
     "https://geocode-six.vercel.app",
     "https://paravail-aubrianna-noncrystalline.ngrok-free.dev",

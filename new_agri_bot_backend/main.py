@@ -220,6 +220,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/health", tags=["System"])
 async def health_check():
     """Перевірка працездатності сервісу."""
@@ -1262,6 +1263,24 @@ async def update_delivery(
                     "message": "Delivery deleted as it became empty.",
                     "warnings": warnings
                 }
+
+        # Надіслати сповіщення менеджеру про взяття в роботу (робиться в кінці, коли DeliveryItems вже збережені)
+        if data.status == 'В роботі':
+            if delivery_data.created_by:
+                try:
+                    from .utils import format_delivery_final_data
+                    final_data_text = await format_delivery_final_data(delivery_data.id)
+                    await bot.send_message(
+                        chat_id=delivery_data.created_by,
+                        text=(
+                            f"🚚 <b>Доставка взята в роботу</b>\n\n"
+                            f"👤 Клієнт: <b>{delivery_data.client}</b>\n\n"
+                            f"{final_data_text}"
+                        ),
+                        parse_mode="HTML",
+                    )
+                except Exception as tg_err:
+                    logger.warning(f"Error sending in-progress message to manager: {tg_err}")
 
         # 5. Уведомление через WebSocket
         await manager.broadcast({
