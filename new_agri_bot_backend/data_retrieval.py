@@ -36,6 +36,9 @@ from .tables import (
     Tasks,
     Events,
     Payment,
+    Deliveries,
+    DeliveryItems,
+    FreeStock,
 )
 from .telegram_auth import get_current_telegram_user, check_not_guest
 from .tasks_handler import (
@@ -45,6 +48,7 @@ from .tasks_handler import (
     complete_task,
     in_progress_task,
 )
+from .utils import extract_order_ref, format_delivery_final_data
 from pydantic import BaseModel
 from datetime import date
 
@@ -156,6 +160,30 @@ async def get_av_remains_by_product(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Залишки для продукту з ID '{product_id}' не знайдено.",
         )
+    
+    # Отримуємо детальні залишки по складах з FreeStock
+    free_stocks = await FreeStock.select().where(FreeStock.product == product_id).run()
+    
+    # Групуємо склади по підрозділах
+    free_map = defaultdict(list)
+    for fs in free_stocks:
+        if fs["free_qty"] > 0:
+            free_map[fs["division"]].append({
+                "warehouse": fs["warehouse"],
+                "available": fs["free_qty"]
+            })
+            
+    # Додаємо інформацію про склади до кожного підрозділу
+    for r in remains:
+        div = r["division"]
+        if div in free_map:
+            r["warehouses"] = free_map[div]
+        else:
+            r["warehouses"] = [{
+                "warehouse": r["division"],
+                "available": r["available"]
+            }]
+            
     return remains
 
 
@@ -932,6 +960,91 @@ def get_task(task_id):
     return task
 
 
+@router.get("/get_delivery_by_task")
+async def get_delivery_by_task(task_id: str):
+    logger.info(f"🔍 get_delivery_by_task called with task_id: {task_id}")
+    task = get_task_by_id(task_id)
+    if not task:
+        logger.warning(f"❌ Task {task_id} not found in Google Tasks")
+        return {"found": False, "message": "Task not found in Google Tasks"}
+    
+    title = task.get("title", "")
+    notes = task.get("notes", "")
+    logger.info(f"📝 Task details fetched. Title: {title}, Notes length: {len(notes) if notes else 0}")
+    
+    order_ref = extract_order_ref(title) or extract_order_ref(notes)
+    logger.info(f"🔎 Extracted order_ref: {order_ref}")
+    if not order_ref:
+        return {"found": False, "message": "No order reference found in task", "order_ref": None}
+    
+    # Query DeliveryItems by order_ref
+    items = await DeliveryItems.select().where(DeliveryItems.order_ref == order_ref).run()
+    logger.info(f"📦 Found {len(items)} DeliveryItems matching {order_ref}")
+    if not items:
+        return {"found": False, "message": f"No delivery items found for order {order_ref}", "order_ref": order_ref}
+    
+    delivery_id = items[0]["delivery"]
+    logger.info(f"🚚 Associated delivery ID: {delivery_id}")
+    
+    # Fetch the full delivery details
+    delivery = await Deliveries.objects().where(Deliveries.id == delivery_id).first().run()
+    if not delivery:
+        logger.warning(f"❌ Delivery {delivery_id} not found in DB")
+        return {"found": False, "message": "Delivery not found", "order_ref": order_ref}
+        
+    # Fetch all items belonging to this delivery
+    all_delivery_items = await DeliveryItems.select().where(DeliveryItems.delivery == delivery_id).run()
+    logger.info(f"✅ Success! Returning delivery details and {len(all_delivery_items)} items")
+    
+    return {
+        "found": True,
+        "order_ref": order_ref,
+        "delivery": {
+            "id": delivery.id,
+            "client": delivery.client,
+            "manager": delivery.manager,
+            "address": delivery.address,
+            "contact": delivery.contact,
+            "phone": delivery.phone,
+            "delivery_date": str(delivery.delivery_date) if delivery.delivery_date else None,
+            "comment": delivery.comment,
+            "total_weight": delivery.total_weight,
+            "status": delivery.status,
+        },
+        "items": all_delivery_items
+    }
+
+
+@router.get("/get_delivery_by_event")
+async def get_delivery_by_event(event_id: str):
+    logger.info(f"🔍 get_delivery_by_event called with event_id: {event_id}")
+    delivery = await Deliveries.objects().where(Deliveries.calendar_id == event_id).first().run()
+    if not delivery:
+        logger.warning(f"❌ No delivery found for event_id {event_id}")
+        return {"found": False, "message": "Delivery not found"}
+        
+    # Fetch all items belonging to this delivery
+    all_delivery_items = await DeliveryItems.select().where(DeliveryItems.delivery == delivery.id).run()
+    logger.info(f"✅ Success! Returning delivery details and {len(all_delivery_items)} items for event {event_id}")
+    
+    return {
+        "found": True,
+        "delivery": {
+            "id": delivery.id,
+            "client": delivery.client,
+            "manager": delivery.manager,
+            "address": delivery.address,
+            "contact": delivery.contact,
+            "phone": delivery.phone,
+            "delivery_date": str(delivery.delivery_date) if delivery.delivery_date else None,
+            "comment": delivery.comment,
+            "total_weight": delivery.total_weight,
+            "status": delivery.status,
+        },
+        "items": all_delivery_items
+    }
+
+
 @router.patch("/task_in_progress", dependencies=[Depends(check_not_guest)])
 async def task_in_progress(task_id, user=Depends(get_current_telegram_user)):
     await Tasks.update(
@@ -943,6 +1056,42 @@ async def task_in_progress(task_id, user=Depends(get_current_telegram_user)):
         force=True,
     ).where(Tasks.task_id == task_id).run()
     in_progress_task(task_id, user)
+
+    # Відправляємо сповіщення автору задачі про взяття в роботу
+    try:
+        task_data = await Tasks.select().where(Tasks.task_id == task_id).run()
+        if task_data:
+            creator_id = task_data[0]["task_creator"]
+            task_title = task_data[0]["task"]
+            
+            # Спробуємо підтягнути фактичні дані по доставці
+            task_details = get_task_by_id(task_id)
+            final_data_text = ""
+            if task_details:
+                notes = task_details.get("notes", "")
+                order_ref = extract_order_ref(task_title) or extract_order_ref(notes)
+                if order_ref:
+                    items = await DeliveryItems.select().where(DeliveryItems.order_ref == order_ref).run()
+                    if items:
+                        delivery_id = items[0]["delivery"]
+                        final_data_text = "\n\n" + await format_delivery_final_data(delivery_id)
+            
+            notification_text = (
+                f"🔄 <b>Завдання взято в роботу</b>\n\n"
+                f"📋 <b>Задача:</b> {task_title}\n"
+                f"👷 <b>Виконавець:</b> {user.full_name_for_orders}"
+                f"{final_data_text}"
+            )
+            if SEND_NOTIFICATIONS:
+                await bot.send_message(
+                    chat_id=creator_id,
+                    text=notification_text,
+                    parse_mode="HTML",
+                )
+            else:
+                logger.info(f"🔇 Сповіщення вимкнено. Не надсилаємо старт задачі {task_id} автору {creator_id}")
+    except Exception as e:
+        logger.error(f"Помилка відправки сповіщення про взяття задачі в роботу: {e}")
 
 
 class TaskComplete(BaseModel):
@@ -997,10 +1146,21 @@ async def event_in_progress(event_id, user=Depends(get_current_telegram_user)):
     ).where(Events.event_id == event_id).run()
     changed_color_calendar_events_by_id(event_id, 1)
     telegram_data = await Events.select().where(Events.event_id == event_id)
+    
+    # Спробуємо підтягнути фактичні дані по доставці для події календаря
+    final_data_text = ""
+    try:
+        delivery = await Deliveries.objects().where(Deliveries.calendar_id == event_id).first().run()
+        if delivery:
+            final_data_text = "\n\n" + await format_delivery_final_data(delivery.id)
+    except Exception as e:
+        logger.error(f"Error fetching delivery details for event in progress: {e}")
+
     if SEND_NOTIFICATIONS:
         await bot.send_message(
             chat_id=telegram_data[0]["event_creator"],
-            text=f"Вашу доставку для {telegram_data[0]['event']} взято в роботу. Виконавець {telegram_data[0]['event_who_changed_name']}",
+            text=f"Вашу доставку для {telegram_data[0]['event']} взято в роботу. Виконавець {telegram_data[0]['event_who_changed_name']}{final_data_text}",
+            parse_mode="HTML",
         )
     else:
         logger.info(f"🔇 Сповіщення вимкнено. Подія {event_id} взята в роботу.")
