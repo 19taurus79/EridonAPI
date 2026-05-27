@@ -129,23 +129,56 @@ def check_telegram_auth(init_data: str) -> dict:
 
     data_check_string = "\n".join(data_check_string_parts)
 
-    secret_key_intermediate = hmac.new(
+    # Попытка №1: проверка с использованием основного TELEGRAM_BOT_TOKEN
+    secret_key_main = hmac.new(
         key=b"WebAppData",
         msg=TELEGRAM_BOT_TOKEN.encode("utf-8"),
         digestmod=hashlib.sha256,
     ).digest()
 
-    calculated_hash = hmac.new(
-        key=secret_key_intermediate,
+    calculated_hash_main = hmac.new(
+        key=secret_key_main,
         msg=data_check_string.encode("utf-8"),
         digestmod=hashlib.sha256,
     ).hexdigest()
 
-    if calculated_hash != hash_:
+    is_valid = (calculated_hash_main == hash_)
+
+    # Попытка №2: проверка с использованием TELEGRAM_WIDGET_BOT_TOKEN (если они отличаются)
+    if not is_valid and TELEGRAM_WIDGET_BOT_TOKEN and TELEGRAM_WIDGET_BOT_TOKEN != TELEGRAM_BOT_TOKEN:
+        secret_key_widget = hmac.new(
+            key=b"WebAppData",
+            msg=TELEGRAM_WIDGET_BOT_TOKEN.encode("utf-8"),
+            digestmod=hashlib.sha256,
+        ).digest()
+
+        calculated_hash_widget = hmac.new(
+            key=secret_key_widget,
+            msg=data_check_string.encode("utf-8"),
+            digestmod=hashlib.sha256,
+        ).hexdigest()
+
+        is_valid = (calculated_hash_widget == hash_)
+        if is_valid:
+            logger.info("Telegram signature successfully verified using TELEGRAM_WIDGET_BOT_TOKEN")
+
+    if not is_valid:
+        # Логируем несовпадение хэшей для упрощения отладки на продакшене
+        token_main_preview = TELEGRAM_BOT_TOKEN[:8] + "..." if TELEGRAM_BOT_TOKEN else "None"
+        token_widget_preview = TELEGRAM_WIDGET_BOT_TOKEN[:8] + "..." if TELEGRAM_WIDGET_BOT_TOKEN else "None"
+        
+        logger.warning(
+            f"[AUTH_ERROR] Hash validation failed!\n"
+            f"Expected hash: {hash_}\n"
+            f"Calculated with TELEGRAM_BOT_TOKEN ({token_main_preview}): {calculated_hash_main}\n"
+            f"Data check string:\n{data_check_string}"
+        )
+        
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Неверный хэш данных инициализации Telegram. Хэши не совпадают.",
         )
+        
     return parsed
 
 

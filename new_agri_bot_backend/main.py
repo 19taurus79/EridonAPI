@@ -423,7 +423,7 @@ async def upload_and_process_files(
         ).run()
 
         # 2. Создаем множество уникальных ключей для быстрой проверки
-        existing_keys: Set[str] = {
+        existing_keys: set[str] = {
             create_composite_key_from_dict(
                 rec, ["order", "product", "party_sign", "qt_moved"]
             )
