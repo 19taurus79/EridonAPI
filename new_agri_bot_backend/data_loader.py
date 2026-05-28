@@ -506,6 +506,17 @@ async def save_processed_data_to_db(
 
     log("🏁 Все данные успешно сохранены в базу данных.")
 
+    # --- ОЧИСТКА КЭША И УВЕДОМЛЕНИЕ ФРОНТЕНДА ---
+    try:
+        from .cache import db_cache
+        from .websocket_manager import manager
+        
+        db_cache.clear()
+        await manager.broadcast({"type": "EXCEL_DATA_UPLOADED"})
+        log("🔄 Кэш бэкенда очищен, WebSocket-уведомление отправлено клиентам.")
+    except Exception as e:
+        log(f"⚠️ Ошибка при очистке кэша или отправке WS-уведомления: {e}")
+
     # --- ОТПРАВКА ЛОГОВ В TELEGRAM ---
     if ADMINS_ID:
         try:

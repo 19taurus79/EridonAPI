@@ -92,6 +92,7 @@ from .telegram_auth import (
 )
 from .data_retrieval import router as data_retrieval_router
 from .data_loader import save_processed_data_to_db
+from .cache import cached_endpoint
 from .bi import router as bi_router
 from .bi_pandas import router as bi_pandas_router
 from .order_chat import router as chat_router
@@ -698,6 +699,7 @@ async def get_regions():
 
 # 2. Поиск населенного пункта в области
 @app.get("/get_all_orders_and_address")
+@cached_endpoint()
 async def get_all_orders_and_address():
     """
     Возвращает список заказов с вычисленным общим весом и список адресов.

@@ -15,6 +15,7 @@ from new_agri_bot_backend.tables import (
     ValidFreeStock,
     ProductGuide,
 )
+from new_agri_bot_backend.cache import cached_endpoint
 
 router = APIRouter(
     prefix="/api",  # Используем новый префикс для пандас-версии
@@ -33,6 +34,7 @@ priority_divisions = [
 
 
 @router.get("/combined")
+@cached_endpoint()
 async def combined_pandas_endpoint(
     document_status: Optional[List[str]] = Query(
         None, description="Список статусів документів для фільтрації"
