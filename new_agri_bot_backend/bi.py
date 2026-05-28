@@ -10,6 +10,7 @@ from new_agri_bot_backend.tables import (
     AvailableStock,
     FreeStock,
 )
+from new_agri_bot_backend.cache import cached_endpoint
 
 router = APIRouter(
     prefix="/api/v2",
@@ -18,6 +19,7 @@ router = APIRouter(
 
 
 @router.get("/remains")
+@cached_endpoint()
 async def get_remains():
     remains_with_series = (
         await Remains.select(
@@ -61,6 +63,7 @@ from collections import defaultdict
 
 
 @router.get("/combined")
+@cached_endpoint()
 async def combined_endpoint():
     # Инициализация вспомогательных словарей внутри функции, чтобы не сохранять состояние между вызовами.
     remains_map = {}

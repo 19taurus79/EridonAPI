@@ -78,6 +78,7 @@ POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 NP_API_KEY = os.getenv("NP_API_KEY")
 
 SEND_NOTIFICATIONS = os.getenv("SEND_NOTIFICATIONS", "true").lower() == "true"
+USE_CACHE = os.getenv("USE_CACHE", "true").lower() == "true"
 BACKEND_URL = os.getenv("BACKEND_URL", "")
 
 # --- Настройки CORS ---

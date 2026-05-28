@@ -2,6 +2,7 @@
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 from collections import defaultdict
+from .cache import cached_endpoint
 
 import pandas as pd
 import requests
@@ -65,6 +66,7 @@ router = APIRouter(
 
 
 @router.get("/remains", summary="Отримати всі залишки на складі")
+@cached_endpoint()
 async def get_remains():
     """
     Повертає всі записи про залишки на складі з бази даних.
@@ -83,6 +85,7 @@ def geocode(address: str = Query(..., description="Адрес для поиск�
 
 
 @router.get("/remains/{product_id}", summary="Отримати залишки за конкретним продуктом")
+@cached_endpoint()
 async def get_remains_by_product(
     product_id: str,
 ):  # Використовуємо product_id для ясності
@@ -102,6 +105,7 @@ async def get_remains_by_product(
 @router.get(
     "/remains_by_product", summary="Отримати залишки за конкретним продуктом"
 )
+@cached_endpoint()
 async def get_remains_by_product(
     product: str = Query(..., description="Назва продукту"),
 ):
@@ -124,6 +128,7 @@ async def get_remains_by_product(
     "/remains_group/{product_id}",
     summary="Отримати залишки за конкретним продуктом, згруповані по партії ",
 )
+@cached_endpoint()
 async def get_group_remains_by_product(product_id: str):
     remains = (
         await Remains.select(
@@ -145,6 +150,7 @@ async def get_group_remains_by_product(product_id: str):
     "/av_stock/{product_id}",
     summary="Отримати вільні залишки на РУ за конкретним продуктом",
 )
+@cached_endpoint()
 async def get_av_remains_by_product(
     product_id: str,
 ):  # Використовуємо product_id для ясності
@@ -188,6 +194,7 @@ async def get_av_remains_by_product(
 
 
 @router.get("/products", summary="Отримати список продуктів з можливістю пошуку")
+@cached_endpoint()
 async def get_products(category: Optional[str] = None, name_part: Optional[str] = None):
     """
     Повертає список всіх продуктів.
@@ -208,6 +215,7 @@ async def get_products(category: Optional[str] = None, name_part: Optional[str] 
 
 
 @router.get("/all_products")
+@cached_endpoint()
 async def get_all_product_by_guide(
     category: Optional[str] = None, 
     parent_category: Optional[str] = Query(None),
@@ -231,6 +239,7 @@ async def get_all_product_by_guide(
 
 
 @router.get("/categories_tree")
+@cached_endpoint()
 async def get_categories_tree():
     """
     Повертає унікальні комбінації бізнес-напрямку та батьківського елемента (підгрупи)
@@ -244,6 +253,7 @@ async def get_categories_tree():
 
 
 @router.get("/product/{product_id}", summary="Отримати інформацію про продукт за ID")
+@cached_endpoint()
 async def get_product_by_id(
     product_id: str,
 ):  # Припускаємо, що product_id є цілочисельним первинним ключем
@@ -262,6 +272,7 @@ async def get_product_by_id(
 
 
 @router.get("/managers")
+@cached_endpoint()
 async def get_managers():
     managers = (
         await Submissions.select(Submissions.manager)
@@ -278,6 +289,7 @@ async def get_managers():
     summary="отримати клієнтів по менеджеру, якщо адмін то усіх ",
     dependencies=[Depends(get_current_telegram_user)],
 )
+@cached_endpoint()
 async def get_clients(
     manager: dict = Depends(get_current_telegram_user), name_part: Optional[str] = None
 ):
@@ -298,6 +310,7 @@ async def get_clients(
     summary="Отримати товари, по яким є залишки на складі, з опціональними фільтрами",
     dependencies=[Depends(get_current_telegram_user)],
 )
+@cached_endpoint()
 async def get_product_on_warehouse(
     category: Optional[str] = None, 
     parent_category: Optional[str] = Query(None),
@@ -327,6 +340,7 @@ async def get_product_on_warehouse(
 
 
 @router.get("/orders")
+@cached_endpoint()
 async def get_orders(client: str = Query(...)):
     orders = (
         await Submissions.select()
@@ -337,6 +351,7 @@ async def get_orders(client: str = Query(...)):
 
 
 @router.get("/contracts")
+@cached_endpoint()
 async def get_contracts(client: str = Query(...)):
     client_from_guide = await ClientManagerGuide.select(
         ClientManagerGuide.client
@@ -401,6 +416,7 @@ async def get_contracts(client: str = Query(...)):
 
 
 @router.get("/contract_detail/{contract}")
+@cached_endpoint()
 async def get_contract_detail(contract):
     detail = (
         await Submissions.select(
@@ -422,6 +438,7 @@ async def get_contract_detail(contract):
 
 
 @router.get("/sum_order_by_product")
+@cached_endpoint()
 async def get_sum_order_products(product: str = Query(...)):
     total_sum = (
         await Submissions.select(
@@ -442,6 +459,7 @@ async def get_sum_order_products(product: str = Query(...)):
 
 
 @router.get("/sum_orders_tiers_by_product", summary="Потреба по двох рівнях пріоритету")
+@cached_endpoint()
 async def get_sum_orders_tiers_by_product(product: str = Query(...)):
     """
     Повертає сумарну потребу по товару у двох рівнях:
@@ -480,6 +498,7 @@ async def get_sum_orders_tiers_by_product(product: str = Query(...)):
 
 
 @router.get("/order_by_product")
+@cached_endpoint()
 async def get_sum_order_products(product: str = Query(...)):
     data = (
         await Submissions.select()
@@ -528,6 +547,7 @@ async def get_sum_order_products(product: str = Query(...)):
 
 
 @router.get("/moved_products_for_order/{order}")
+@cached_endpoint()
 async def get_moved_products_for_order(order: str):
     data = await MovedData.select().where(
         (MovedData.contract == order) & (MovedData.is_active == True)
@@ -536,12 +556,14 @@ async def get_moved_products_for_order(order: str):
 
 
 @router.get("/products_for_all_orders")
+@cached_endpoint()
 async def get_products_for_all_orders():
     data = await ProductsForOrders.select().run()
     return data
 
 
 @router.get("/party_data")
+@cached_endpoint()
 async def get_party_data(
     id: Optional[str] = Query(None, description="Унікальний ID партії в базі даних"),
     party: Optional[str] = Query(None, description="Номер серії номенклатури (партія)"),
@@ -578,6 +600,7 @@ async def get_party_data(
 
 
 @router.get("/id_in_remains")
+@cached_endpoint()
 async def get_id_in_remains(party: str):
     data = (
         await Remains.select(Remains.id)
@@ -641,6 +664,7 @@ def group_products_with_parties(items):
 
 
 @router.post("/details_for_orders/batch")
+@cached_endpoint()
 async def get_details_for_orders_batch(order_list: List[str]):
     """
     Пакетне отримання деталей замовлень через POST (для обходу лімітів URL).
@@ -805,6 +829,7 @@ async def _process_details_result(result):
 
 
 @router.get("/details_for_orders/{order}")
+@cached_endpoint()
 async def get_details_for_order(order: str):
     # Підтримка списку замовлень через кому: "ID1,ID2,ID3"
     order_list = [o.strip() for o in order.split(",") if o.strip()]
@@ -841,6 +866,7 @@ def clean_df_encoding(df: pd.DataFrame) -> pd.DataFrame:
 
 
 @router.get("/moved_products")
+@cached_endpoint()
 async def get_moved_products(product_id: str = Query(...)):
     orders = (
         await Submissions.select()
