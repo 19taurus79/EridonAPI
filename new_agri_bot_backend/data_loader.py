@@ -302,7 +302,7 @@ async def save_processed_data_to_db(
     )
     # Обновляем product_id из нового product_guide где есть совпадение,
     # для записей без совпадения — оставляем старый product_id
-    df_moved["product_id"] = df_moved["idguide"].fillna(df_moved["idmoved"]).astype(str)
+    df_moved["product_id"] = df_moved["idguide"].fillna(df_moved["product_id"]).astype(str)
     df_moved = df_moved.drop(columns=["idguide", "idmoved"], errors="ignore")
     if not df_moved.empty:
         try:

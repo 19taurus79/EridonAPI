@@ -499,13 +499,13 @@ async def get_sum_orders_tiers_by_product(product: str = Query(...)):
 
 @router.get("/order_by_product")
 @cached_endpoint()
-async def get_sum_order_products(product: str = Query(...)):
+async def get_orders_by_product(product: str = Query(...)):
     data = (
         await Submissions.select()
         .where(
             (Submissions.product == product)
             & (Submissions.different > 0)
-            & (Submissions.document_status == "затверджено")
+            & (Submissions.document_status.is_in(["затверджено", "продукція затверджена"]))
         )
         .run()
     )
