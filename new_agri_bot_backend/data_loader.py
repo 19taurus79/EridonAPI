@@ -249,9 +249,25 @@ async def save_processed_data_to_db(
             df_submissions["contract_supplement"] = (
                 df_submissions["contract_supplement"].str.strip()
             )
+
+            # Избегаем дублирования строк в Submissions из-за нескольких записей с одним контрактом в df_payment.
+            # Сортируем по приоритету статуса отгрузки (Так > Так (автоматично) > Ні > Ні (автоматично))
+            # и оставляем только одну уникальную запись по паре (client, contract_supplement).
+            df_payment_unique = df_payment[["client", "contract_supplement", "order_status"]].copy()
+            priority_map = {
+                "Так": 0,
+                "Так (автоматично)": 1,
+                "Ні": 2,
+                "Ні (автоматично)": 3
+            }
+            df_payment_unique["priority"] = df_payment_unique["order_status"].map(priority_map).fillna(99)
+            df_payment_unique = df_payment_unique.sort_values("priority").drop_duplicates(
+                subset=["client", "contract_supplement"], keep="first"
+            ).drop(columns=["priority"])
+
             submissions_data = pd.merge(
                 submissions_data,
-                df_payment[["client", "contract_supplement", "order_status"]],
+                df_payment_unique,
                 how="left",
                 on=["client", "contract_supplement"],
             )
