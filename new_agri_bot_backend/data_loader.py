@@ -107,8 +107,7 @@ async def save_processed_data_to_db(
     # --- ИСПРАВЛЕНИЕ: Преобразуем поля количества в float для df_free_stock ---
     for col in ["free_qty", "buh_qty", "skl_qty"]:
         if col in df_free_stock.columns:
-            # Преобразуем в числовой тип, нечисловые значения станут NaN, затем заменяем NaN на 0.0
-            df_free_stock[col] = pd.to_numeric(df_free_stock[col], errors='coerce').fillna(0.0).astype(float)
+            df_free_stock[col] = pd.to_numeric(df_free_stock[col], errors='coerce').fillna(0.0).round(2).astype(float)
     # ---------------------------------------------------------------------
 
     df_av_stock["product"] = df_av_stock["product"].str.strip()
