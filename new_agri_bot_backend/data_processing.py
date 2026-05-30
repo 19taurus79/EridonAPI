@@ -69,7 +69,7 @@ def process_submissions(content: bytes) -> pd.DataFrame:
     ]
     submissions.columns = submissions_col_names
     for col in ["plan", "fact", "different"]:
-        submissions[col] = pd.to_numeric(submissions[col], errors="coerce").fillna(0)
+        submissions[col] = pd.to_numeric(submissions[col], errors="coerce").fillna(0).round(2)
     text_columns = [
         "division",
         "manager",
@@ -196,7 +196,7 @@ def process_remains_reg(content: bytes) -> pd.DataFrame:
     remains.columns = remains_col_name
     # remains.drop(columns=["storage"], inplace=True)
     for col in ["buh", "skl", "storage"]:
-        remains[col] = pd.to_numeric(remains[col], errors="coerce").fillna(0)
+        remains[col] = pd.to_numeric(remains[col], errors="coerce").fillna(0).round(2)
     remains["storage"] = np.where(
         remains["storage"] < 0, remains["storage"] * -1, remains["storage"]
     )
@@ -264,7 +264,7 @@ def process_payment(content: bytes) -> pd.DataFrame:
         "actual_payment_amount",
     ]
     for col in numeric_columns:
-        payment[col] = pd.to_numeric(payment[col], errors="coerce").fillna(0)
+        payment[col] = pd.to_numeric(payment[col], errors="coerce").fillna(0).round(2)
     # payment["client"] = payment["client"].astype(str).fillna("")
     payment["contract_supplement"] = (
         payment["contract_supplement"].astype(str).fillna("")
@@ -288,7 +288,7 @@ def process_moved_data(content: bytes) -> pd.DataFrame:
     ]
     moved.columns = moved_col_names
     for col in ["qt_order", "qt_moved"]:
-        moved[col] = pd.to_numeric(moved[col], errors="coerce").fillna(0)
+        moved[col] = pd.to_numeric(moved[col], errors="coerce").fillna(0).round(2)
     text_columns = [
         "order",
         "line_of_business",
