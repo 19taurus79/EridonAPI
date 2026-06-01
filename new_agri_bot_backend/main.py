@@ -206,6 +206,29 @@ async def lifespan(app: FastAPI):
 
 
 
+# Глобальный манки-патч для Starlette Request.form, чтобы увеличить лимит размера части (max_part_size) с 1 МБ до 100 МБ.
+# Это позволяет загружать большие JSON-строки в параметре manual_matches_json без ошибок 400 Bad Request.
+from starlette.requests import Request as StarletteRequest
+
+original_form = StarletteRequest.form
+
+async def custom_form(
+    self: StarletteRequest,
+    *,
+    max_files: int | float = 1000,
+    max_fields: int | float = 1000,
+    max_part_size: int = 100 * 1024 * 1024,  # 100 МБ
+) -> any:
+    return await original_form(
+        self,
+        max_files=max_files,
+        max_fields=max_fields,
+        max_part_size=max_part_size,
+    )
+
+StarletteRequest.form = custom_form
+
+
 app = FastAPI(
     title="Data Loader API for Agri-Bot",
     description="API for loading and processing various Excel data into PostgreSQL.",
@@ -220,6 +243,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
 
 
 @app.get("/health", tags=["System"])
