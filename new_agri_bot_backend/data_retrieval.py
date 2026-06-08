@@ -2,11 +2,13 @@
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 from collections import defaultdict
+import io
 from .cache import cached_endpoint
 
 import pandas as pd
 import requests
 from fastapi import APIRouter, Query, HTTPException, status, Depends
+from fastapi.responses import StreamingResponse
 from piccolo.columns.defaults.timestamptz import TimestamptzNow
 from piccolo.query import Sum
 from pydantic import BaseModel, Field
@@ -314,13 +316,15 @@ async def get_clients(
 async def get_product_on_warehouse(
     category: Optional[str] = None, 
     parent_category: Optional[str] = Query(None),
-    name_part: Optional[str] = None
+    name_part: Optional[str] = None,
+    free_only: bool = Query(False)
 ):
     """
     Повертає записи про товари, по яким є залишки на складі, з бази даних.
     Опціональні фільтри:
-    - `category`: Фільтрувати за назвою категорії (повна відповідність).
+    - `category`: Фільтрувати за назвою категории (повна відповідність).
     - `name_part`: Фільтрувати за частиною найменування товару (нечутливий до регістру).
+    - `free_only`: Фільтрувати тільки товари з вільним залишком.
     """
     query = ProductOnWarehouse.select()
 
@@ -335,8 +339,160 @@ async def get_product_on_warehouse(
         # Якщо ваша ORM/БД не підтримує .ilike(), можливо, знадобиться інший підхід
         query = query.where(ProductOnWarehouse.product.ilike(f"%{name_part}%"))
 
+    if free_only:
+        free_ids_query = """
+            SELECT pg.id
+            FROM remains r
+            JOIN product_guide pg ON r.product = pg.id
+            LEFT JOIN (
+                SELECT product, 
+                       COALESCE(SUM(CASE WHEN document_status = 'затверджено' THEN different ELSE 0 END), 0) as orders_q,
+                       COALESCE(SUM(CASE WHEN document_status IN ('затверджено', 'продукція затверджена') THEN different ELSE 0 END), 0) as total_orders
+                FROM submissions
+                WHERE different > 0
+                GROUP BY product
+            ) o ON o.product = pg.id
+            GROUP BY pg.id, o.orders_q, o.total_orders
+            HAVING SUM(r.buh) > 0 AND ((SUM(r.buh) - COALESCE(o.orders_q, 0) > 0) OR (COALESCE(o.total_orders, 0) = 0))
+        """
+        raw_result = await ProductOnWarehouse.raw(free_ids_query)
+        free_ids = [row["id"] for row in raw_result]
+        query = query.where(ProductOnWarehouse.id.is_in(free_ids))
+
     product = await query.order_by(ProductOnWarehouse.product).run()
     return product
+
+
+@router.get(
+    "/product_on_warehouse/export",
+    summary="Експортувати залишки на складі в Excel",
+    dependencies=[Depends(get_current_telegram_user)],
+)
+async def export_product_on_warehouse(
+    category: Optional[str] = None, 
+    parent_category: Optional[str] = Query(None),
+    name_part: Optional[str] = None,
+    free_only: bool = Query(False),
+    columns: Optional[str] = Query(None)
+):
+    """
+    Формує та повертає Excel-файл з поточними зашликами та вільними залишками товарів,
+    враховуючи всі застосовані фільтри та обрані стовпці.
+    """
+    query = ProductOnWarehouse.select()
+
+    if category:
+        query = query.where(ProductOnWarehouse.line_of_business == category)
+
+    if parent_category:
+        query = query.where(ProductOnWarehouse.parent_element == parent_category)
+
+    if name_part:
+        query = query.where(ProductOnWarehouse.product.ilike(f"%{name_part}%"))
+
+    if free_only:
+        free_ids_query = """
+            SELECT pg.id
+            FROM remains r
+            JOIN product_guide pg ON r.product = pg.id
+            LEFT JOIN (
+                SELECT product, 
+                       COALESCE(SUM(CASE WHEN document_status = 'затверджено' THEN different ELSE 0 END), 0) as orders_q,
+                       COALESCE(SUM(CASE WHEN document_status IN ('затверджено', 'продукція затверджена') THEN different ELSE 0 END), 0) as total_orders
+                FROM submissions
+                WHERE different > 0
+                GROUP BY product
+            ) o ON o.product = pg.id
+            GROUP BY pg.id, o.orders_q, o.total_orders
+            HAVING SUM(r.buh) > 0 AND ((SUM(r.buh) - COALESCE(o.orders_q, 0) > 0) OR (COALESCE(o.total_orders, 0) = 0))
+        """
+        raw_result = await ProductOnWarehouse.raw(free_ids_query)
+        free_ids = [row["id"] for row in raw_result]
+        query = query.where(ProductOnWarehouse.id.is_in(free_ids))
+
+    products = await query.order_by(ProductOnWarehouse.product).run()
+
+    if not products:
+        df = pd.DataFrame(columns=[
+            "Товар", 
+            "Напрямок діяльності", 
+            "Підгрупа", 
+            "Партія",
+            "Склад",
+            "Бухгалтерський залишок", 
+            "Складський залишок", 
+            "На збереганні", 
+            "Заявки (всього по товару)", 
+            "Вільний залишок (всього по товару)",
+            "Рік врожаю",
+            "Схожість",
+            "МТН",
+            "Країна походження",
+            "Активна речовина",
+            "Сертифікат"
+        ])
+    else:
+        product_ids_str = ", ".join([f"'{p['id']}'" for p in products])
+        sql = f"""
+            SELECT 
+                pg.product AS "Товар",
+                r.line_of_business AS "Напрямок діяльності",
+                r.parent_element AS "Підгрупа",
+                r.nomenclature_series AS "Партія",
+                r.warehouse AS "Склад",
+                SUM(r.buh) AS "Бухгалтерський залишок",
+                SUM(r.skl) AS "Складський залишок",
+                SUM(r.storage) AS "На збереганні",
+                COALESCE(o.orders_q, 0) AS "Заявки (всього по товару)",
+                (p_tot.total_buh - COALESCE(o.orders_q, 0)) AS "Вільний залишок (всього по товару)",
+                MAX(r.crop_year) AS "Рік врожаю",
+                MAX(r.germination) AS "Схожість",
+                MAX(r.mtn) AS "МТН",
+                MAX(r.origin_country) AS "Країна походження",
+                MAX(r.active_substance) AS "Активна речовина",
+                MAX(r.certificate) AS "Сертифікат"
+            FROM remains r
+            JOIN product_guide pg ON r.product = pg.id
+            JOIN (
+                SELECT product, SUM(buh) as total_buh
+                FROM remains
+                GROUP BY product
+            ) p_tot ON p_tot.product = pg.id
+            LEFT JOIN (
+                SELECT product, 
+                       COALESCE(SUM(CASE WHEN document_status = 'затверджено' THEN different ELSE 0 END), 0) as orders_q
+                FROM submissions
+                WHERE different > 0
+                GROUP BY product
+            ) o ON o.product = pg.id
+            WHERE pg.id IN ({product_ids_str})
+            GROUP BY pg.product, r.line_of_business, r.parent_element, r.nomenclature_series, r.warehouse, o.orders_q, p_tot.total_buh
+            ORDER BY pg.product, r.nomenclature_series, r.warehouse
+        """
+        raw_results = await Remains.raw(sql)
+        df = pd.DataFrame(raw_results)
+
+    if columns:
+        cols_to_keep = [c.strip() for c in columns.split(",") if c.strip()]
+        valid_cols = [c for c in cols_to_keep if c in df.columns]
+        if valid_cols:
+            df = df[valid_cols]
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name="Залишки")
+    
+    output.seek(0)
+    
+    headers = {
+        'Content-Disposition': 'attachment; filename="remains.xlsx"'
+    }
+    
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers
+    )
 
 
 @router.get("/orders")
