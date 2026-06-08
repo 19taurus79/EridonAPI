@@ -317,7 +317,8 @@ credentials.json
 credentials_task.json
 credentials__.json
 token.json
-*.xlsx
-*.csv
 
-piccolo.sqlite
+# Local database and data import/export files
+*.sqlite
+*.csv
+*.xlsx
