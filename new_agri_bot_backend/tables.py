@@ -296,6 +296,17 @@ class ClientAddress(Table):
     representative = Varchar()
     phone1 = Varchar()
     phone2 = Varchar()
+    # Дані авто та водія за замовчуванням для самовивозу (забирає клієнт)
+    default_car_make = Varchar(null=True)       # Марка авто (напр. MAN, DAF)
+    default_car_number = Varchar(null=True)     # Держ. номер авто (напр. AX1234HP)
+    default_trailer_number = Varchar(null=True) # Номер причепа (опціонально)
+    default_driver = Varchar(null=True)         # ПІБ водія
+    # Весогабаритные характеристики авто по умолчанию
+    default_car_max_weight = Integer(null=True)     # Полная масса авто (кг)
+    default_car_own_weight = Integer(null=True)     # Масса без нагрузки (кг)
+    default_car_length = DoublePrecision(null=True) # Длина авто (м)
+    default_car_width = DoublePrecision(null=True)  # Ширина авто (м)
+    default_car_height = DoublePrecision(null=True) # Высота авто (м)
 
 
 # Таблица доставок

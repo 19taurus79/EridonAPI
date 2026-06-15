@@ -89,6 +89,17 @@ class AddressCreate(BaseModel):
     address: str
     latitude: float
     longitude: float
+    # Дані авто та водія за замовчуванням (для самовивозу "забирає клієнт")
+    default_car_make: Optional[str] = None
+    default_car_number: Optional[str] = None
+    default_trailer_number: Optional[str] = None
+    default_driver: Optional[str] = None
+    # Новые поля
+    default_car_max_weight: Optional[int] = None
+    default_car_own_weight: Optional[int] = None
+    default_car_length: Optional[float] = None
+    default_car_width: Optional[float] = None
+    default_car_height: Optional[float] = None
 
 class ChangeDateRequest(BaseModel):
     new_date: date

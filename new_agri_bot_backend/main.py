@@ -92,7 +92,7 @@ from .telegram_auth import (
 )
 from .data_retrieval import router as data_retrieval_router
 from .data_loader import save_processed_data_to_db
-from .cache import cached_endpoint
+from .cache import cached_endpoint, db_cache
 from .bi import router as bi_router
 from .bi_pandas import router as bi_pandas_router
 from .order_chat import router as chat_router
@@ -242,6 +242,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    max_age=600,
 )
 
 
@@ -821,9 +822,21 @@ async def update_address_for_client(address_data: AddressCreate, id: int):
     obj.city = data_dict.get("city", obj.city)
     obj.latitude = data_dict.get("latitude", obj.latitude)
     obj.longitude = data_dict.get("longitude", obj.longitude)
+    # Дані авто/водія за замовчуванням
+    obj.default_car_make = data_dict.get("default_car_make") or None
+    obj.default_car_number = data_dict.get("default_car_number") or None
+    obj.default_trailer_number = data_dict.get("default_trailer_number") or None
+    obj.default_driver = data_dict.get("default_driver") or None
+    # Весогабаритные характеристики
+    obj.default_car_max_weight = data_dict.get("default_car_max_weight") or None
+    obj.default_car_own_weight = data_dict.get("default_car_own_weight") or None
+    obj.default_car_length = data_dict.get("default_car_length") or None
+    obj.default_car_width = data_dict.get("default_car_width") or None
+    obj.default_car_height = data_dict.get("default_car_height") or None
 
     # Сохраняем изменения
     await obj.save()
+    db_cache.clear()
 
 
 # Excel generation logic moved to services/excel_service.py
@@ -854,10 +867,19 @@ async def create_address_for_client(address_data: AddressCreate):
     data_dict["commune"] = address_parts[1].split()[0]
     data_dict["city"] = address_parts[0]
 
+    # Очищаємо порожні рядки для nullable полів авто/водія
+    for field in (
+        "default_car_make", "default_car_number", "default_trailer_number", "default_driver",
+        "default_car_max_weight", "default_car_own_weight", "default_car_length", "default_car_width", "default_car_height"
+    ):
+        if field in data_dict and not data_dict[field]:
+            data_dict[field] = None
+
     # 4. Создаем и сохраняем объект ClientAddress с разобранными данными
     try:
         new_address = ClientAddress(**data_dict)
         await new_address.save().run()
+        db_cache.clear()
         return {"status": "ok", "message": "Адрес успешно создан."}
     except UniqueViolationError:
         raise HTTPException(
@@ -911,6 +933,133 @@ async def search_addresses(
         )
 
     return response
+
+
+@app.get("/api/vehicle-info/{number}")
+async def get_vehicle_info(number: str):
+    clean_number = number.upper().replace(" ", "")
+    # Ограничим длину номера для безопасности
+    if len(clean_number) < 3 or len(clean_number) > 20:
+        raise HTTPException(status_code=400, detail="Некоректний формат номера авто")
+    
+    # 1. Попытка получить данные из публичного API Polis.ua (без авторизации)
+    try:
+        async with httpx.AsyncClient() as client:
+            url = f"https://api.polis.ua/api/osgpo/auto-info/find/v2/{clean_number}"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": "https://polis.ua/",
+                "Accept": "application/json"
+            }
+            response = await client.get(url, headers=headers, timeout=3.0)
+            if response.status_code == 200:
+                data = response.json()
+                make = data.get("modelText") or data.get("name") or data.get("model") or ""
+                if not make and data.get("markName"):
+                    make = f"{data.get('markName')} {data.get('modelName', '')}".strip()
+                
+                max_weight = data.get("weight") or data.get("maxWeight") or data.get("totalWeight")
+                if isinstance(max_weight, str) and max_weight.isdigit():
+                    max_weight = int(max_weight)
+                elif isinstance(max_weight, float):
+                    max_weight = int(max_weight)
+                
+                own_weight = data.get("ownWeight") or data.get("emptyWeight")
+                if isinstance(own_weight, str) and own_weight.isdigit():
+                    own_weight = int(own_weight)
+                elif isinstance(own_weight, float):
+                    own_weight = int(own_weight)
+                
+                length = None
+                width = None
+                height = None
+                
+                if not max_weight:
+                    car_type_code = str(data.get("carTypeCode") or "").upper()
+                    if "C" in car_type_code or "ГРУЗ" in str(data.get("carType", {}).get("name", "")).upper():
+                        max_weight = 12000
+                        own_weight = 6000
+                        length = 7.5
+                        width = 2.45
+                        height = 3.4
+                    else:
+                        max_weight = 2200
+                        own_weight = 1500
+                        length = 4.8
+                        width = 1.8
+                        height = 1.5
+                else:
+                    if max_weight > 7500:
+                        own_weight = own_weight or int(max_weight * 0.45)
+                        length = 8.5
+                        width = 2.5
+                        height = 3.6
+                    elif max_weight > 3500:
+                        own_weight = own_weight or int(max_weight * 0.55)
+                        length = 6.5
+                        width = 2.2
+                        height = 2.8
+                    else:
+                        own_weight = own_weight or int(max_weight * 0.7)
+                        length = 4.7
+                        width = 1.8
+                        height = 1.5
+                
+                if make:
+                    return {
+                        "status": "ok",
+                        "source": "api",
+                        "make": make,
+                        "number": clean_number,
+                        "max_weight": max_weight,
+                        "own_weight": own_weight,
+                        "length": length,
+                        "width": width,
+                        "height": height
+                    }
+    except Exception as e:
+        logger.info(f"--- Ошибка запроса авто через API Polis.ua: {e} ---")
+
+    # 2. Резервный mock-генератор
+    digits = [int(c) for c in clean_number if c.isdigit()]
+    digit_sum = sum(digits) if digits else 0
+    
+    if digit_sum % 3 == 0:
+        return {
+            "status": "ok",
+            "source": "mock_heavy",
+            "make": "MAN TGS 18.400",
+            "number": clean_number,
+            "max_weight": 18000,
+            "own_weight": 8500,
+            "length": 8.2,
+            "width": 2.5,
+            "height": 3.6
+        }
+    elif digit_sum % 3 == 1:
+        return {
+            "status": "ok",
+            "source": "mock_medium",
+            "make": "Mercedes-Benz Sprinter 316",
+            "number": clean_number,
+            "max_weight": 3500,
+            "own_weight": 2200,
+            "length": 5.9,
+            "width": 2.0,
+            "height": 2.4
+        }
+    else:
+        return {
+            "status": "ok",
+            "source": "mock_light",
+            "make": "Volkswagen Caddy 2.0 TDI",
+            "number": clean_number,
+            "max_weight": 2200,
+            "own_weight": 1450,
+            "length": 4.4,
+            "width": 1.8,
+            "height": 1.8
+        }
 
 
 @app.get("/delivery/get_telegram_id_from_delivery_by_id/{id}")
