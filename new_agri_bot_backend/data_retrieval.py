@@ -277,17 +277,15 @@ async def get_product_by_id(
 @router.get("/managers")
 @cached_endpoint()
 async def get_managers():
-    subs_managers = await Submissions.select(Submissions.manager).where(Submissions.different > 0).distinct().run()
-    addr_managers = await ClientAddress.select(ClientAddress.manager).distinct().run()
-    guide_managers = await ClientManagerGuide.select(ClientManagerGuide.manager).distinct().run()
-    
-    all_managers = set()
-    for r in subs_managers + addr_managers + guide_managers:
-        name = r.get("manager")
-        if name and name.strip():
-            all_managers.add(name.strip())
-            
-    return [{"manager": m} for m in sorted(all_managers)]
+    managers = (
+        await Submissions.select(Submissions.manager)
+        .distinct()
+        .order_by(Submissions.manager)
+        .run()
+    )
+    # Очищаем от пустых значений и пробелов
+    unique_managers = sorted({r["manager"].strip() for r in managers if r.get("manager") and r["manager"].strip()})
+    return [{"manager": m} for m in unique_managers]
 
 
 @router.get(
