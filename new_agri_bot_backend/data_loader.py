@@ -430,6 +430,26 @@ async def save_processed_data_to_db(
             product_id_map = product_guide.set_index("product")["id"]
             df_matches["product_id"] = df_matches["product"].map(product_id_map)
 
+            # --- ДИАГНОСТИЧЕСКОЕ ЛОГИРОВАНИЕ ---
+            # Ищем товары, для которых не удалось найти product_id
+            df_problematic = df_matches[df_matches["product_id"].isna()]
+            if not df_problematic.empty:
+                log("⚠️ ВНИМАНИЕ: Обнаружены товары из ручного сопоставления, отсутствующие в справочнике товаров. Они являются причиной ошибки:")
+                for index, row in df_problematic.iterrows():
+                    # Собираем информацию о строке для более полного лога
+                    row_info = {
+                        "Товар": row.get("product"),
+                        "Заявка": row.get("order"),
+                        "Контракт": row.get("contract"),
+                        "Количество": row.get("qt_moved")
+                    }
+                    log(f"  - Проблемная строка: {row_info}")
+            # --- КОНЕЦ ДИАГНОСТИЧЕСКОГО ЛОГИРОВАНИЯ ---
+
+            # --- ИСПРАВЛЕНИЕ: Отфильтровываем проблемные строки ---
+            # Это гарантирует, что дальше будут переданы только данные с валидным product_id
+            df_matches = df_matches.dropna(subset=["product_id"])
+
             # --- ОБНОВЛЕННАЯ ПРОВЕРКА ДУБЛИКАТОВ ---
             # Используем расширенный набор полей для точной идентификации записи
             existing_moved_data_list = await MovedData.select(
