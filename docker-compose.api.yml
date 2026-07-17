@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  eridon_api:
+    image: eridon_api
+    container_name: eridon_api
+    env_file:
+      - .env
+    command: uvicorn new_agri_bot_backend.main:app --host 0.0.0.0 --port 8000
+    networks:
+      - shared
+    restart: unless-stopped
+
+networks:
+  shared:
+    name: shared_network
+    external: true
