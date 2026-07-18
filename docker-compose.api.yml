@@ -8,10 +8,10 @@ services:
       - .env
     command: uvicorn new_agri_bot_backend.main:app --host 0.0.0.0 --port 8000
     networks:
-      - shared
+      - web_network
     restart: unless-stopped
 
 networks:
-  shared:
-    name: shared_network
+  web_network:
     external: true
+    name: web_network

@@ -322,3 +322,10 @@ token.json
 *.sqlite
 *.csv
 *.xlsx
+=
+CACHED
+[internal]
+exporting
+naming
+transferring
+writing
