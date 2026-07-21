@@ -779,18 +779,41 @@ async def get_all_orders_and_address():
     # Запрос адресов остается без изменений
     address = await ClientAddress.select().run()
 
+    # Piccolo иногда возвращает JSONB как строку — нормализуем
+    for addr in address:
+        np = addr.get("default_np_data")
+        if isinstance(np, str):
+            try:
+                addr["default_np_data"] = json.loads(np)
+            except Exception:
+                addr["default_np_data"] = None
+
     return orders_list, address
 
 
 @app.get("/get_all_addresses")
 async def get_all_addresses():
     address = await ClientAddress.select().run()
+    for addr in address:
+        np = addr.get("default_np_data")
+        if isinstance(np, str):
+            try:
+                addr["default_np_data"] = json.loads(np)
+            except Exception:
+                addr["default_np_data"] = None
     return address
 
 
 @app.get("/get_address_by_client/{client}")
 async def get_address_by_client(client):
     address = await ClientAddress.select().where(ClientAddress.client == client).run()
+    for addr in address:
+        np = addr.get("default_np_data")
+        if isinstance(np, str):
+            try:
+                addr["default_np_data"] = json.loads(np)
+            except Exception:
+                addr["default_np_data"] = None
     return address
 
 
@@ -799,18 +822,16 @@ async def update_address_for_client(address_data: AddressCreate, id: int):
     obj = await ClientAddress.objects().get(where=(ClientAddress.id == id))
     data_dict = address_data.dict()
     full_address_str = data_dict.pop("address", None)
-    if not full_address_str:
-        raise HTTPException(
-            status_code=400, detail="Поле 'full_address' обязательно для заполнения."
-        )
-
-    # 2. Разбираем строку адреса на части
-    address_parts = [part.strip() for part in full_address_str.split(",")]
-
-    data_dict["region"] = address_parts[0].split()[0]
-    data_dict["area"] = address_parts[1].split()[0]
-    data_dict["commune"] = address_parts[2].split()[0]
-    data_dict["city"] = address_parts[3]
+    
+    if full_address_str:
+        # 2. Разбираем строку адреса на части
+        address_parts = [part.strip() for part in full_address_str.split(",")]
+        
+        if len(address_parts) >= 4:
+            data_dict["region"] = address_parts[0].split()[0] if address_parts[0] else ""
+            data_dict["area"] = address_parts[1].split()[0] if address_parts[1] else ""
+            data_dict["commune"] = address_parts[2].split()[0] if address_parts[2] else ""
+            data_dict["city"] = address_parts[3]
     obj.client = data_dict.get("client", obj.client)
     obj.manager = data_dict.get("manager", obj.manager)
     obj.representative = data_dict.get("representative", obj.representative)
@@ -833,6 +854,7 @@ async def update_address_for_client(address_data: AddressCreate, id: int):
     obj.default_car_length = data_dict.get("default_car_length") or None
     obj.default_car_width = data_dict.get("default_car_width") or None
     obj.default_car_height = data_dict.get("default_car_height") or None
+    obj.default_np_data = data_dict.get("default_np_data") or None
 
     # Сохраняем изменения
     await obj.save()
@@ -854,18 +876,15 @@ async def create_address_for_client(address_data: AddressCreate):
     data_dict = address_data.dict()
     full_address_str = data_dict.pop("address", None)
 
-    if not full_address_str:
-        raise HTTPException(
-            status_code=400, detail="Поле 'full_address' обязательно для заполнения."
-        )
+    if full_address_str:
+        # 2. Разбираем строку адреса на части
+        address_parts = [part.strip() for part in full_address_str.split(",")]
 
-    # 2. Разбираем строку адреса на части
-    address_parts = [part.strip() for part in full_address_str.split(",")]
-
-    data_dict["region"] = address_parts[3].split()[0]
-    data_dict["area"] = address_parts[2].split()[0]
-    data_dict["commune"] = address_parts[1].split()[0]
-    data_dict["city"] = address_parts[0]
+        if len(address_parts) >= 4:
+            data_dict["region"] = address_parts[3].split()[0] if address_parts[3] else ""
+            data_dict["area"] = address_parts[2].split()[0] if address_parts[2] else ""
+            data_dict["commune"] = address_parts[1].split()[0] if address_parts[1] else ""
+            data_dict["city"] = address_parts[0]
 
     # Очищаємо порожні рядки для nullable полів авто/водія
     for field in (

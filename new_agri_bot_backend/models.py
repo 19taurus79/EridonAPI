@@ -100,6 +100,7 @@ class AddressCreate(BaseModel):
     default_car_length: Optional[float] = None
     default_car_width: Optional[float] = None
     default_car_height: Optional[float] = None
+    default_np_data: Optional[Dict[str, Any]] = None
 
 class ChangeDateRequest(BaseModel):
     new_date: date

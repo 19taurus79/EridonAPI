@@ -307,6 +307,7 @@ class ClientAddress(Table):
     default_car_length = DoublePrecision(null=True) # Длина авто (м)
     default_car_width = DoublePrecision(null=True)  # Ширина авто (м)
     default_car_height = DoublePrecision(null=True) # Высота авто (м)
+    default_np_data = JSONB(null=True)              # Дані Нової Пошти за замовчуванням
 
 
 # Таблица доставок
