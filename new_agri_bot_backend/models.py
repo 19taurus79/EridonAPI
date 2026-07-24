@@ -81,14 +81,14 @@ class AddressResponse(BaseModel):
 
 class AddressCreate(BaseModel):
 
-    client: str
-    manager: str
-    representative: str
-    phone1: str
+    client: Optional[str] = ""
+    manager: Optional[str] = ""
+    representative: Optional[str] = ""
+    phone1: Optional[str] = ""
     phone2: Optional[str] = None
-    address: str = ""
-    latitude: float = 0.0
-    longitude: float = 0.0
+    address: Optional[str] = ""
+    latitude: Optional[float] = 0.0
+    longitude: Optional[float] = 0.0
     # Дані авто та водія за замовчуванням (для самовивозу "забирає клієнт")
     default_car_make: Optional[str] = None
     default_car_number: Optional[str] = None

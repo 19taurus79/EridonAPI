@@ -276,6 +276,27 @@ async def error_notify_middleware(request: Request, call_next):
         )
 
 
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Перехватчик всех HTTPException (400, 401, 403, 404, 500) — логирует и шлёт в Telegram при 400+."""
+    logger.error(
+        f"HTTPException {exc.status_code} on {request.method} {request.url.path}: {exc.detail}"
+    )
+    if exc.status_code >= 400:
+        asyncio.create_task(
+            notify_admins_error(
+                exc,
+                path=request.url.path,
+                method=request.method,
+                extra=f"Status: {exc.status_code}, Detail: {exc.detail}",
+            )
+        )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Перехватчик ошибок валидации Pydantic — уведомляет Telegram с деталями."""
@@ -292,7 +313,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         )
     )
     return JSONResponse(
-        status_code=422,
+        status_code=400,
         content={"detail": exc.errors()},
     )
 
