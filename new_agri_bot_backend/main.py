@@ -102,6 +102,7 @@ from .bot_handlers import setup_bot_handlers
 from .scheduler import setup_scheduler
 from .utils import send_message_to_managers, create_composite_key_from_dict
 from .delivery_notifications import notify_new_delivery, notify_delivery_status_change, delete_delivery_notifications, notify_delivery_date_change, ALL_RECIPIENTS
+from .error_notifier import notify_admins_error
 
 # Импорт TELEGRAM_BOT_TOKEN из config.py для инициализации бота
 # Импорт констант из config.py
@@ -246,6 +247,50 @@ app.add_middleware(
 )
 
 
+# --- Глобальный перехватчик ошибок: отправляет уведомление в Telegram ---
+@app.middleware("http")
+async def error_notify_middleware(request: Request, call_next):
+    """Middleware: перехватывает все 5xx ответы и уведомляет администраторов."""
+    try:
+        response = await call_next(request)
+        return response
+    except Exception as exc:
+        logger.error(
+            f"Unhandled exception on {request.method} {request.url.path}: {exc}",
+            exc_info=True,
+        )
+        # Отправляем уведомление в Telegram (fire-and-forget)
+        asyncio.create_task(
+            notify_admins_error(
+                exc,
+                path=request.url.path,
+                method=request.method,
+            )
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error"},
+        )
+
+
+@app.exception_handler(500)
+async def internal_server_error_handler(request: Request, exc: Exception):
+    """Глобальный обработчик 500 ошибок — уведомляет Telegram."""
+    logger.error(
+        f"500 error on {request.method} {request.url.path}: {exc}",
+        exc_info=True,
+    )
+    asyncio.create_task(
+        notify_admins_error(
+            exc,
+            path=request.url.path,
+            method=request.method,
+        )
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
 
 
 @app.get("/health", tags=["System"])
@@ -818,47 +863,63 @@ async def get_address_by_client(client):
 
 
 @app.put("/update_address_for_client/{id}", dependencies=[Depends(check_not_guest)])
-async def update_address_for_client(address_data: AddressCreate, id: int):
-    obj = await ClientAddress.objects().get(where=(ClientAddress.id == id))
-    data_dict = address_data.dict()
-    full_address_str = data_dict.pop("address", None)
-    
-    if full_address_str:
-        # 2. Разбираем строку адреса на части
-        address_parts = [part.strip() for part in full_address_str.split(",")]
+async def update_address_for_client(address_data: AddressCreate, id: int, request: Request):
+    logger.info(f"update_address_for_client id={id}, data={address_data.dict()}")
+    try:
+        obj = await ClientAddress.objects().get(where=(ClientAddress.id == id))
+        data_dict = address_data.dict()
+        full_address_str = data_dict.pop("address", None)
         
-        if len(address_parts) >= 4:
-            data_dict["region"] = address_parts[0].split()[0] if address_parts[0] else ""
-            data_dict["area"] = address_parts[1].split()[0] if address_parts[1] else ""
-            data_dict["commune"] = address_parts[2].split()[0] if address_parts[2] else ""
-            data_dict["city"] = address_parts[3]
-    obj.client = data_dict.get("client", obj.client)
-    obj.manager = data_dict.get("manager", obj.manager)
-    obj.representative = data_dict.get("representative", obj.representative)
-    obj.phone1 = data_dict.get("phone1", obj.phone1)
-    obj.phone2 = data_dict.get("phone2", obj.phone2)
-    obj.region = data_dict.get("region", obj.region)
-    obj.area = data_dict.get("area", obj.area)
-    obj.commune = data_dict.get("commune", obj.commune)
-    obj.city = data_dict.get("city", obj.city)
-    obj.latitude = data_dict.get("latitude", obj.latitude)
-    obj.longitude = data_dict.get("longitude", obj.longitude)
-    # Дані авто/водія за замовчуванням
-    obj.default_car_make = data_dict.get("default_car_make") or None
-    obj.default_car_number = data_dict.get("default_car_number") or None
-    obj.default_trailer_number = data_dict.get("default_trailer_number") or None
-    obj.default_driver = data_dict.get("default_driver") or None
-    # Весогабаритные характеристики
-    obj.default_car_max_weight = data_dict.get("default_car_max_weight") or None
-    obj.default_car_own_weight = data_dict.get("default_car_own_weight") or None
-    obj.default_car_length = data_dict.get("default_car_length") or None
-    obj.default_car_width = data_dict.get("default_car_width") or None
-    obj.default_car_height = data_dict.get("default_car_height") or None
-    obj.default_np_data = data_dict.get("default_np_data") or None
+        if full_address_str:
+            # 2. Разбираем строку адреса на части
+            address_parts = [part.strip() for part in full_address_str.split(",")]
+            
+            if len(address_parts) >= 4:
+                data_dict["region"] = address_parts[0].split()[0] if address_parts[0] else ""
+                data_dict["area"] = address_parts[1].split()[0] if address_parts[1] else ""
+                data_dict["commune"] = address_parts[2].split()[0] if address_parts[2] else ""
+                data_dict["city"] = address_parts[3]
+        obj.client = data_dict.get("client", obj.client)
+        obj.manager = data_dict.get("manager", obj.manager)
+        obj.representative = data_dict.get("representative", obj.representative)
+        obj.phone1 = data_dict.get("phone1", obj.phone1)
+        obj.phone2 = data_dict.get("phone2", obj.phone2)
+        obj.region = data_dict.get("region", obj.region)
+        obj.area = data_dict.get("area", obj.area)
+        obj.commune = data_dict.get("commune", obj.commune)
+        obj.city = data_dict.get("city", obj.city)
+        obj.latitude = data_dict.get("latitude", obj.latitude)
+        obj.longitude = data_dict.get("longitude", obj.longitude)
+        # Дані авто/водія за замовчуванням
+        obj.default_car_make = data_dict.get("default_car_make") or None
+        obj.default_car_number = data_dict.get("default_car_number") or None
+        obj.default_trailer_number = data_dict.get("default_trailer_number") or None
+        obj.default_driver = data_dict.get("default_driver") or None
+        # Весогабаритные характеристики
+        obj.default_car_max_weight = data_dict.get("default_car_max_weight") or None
+        obj.default_car_own_weight = data_dict.get("default_car_own_weight") or None
+        obj.default_car_length = data_dict.get("default_car_length") or None
+        obj.default_car_width = data_dict.get("default_car_width") or None
+        obj.default_car_height = data_dict.get("default_car_height") or None
+        obj.default_np_data = data_dict.get("default_np_data") or None
 
-    # Сохраняем изменения
-    await obj.save()
-    db_cache.clear()
+        # Сохраняем изменения
+        await obj.save()
+        db_cache.clear()
+        logger.info(f"update_address_for_client id={id}: saved successfully")
+        return {"status": "ok"}
+    except Exception as exc:
+        logger.error(f"update_address_for_client id={id} error: {exc}", exc_info=True)
+        asyncio.create_task(
+            notify_admins_error(
+                exc,
+                path=request.url.path,
+                method=request.method,
+                extra=f"id={id}, data={address_data.dict()}",
+            )
+        )
+        raise HTTPException(status_code=500, detail=f"Помилка збереження: {str(exc)}")
+
 
 
 # Excel generation logic moved to services/excel_service.py
