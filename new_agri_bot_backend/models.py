@@ -87,6 +87,7 @@ class AddressCreate(BaseModel):
     phone1: Optional[str] = ""
     phone2: Optional[str] = None
     address: Optional[str] = ""
+    full_address: Optional[str] = ""
     latitude: Optional[float] = 0.0
     longitude: Optional[float] = 0.0
     # Дані авто та водія за замовчуванням (для самовивозу "забирає клієнт")

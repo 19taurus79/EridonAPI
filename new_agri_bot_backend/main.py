@@ -913,7 +913,7 @@ async def update_address_for_client(address_data: AddressCreate, id: int, reques
     try:
         obj = await ClientAddress.objects().get(where=(ClientAddress.id == id))
         data_dict = address_data.dict()
-        full_address_str = data_dict.pop("address", None)
+        full_address_str = data_dict.pop("address", None) or data_dict.pop("full_address", None)
         
         if full_address_str:
             # 2. Разбираем строку адреса на части
@@ -978,7 +978,7 @@ async def create_address_for_client(address_data: AddressCreate, request: Reques
     Создает новый адрес для клиента, "умно" разбирая строку полного адреса.
     """
     data_dict = address_data.dict()
-    full_address_str = data_dict.pop("address", None)
+    full_address_str = data_dict.pop("address", None) or data_dict.pop("full_address", None)
 
     if full_address_str:
         address_parts = [part.strip() for part in full_address_str.split(",")]
