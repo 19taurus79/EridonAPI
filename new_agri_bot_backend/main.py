@@ -247,6 +247,9 @@ app.add_middleware(
 )
 
 
+from fastapi.exceptions import RequestValidationError
+
+
 # --- Глобальный перехватчик ошибок: отправляет уведомление в Telegram ---
 @app.middleware("http")
 async def error_notify_middleware(request: Request, call_next):
@@ -271,6 +274,27 @@ async def error_notify_middleware(request: Request, call_next):
             status_code=500,
             content={"detail": "Internal server error"},
         )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Перехватчик ошибок валидации Pydantic — уведомляет Telegram с деталями."""
+    errors_summary = json.dumps(exc.errors(), ensure_ascii=False)
+    logger.error(
+        f"Validation error on {request.method} {request.url.path}: {errors_summary}"
+    )
+    asyncio.create_task(
+        notify_admins_error(
+            exc,
+            path=request.url.path,
+            method=request.method,
+            extra=f"Validation errors: {errors_summary}",
+        )
+    )
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+    )
 
 
 @app.exception_handler(500)
@@ -928,24 +952,30 @@ async def update_address_for_client(address_data: AddressCreate, id: int, reques
 
 
 @app.post("/add_address_for_client", dependencies=[Depends(check_not_guest)])
-
-async def create_address_for_client(address_data: AddressCreate):
+async def create_address_for_client(address_data: AddressCreate, request: Request):
     """
     Создает новый адрес для клиента, "умно" разбирая строку полного адреса.
     """
-    # 1. Преобразуем входные данные в словарь
     data_dict = address_data.dict()
     full_address_str = data_dict.pop("address", None)
 
     if full_address_str:
-        # 2. Разбираем строку адреса на части
         address_parts = [part.strip() for part in full_address_str.split(",")]
 
         if len(address_parts) >= 4:
-            data_dict["region"] = address_parts[3].split()[0] if address_parts[3] else ""
-            data_dict["area"] = address_parts[2].split()[0] if address_parts[2] else ""
-            data_dict["commune"] = address_parts[1].split()[0] if address_parts[1] else ""
-            data_dict["city"] = address_parts[0]
+            data_dict["region"] = address_parts[0].split()[0] if address_parts[0] else ""
+            data_dict["area"] = address_parts[1].split()[0] if address_parts[1] else ""
+            data_dict["commune"] = address_parts[2].split()[0] if address_parts[2] else ""
+            data_dict["city"] = address_parts[3]
+
+    # Гарантируем, что обязательные не-null поля имеют значение
+    data_dict.setdefault("region", "")
+    data_dict.setdefault("area", "")
+    data_dict.setdefault("commune", "")
+    data_dict.setdefault("city", full_address_str or "")
+    data_dict.setdefault("representative", "")
+    data_dict.setdefault("phone1", "")
+    data_dict.setdefault("phone2", "")
 
     # Очищаємо порожні рядки для nullable полів авто/водія
     for field in (
@@ -955,7 +985,6 @@ async def create_address_for_client(address_data: AddressCreate):
         if field in data_dict and not data_dict[field]:
             data_dict[field] = None
 
-    # 4. Создаем и сохраняем объект ClientAddress с разобранными данными
     try:
         new_address = ClientAddress(**data_dict)
         await new_address.save().run()
@@ -963,11 +992,19 @@ async def create_address_for_client(address_data: AddressCreate):
         return {"status": "ok", "message": "Адрес успешно создан."}
     except UniqueViolationError:
         raise HTTPException(
-            status_code=409,  # 409 Conflict - стандартный код для таких случаев
+            status_code=409,
             detail="Така адреса для цього клієнта вже існує.",
         )
     except Exception as e:
-        # Обработка ошибок, если не хватает обязательных полей в ClientAddress
+        logger.error(f"create_address_for_client error: {e}", exc_info=True)
+        asyncio.create_task(
+            notify_admins_error(
+                e,
+                path=request.url.path,
+                method=request.method,
+                extra=f"data={address_data.dict()}",
+            )
+        )
         raise HTTPException(
             status_code=500, detail=f"Ошибка при сохранении адреса: {e}"
         )
