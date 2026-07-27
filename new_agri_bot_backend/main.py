@@ -979,6 +979,7 @@ async def create_address_for_client(address_data: AddressCreate, request: Reques
     """
     data_dict = address_data.dict()
     full_address_str = data_dict.pop("address", None) or data_dict.pop("full_address", None)
+    data_dict.pop("full_address", None)
 
     if full_address_str:
         address_parts = [part.strip() for part in full_address_str.split(",")]
@@ -1007,7 +1008,9 @@ async def create_address_for_client(address_data: AddressCreate, request: Reques
             data_dict[field] = None
 
     try:
-        new_address = ClientAddress(**data_dict)
+        valid_columns = {col._meta.name for col in ClientAddress._meta.columns}
+        clean_dict = {k: v for k, v in data_dict.items() if k in valid_columns}
+        new_address = ClientAddress(**clean_dict)
         await new_address.save().run()
         db_cache.clear()
         return {"status": "ok", "message": "Адрес успешно создан."}
