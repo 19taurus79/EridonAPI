@@ -94,6 +94,7 @@ async def combined_pandas_endpoint(
             Submissions.document_status,
             Submissions.delivery_status,
             Submissions.shipping_warehouse,
+            Submissions.division,
             Submissions.product.product.as_alias("product"),
             Submissions.different.as_alias("qty"),
         )
