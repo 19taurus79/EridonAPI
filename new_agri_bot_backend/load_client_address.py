@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+import re
 
 import pandas as pd
 
@@ -27,6 +28,41 @@ async def load_client_address_data(excel_filepath: str):
         for col in df.select_dtypes(include=["object"]).columns:
             df[col] = df[col].str.strip()
         df.replace({"": None, pd.NaT: None}, inplace=True)
+
+        # --- ИСПРАВЛЕНИЕ: Автоматическое связывание и заполнение клиентов "ЕДО" ---
+        logger.info("--- Проверка клиентов ЕДО ---")
+        # Получаем старые данные до очистки таблицы на случай, если базового клиента больше нет в Excel
+        existing_clients_db = await ClientAddress.select()
+        existing_data_map = {client['client']: client for client in existing_clients_db}
+        
+        # Колонки для копирования (все кроме client, manager)
+        cols_to_copy = [col for col in model_columns if col not in ['client', 'manager']]
+
+        if 'client' in df.columns:
+            edo_mask = df['client'].str.endswith('ЕДО', na=False)
+            for idx, row in df[edo_mask].iterrows():
+                client_name = row['client']
+                # Убираем "ЕДО", " ЕДО", " - ЕДО" и т.д.
+                base_client_name = re.sub(r'[\s\-]*ЕДО$', '', client_name).strip()
+                
+                base_data = None
+                
+                # 1. Ищем в текущем DataFrame
+                base_df_rows = df[df['client'] == base_client_name]
+                if not base_df_rows.empty:
+                    base_data = base_df_rows.iloc[0].to_dict()
+                # 2. Если не нашли в DataFrame, ищем в старой БД
+                elif base_client_name in existing_data_map:
+                    base_data = existing_data_map[base_client_name]
+                    
+                if base_data:
+                    # Копируем данные только если они сейчас пусты в строке ЕДО
+                    for col in cols_to_copy:
+                        if col in df.columns and col in base_data:
+                            val = row[col]
+                            if pd.isna(val) or val == '' or val == 'Не вказано':
+                                df.at[idx, col] = base_data[col]
+                    logger.info(f"  -> Данные для '{client_name}' успешно скопированы из '{base_client_name}'")
 
         # --- ИСПРАВЛЕНИЕ: Заполняем пустые значения в обязательных полях ---
         # Если в колонке 'representative' есть пустые значения (None), заменяем их

@@ -28,6 +28,7 @@ from .tables import (
     ProductGuide,
     FreeStock,
     AddressGuide,
+    ClientAddress,
 )
 
 # Импорты функций обработки данных
@@ -538,6 +539,49 @@ async def save_processed_data_to_db(
             log(f"❌ Ошибка при финальной обработке df_manual_matches: {e}")
     else:
         log("ℹ️ Данные для ручного сопоставления не предоставлены или DataFrame пуст.")
+
+    # --- СИНХРОНИЗАЦИЯ АДРЕСОВ ДЛЯ КЛИЕНТОВ "ЕДО" ---
+    try:
+        log("🔄 Проверка клиентов ЕДО в новых заявках...")
+        
+        # Получаем уникальных клиентов с ЕДО, у которых есть нераспределенный остаток (different > 0)
+        if 'client' in df_submissions.columns:
+            edo_mask = df_submissions['client'].str.endswith('ЕДО', na=False)
+            if 'different' in df_submissions.columns:
+                diff_col = pd.to_numeric(df_submissions['different'], errors='coerce').fillna(0)
+                edo_mask = edo_mask & (diff_col > 0)
+                
+            edo_clients = df_submissions[edo_mask]['client'].unique()
+            
+            if len(edo_clients) > 0:
+                # Получаем все текущие адреса из БД
+                existing_addresses = await ClientAddress.select()
+                addr_map = {addr['client']: addr for addr in existing_addresses}
+                
+                new_addresses = []
+                
+                for edo_client in edo_clients:
+                    if edo_client not in addr_map:
+                        # Ищем базового клиента, убирая "ЕДО", пробелы, тире и запятые
+                        base_client = re.sub(r'[\s\-,]*ЕДО$', '', edo_client).strip(', ')
+                        if base_client in addr_map:
+                            base_data = addr_map[base_client].copy()
+                            # Удаляем id, чтобы БД сгенерировала новый первичный ключ
+                            if 'id' in base_data:
+                                del base_data['id']
+                            # Заменяем имя клиента на ЕДО
+                            base_data['client'] = edo_client
+                            
+                            new_addresses.append(ClientAddress(**base_data))
+                            addr_map[edo_client] = base_data
+                
+                if new_addresses:
+                    await ClientAddress.insert(*new_addresses).run()
+                    log(f"✅ Успешно скопированы адреса для {len(new_addresses)} клиентов ЕДО.")
+                else:
+                    log("ℹ️ Нет новых клиентов ЕДО для копирования адресов.")
+    except Exception as e:
+        log(f"❌ Ошибка при синхронизации адресов ЕДО: {e}")
 
     log("🏁 Все данные успешно сохранены в базу данных.")
 
