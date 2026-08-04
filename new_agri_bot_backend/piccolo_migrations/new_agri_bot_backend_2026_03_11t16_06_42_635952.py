@@ -233,6 +233,7 @@ async def forwards():
                             submissions.client,
                             submissions.contract_supplement,
                             submissions.manager,
+                            submissions.shipping_warehouse,
                             submissions.product
                         FROM submissions
                         WHERE (submissions.different > (0)::double precision)
@@ -263,6 +264,7 @@ async def forwards():
                     s.client,
                     s.contract_supplement,
                     s.manager,
+                    s.shipping_warehouse,
                     s.product,
                     COALESCE((so.orders_q)::numeric, (0)::numeric) AS orders_q,
                     COALESCE((m.qt_moved)::numeric, (0)::numeric) AS moved_q,

@@ -524,6 +524,8 @@ async def get_contracts(client: str = Query(...)):
             Submissions.line_of_business,
             Submissions.document_status,
             Submissions.delivery_status,
+            Submissions.shipping_warehouse,
+            Submissions.manager,
         )
         .where(
             (Submissions.different > 0)
@@ -534,6 +536,8 @@ async def get_contracts(client: str = Query(...)):
             Submissions.line_of_business,
             Submissions.document_status,
             Submissions.delivery_status,
+            Submissions.shipping_warehouse,
+            Submissions.manager,
         )
         .order_by(Submissions.contract_supplement)
         .run()
@@ -569,6 +573,53 @@ async def get_contracts(client: str = Query(...)):
                     item["loan_percentage"] = None
                     item["planned_amount"] = None
                     item["actual_payment_amount"] = None
+
+    return contracts
+
+
+@router.get("/all_contracts")
+@cached_endpoint()
+async def get_all_contracts():
+    query = Submissions.select(
+        Submissions.contract_supplement,
+        Submissions.line_of_business,
+        Submissions.document_status,
+        Submissions.delivery_status,
+        Submissions.shipping_warehouse,
+        Submissions.manager,
+        Submissions.client,
+    ).where(Submissions.different > 0)
+
+    contracts = await query.group_by(
+        Submissions.contract_supplement,
+        Submissions.line_of_business,
+        Submissions.document_status,
+        Submissions.delivery_status,
+        Submissions.shipping_warehouse,
+        Submissions.manager,
+        Submissions.client,
+    ).order_by(Submissions.contract_supplement).run()
+
+    if contracts:
+        contract_ids = [item["contract_supplement"] for item in contracts if item.get("contract_supplement")]
+        if contract_ids:
+            payments = await Payment.select(
+                Payment.contract_supplement,
+                Payment.contract_type,
+                Payment.loan_percentage,
+                Payment.planned_amount,
+                Payment.actual_payment_amount
+            ).where(Payment.contract_supplement.is_in(contract_ids)).run()
+            
+            payment_map = {p["contract_supplement"]: p for p in payments}
+            for item in contracts:
+                cs = item.get("contract_supplement")
+                p_info = payment_map.get(cs)
+                if p_info:
+                    item["contract_type"] = p_info["contract_type"]
+                    item["loan_percentage"] = p_info["loan_percentage"]
+                    item["planned_amount"] = p_info["planned_amount"]
+                    item["actual_payment_amount"] = p_info["actual_payment_amount"]
 
     return contracts
 
@@ -789,6 +840,7 @@ def group_products_with_parties(items):
                 "client": item.get("client"),
                 "contract_supplement": contract_supplement,
                 "manager": item.get("manager"),
+                "shipping_warehouse": item.get("shipping_warehouse"),
                 "product": str(product_uuid),
                 "orders_q": 0.0,
                 "buh": 0.0,

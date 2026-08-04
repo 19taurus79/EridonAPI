@@ -42,6 +42,9 @@ async def combined_pandas_endpoint(
     order_status: Optional[List[str]] = Query(
         None, description="Список статусів замовлень для фільтрації"
     ),
+    shipping_warehouse: Optional[List[str]] = Query(
+        None, description="Список складів відвантаження для фільтрації"
+    ),
 ):
     # --- 1. ИЗВЛЕЧЕНИЕ ДАННЫХ (Extract) ---
     # На этом этапе мы выполняем асинхронные запросы к базе данных,
@@ -60,6 +63,9 @@ async def combined_pandas_endpoint(
     else:
         # Поведение по умолчанию, если фильтр не передан
         submissions_filters &= Submissions.document_status.ilike("%затвердже%")
+        
+    if shipping_warehouse:
+        submissions_filters &= Submissions.shipping_warehouse.is_in(shipping_warehouse)
 
     # Запрос 1: Общий спрос на каждый товар.
     # Мы суммируем количество ('different') по каждому товару ('product') и направлению ('line_of_business')
@@ -87,6 +93,7 @@ async def combined_pandas_endpoint(
             Submissions.period,
             Submissions.document_status,
             Submissions.delivery_status,
+            Submissions.shipping_warehouse,
             Submissions.product.product.as_alias("product"),
             Submissions.different.as_alias("qty"),
         )

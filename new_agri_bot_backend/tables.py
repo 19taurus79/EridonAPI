@@ -211,6 +211,7 @@ class DetailsForOrders(Table):
     party = Varchar()
     buh = Numeric()
     skl = Numeric()
+    shipping_warehouse = Varchar(null=True)
     id = UUID(required=True)
     qok = Varchar(length=2)
 
