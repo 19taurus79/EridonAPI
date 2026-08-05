@@ -87,6 +87,27 @@ def geocode(address: str = Query(..., description="Адрес для поиск�
     return response.json()
 
 
+@router.get(
+    "/remains/warehouses",
+    summary="Отримати список унікальних складів із залишків",
+    dependencies=[Depends(get_current_telegram_user)],
+)
+@cached_endpoint()
+async def get_remains_warehouses():
+    """
+    Повертає список унікальних непустих назв складів з таблиці залишків, 
+    де є бухгалтерський залишок (buh > 0).
+    """
+    query = """
+        SELECT DISTINCT warehouse 
+        FROM remains 
+        WHERE warehouse IS NOT NULL AND warehouse != '' AND buh > 0 
+        ORDER BY warehouse
+    """
+    result = await Remains.raw(query)
+    return [row["warehouse"] for row in result]
+
+
 @router.get("/remains/{product_id}", summary="Отримати залишки за конкретним продуктом")
 @cached_endpoint()
 async def get_remains_by_product(
@@ -319,7 +340,8 @@ async def get_product_on_warehouse(
     category: Optional[str] = None, 
     parent_category: Optional[str] = Query(None),
     name_part: Optional[str] = None,
-    free_only: bool = Query(False)
+    free_only: bool = Query(False),
+    warehouses: Optional[str] = Query(None)
 ):
     """
     Повертає записи про товари, по яким є залишки на складі, з бази даних.
@@ -327,8 +349,23 @@ async def get_product_on_warehouse(
     - `category`: Фільтрувати за назвою категории (повна відповідність).
     - `name_part`: Фільтрувати за частиною найменування товару (нечутливий до регістру).
     - `free_only`: Фільтрувати тільки товари з вільним залишком.
+    - `warehouses`: Кома-сепарований список складів для фільтрації.
     """
     query = ProductOnWarehouse.select()
+
+    if warehouses:
+        wh_list = [w.strip() for w in warehouses.split(',') if w.strip()]
+        if wh_list:
+            wh_placeholders = ', '.join([f"'{w}'" for w in wh_list])
+            warehouse_ids_query = f"""
+                SELECT DISTINCT pg.id
+                FROM remains r
+                JOIN product_guide pg ON r.product = pg.id
+                WHERE r.warehouse IN ({wh_placeholders}) AND r.buh > 0
+            """
+            raw_result = await ProductOnWarehouse.raw(warehouse_ids_query)
+            w_ids = [row["id"] for row in raw_result]
+            query = query.where(ProductOnWarehouse.id.is_in(w_ids))
 
     if category:
         query = query.where(ProductOnWarehouse.line_of_business == category)
@@ -375,13 +412,29 @@ async def export_product_on_warehouse(
     parent_category: Optional[str] = Query(None),
     name_part: Optional[str] = None,
     free_only: bool = Query(False),
-    columns: Optional[str] = Query(None)
+    columns: Optional[str] = Query(None),
+    warehouses: Optional[str] = Query(None)
 ):
     """
     Формує та повертає Excel-файл з поточними зашликами та вільними залишками товарів,
     враховуючи всі застосовані фільтри та обрані стовпці.
     """
     query = ProductOnWarehouse.select()
+
+    wh_list = []
+    if warehouses:
+        wh_list = [w.strip() for w in warehouses.split(',') if w.strip()]
+        if wh_list:
+            wh_placeholders = ', '.join([f"'{w}'" for w in wh_list])
+            warehouse_ids_query = f"""
+                SELECT DISTINCT pg.id
+                FROM remains r
+                JOIN product_guide pg ON r.product = pg.id
+                WHERE r.warehouse IN ({wh_placeholders}) AND r.buh > 0
+            """
+            raw_result = await ProductOnWarehouse.raw(warehouse_ids_query)
+            w_ids = [row["id"] for row in raw_result]
+            query = query.where(ProductOnWarehouse.id.is_in(w_ids))
 
     if category:
         query = query.where(ProductOnWarehouse.line_of_business == category)
@@ -413,6 +466,10 @@ async def export_product_on_warehouse(
         query = query.where(ProductOnWarehouse.id.is_in(free_ids))
 
     products = await query.order_by(ProductOnWarehouse.product).run()
+
+    warehouse_filter_sql = ""
+    if warehouses and wh_list:
+        warehouse_filter_sql = f" AND r.warehouse IN ({wh_placeholders})"
 
     if not products:
         df = pd.DataFrame(columns=[
@@ -467,7 +524,7 @@ async def export_product_on_warehouse(
                 WHERE different > 0
                 GROUP BY product
             ) o ON o.product = pg.id
-            WHERE pg.id IN ({product_ids_str})
+            WHERE pg.id IN ({product_ids_str}){warehouse_filter_sql}
             GROUP BY pg.product, r.line_of_business, r.parent_element, r.nomenclature_series, r.warehouse, o.orders_q, p_tot.total_buh
             ORDER BY pg.product, r.nomenclature_series, r.warehouse
         """
