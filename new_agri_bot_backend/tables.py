@@ -382,3 +382,14 @@ class ScheduledDeletions(Table):
     message_id = BigInt()
     delete_at = Timestamp()
     created_at = Timestamp(default=TimestampNow())
+
+
+class ValidWarehouseAdmin(Table):
+    """Таблиця для валідних складів (Налаштування)"""
+    id = UUID(primary_key=True)
+    name = Varchar(length=255, unique=True, required=True)
+    is_active = Boolean(default=True)
+
+    @classmethod
+    def get_readable(cls):
+        return Readable(template="%s", columns=[cls.name])

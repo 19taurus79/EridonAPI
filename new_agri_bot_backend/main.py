@@ -56,6 +56,7 @@ from .tables import (
     DeliveryItems,
     OrderComments,
     ScheduledDeletions,
+    ValidWarehouseAdmin,
 )
 from aiogram.types import FSInputFile
 from fastapi import (
@@ -136,7 +137,12 @@ from datetime import date
 
 
 
-admin_router = create_admin([Remains], allowed_hosts=["localhost"])
+from urllib.parse import urlparse
+admin_allowed_hosts = list({urlparse(origin).hostname for origin in CORS_ORIGINS if urlparse(origin).hostname})
+if "localhost" not in admin_allowed_hosts: admin_allowed_hosts.append("localhost")
+if "127.0.0.1" not in admin_allowed_hosts: admin_allowed_hosts.append("127.0.0.1")
+
+admin_router = create_admin([Remains, ValidWarehouseAdmin], allowed_hosts=admin_allowed_hosts)
 
 sessions = {}
 

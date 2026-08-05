@@ -29,6 +29,7 @@ from .tables import (
     FreeStock,
     AddressGuide,
     ClientAddress,
+    ValidWarehouseAdmin,
 )
 
 # Импорты функций обработки данных
@@ -98,7 +99,30 @@ async def save_processed_data_to_db(
 
     # 1. Запуск обработки Excel-файлов в отдельном потове
     df_av_stock = await run_in_threadpool(process_av_stock, av_stock_content)
-    df_remains = await run_in_threadpool(process_remains_reg, remains_content)
+
+    valid_warehouses_db = await ValidWarehouseAdmin.select(ValidWarehouseAdmin.name).where(ValidWarehouseAdmin.is_active == True)
+    valid_warehouse_list = [w['name'] for w in valid_warehouses_db]
+    df_remains, remains_all_warehouses = await run_in_threadpool(process_remains_reg, remains_content, valid_warehouse_list)
+
+    # --- Обработка новых складов ---
+    missing_warehouses = set(remains_all_warehouses) - set(valid_warehouse_list)
+    new_warehouses_added = []
+    for w in missing_warehouses:
+        w_str = str(w).strip()
+        if w_str and w_str.lower() != 'nan':
+            # Проверяем, есть ли уже склад в БД (может он просто выключен)
+            exists = await ValidWarehouseAdmin.exists().where(ValidWarehouseAdmin.name == w_str)
+            if not exists:
+                await ValidWarehouseAdmin.insert(ValidWarehouseAdmin(name=w_str, is_active=False))
+                new_warehouses_added.append(w_str)
+                log(f"Найдено новый склад (добавлен как неактивный): {w_str}")
+
+    if new_warehouses_added:
+        msg = f"⚠️ <b>Увага:</b> знайдено нові склади у файлі залишків!\n"
+        for nw in new_warehouses_added:
+            msg += f"- <b>{nw}</b>\n"
+        msg += "Вони були додані в базу як <b>неактивні</b>. Будь ласка, активуйте їх в адмінці, якщо вони валідні."
+        await send_notification(bot, ADMINS_ID, msg, parse_mode="HTML")
     df_submissions = await run_in_threadpool(process_submissions, submissions_content)
     df_payment = await run_in_threadpool(process_payment, payment_content)
     # df_moved = await run_in_threadpool(process_moved_data, moved_content)

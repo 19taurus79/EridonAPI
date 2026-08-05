@@ -4,7 +4,7 @@ import uuid
 import pandas as pd
 import numpy as np
 import io
-from .config import valid_line_of_business, valid_warehouse, logger  # Импорт из config.py
+from .config import valid_line_of_business, logger  # Импорт из config.py
 
 # Опция для будущего поведения Pandas
 pd.set_option("future.no_silent_downcasting", True)
@@ -164,7 +164,7 @@ def process_av_stock(content: bytes) -> pd.DataFrame:
     return av_stock
 
 
-def process_remains_reg(content: bytes) -> pd.DataFrame:
+def process_remains_reg(content: bytes, valid_warehouse_list: list) -> tuple:
     remains = read_excel_content(content)
     remains.drop(axis=0, labels=[0, 1, 2, 3, 4], inplace=True)
     remains.drop(
@@ -227,8 +227,9 @@ def process_remains_reg(content: bytes) -> pd.DataFrame:
         remains["buying_season"].str.rstrip()
     ).str.strip()
     remains = remains.loc[remains["line_of_business"].isin(valid_line_of_business)]
-    remains = remains.loc[remains["warehouse"].isin(valid_warehouse)]
-    return remains
+    all_warehouses = remains["warehouse"].unique().tolist()
+    remains = remains.loc[remains["warehouse"].isin(valid_warehouse_list)]
+    return remains, all_warehouses
 
 
 def process_payment(content: bytes) -> pd.DataFrame:
