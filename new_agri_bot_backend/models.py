@@ -168,6 +168,7 @@ class UpdateDeliveryRequest(BaseModel):
     total_weight: Optional[float] = None
     items: List[UpdateItem]
     actor_name: Optional[str] = None
+    ttn: Optional[str] = None
 
 
 class ChangeDeliveryDateRequest(BaseModel):

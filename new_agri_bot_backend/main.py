@@ -98,7 +98,7 @@ from .bi import router as bi_router
 from .bi_pandas import router as bi_pandas_router
 from .order_chat import router as chat_router
 from .notification import router as notification_router
-from .nova_poshta import router as nova_poshta_router
+from .nova_poshta import router as nova_poshta_router, call_np_api
 from .bot_handlers import setup_bot_handlers
 from .scheduler import setup_scheduler
 from .utils import send_message_to_managers, create_composite_key_from_dict
@@ -1456,6 +1456,10 @@ async def update_delivery(
         if not delivery_data:
             raise HTTPException(status_code=404, detail="Delivery not found")
 
+        # Оновлюємо TTN, якщо він переданий
+        if data.ttn is not None:
+            delivery_data.ttn = data.ttn
+
         # 2. Оновлюємо статус, якщо змінився
         if delivery_data.status != data.status:
             old_status = delivery_data.status
@@ -1498,13 +1502,37 @@ async def update_delivery(
             if data.status == 'Виконано':
                 if delivery_data.created_by:
                     try:
+                        message_text = (
+                            f"✅ <b>Доставка завершена</b>\n\n"
+                            f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
+                        )
+                        if delivery_data.ttn:
+                            message_text += f"\n📦 <b>ТТН:</b> <code>{delivery_data.ttn}</code>\n"
+                            # Запитуємо статус посилки з API Нової Пошти
+                            try:
+                                np_result = await call_np_api("TrackingDocument", "getStatusDocuments", {
+                                    "Documents": [{"DocumentNumber": delivery_data.ttn, "Phone": ""}]
+                                })
+                                if np_result.get("success") and np_result.get("data"):
+                                    track = np_result["data"][0]
+                                    status_desc = track.get("Status", "")
+                                    warehouse = track.get("WarehouseRecipient", "")
+                                    schedule = track.get("ScheduledDeliveryDate", "")
+                                    if status_desc:
+                                        message_text += f"📍 <b>Статус:</b> {status_desc}\n"
+                                    if warehouse:
+                                        message_text += f"🏢 <b>Відділення:</b> {warehouse}\n"
+                                    if schedule:
+                                        message_text += f"📅 <b>Очікувана дата:</b> {schedule}\n"
+                            except Exception as np_err:
+                                logger.warning(f"Could not fetch NP tracking status: {np_err}")
+                            message_text += f"\n🔗 <a href=\"https://novaposhta.ua/tracking/{delivery_data.ttn}\">Відстежити на сайті</a>"
+                        
                         await bot.send_message(
                             chat_id=delivery_data.created_by,
-                            text=(
-                                f"✅ <b>Доставка завершена</b>\n\n"
-                                f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
-                            ),
+                            text=message_text,
                             parse_mode="HTML",
+                            disable_web_page_preview=True
                         )
                     except Exception as tg_err:
                         logger.warning(f"Error sending completion message: {tg_err}")

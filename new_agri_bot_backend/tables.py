@@ -328,6 +328,7 @@ class Deliveries(Table):
     status = Varchar(length=50, default="Створено")
     created_at = Timestamp(default=TimestampNow())
     calendar_id = Varchar(null=True)
+    ttn = Varchar(length=255, null=True)
 
 
 # Таблица товаров в доставке
