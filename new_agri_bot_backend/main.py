@@ -163,6 +163,8 @@ def get_fallback_weight(line_of_business: str, nomenclature: str) -> float:
 
     # Сложный случай для "Насіння"
     if line_of_business == "Насіння":
+        if "(1500К)" in nomenclature:
+            return 8.0
         if "(150К)" in nomenclature:
             return 10.0
         if "(50К)" in nomenclature:
@@ -170,8 +172,8 @@ def get_fallback_weight(line_of_business: str, nomenclature: str) -> float:
         if "(80К)" in nomenclature:
             return 20.0
 
-    # Если ни одно из правил не подошло, возвращаем 0
-    return 0.0
+    # Если ни одно из правил не подошло, возвращаем 1.0
+    return 1.0
 
 
 # aiogram Dispatcher для обработки входящих сообщений бота
