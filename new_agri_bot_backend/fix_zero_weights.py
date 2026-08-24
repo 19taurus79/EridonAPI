@@ -2,7 +2,7 @@ import asyncio
 import logging
 from datetime import datetime
 
-from tables import Deliveries, DeliveryItems, Submissions
+from new_agri_bot_backend.tables import Deliveries, DeliveryItems, Submissions
 def get_fallback_weight(line_of_business: str, nomenclature: str) -> float:
     LOB_WEIGHT_MAP = {
         "Власне виробництво насіння": 1.0,
