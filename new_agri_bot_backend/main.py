@@ -1500,44 +1500,54 @@ async def update_delivery(
                     logger.error(f"Error updating calendar color: {e}")
                     warnings.append(f"Помилка оновлення Календаря: {e}")
 
-            # Додаткові сповіщення менеджеру при певних статусах
+            # Додаткові сповіщення менеджеру та логістам/адмінам при певних статусах
             if data.status == 'Виконано':
-                if delivery_data.created_by:
-                    try:
-                        message_text = (
-                            f"✅ <b>Доставка завершена</b>\n\n"
-                            f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
-                        )
-                        if delivery_data.ttn:
-                            message_text += f"\n📦 <b>ТТН:</b> <code>{delivery_data.ttn}</code>\n"
-                            # Запитуємо статус посилки з API Нової Пошти
-                            try:
-                                np_result = await call_np_api("TrackingDocument", "getStatusDocuments", {
-                                    "Documents": [{"DocumentNumber": delivery_data.ttn, "Phone": ""}]
-                                })
-                                if np_result.get("success") and np_result.get("data"):
-                                    track = np_result["data"][0]
-                                    status_desc = track.get("Status", "")
-                                    warehouse = track.get("WarehouseRecipient", "")
-                                    schedule = track.get("ScheduledDeliveryDate", "")
-                                    if status_desc:
-                                        message_text += f"📍 <b>Статус:</b> {status_desc}\n"
-                                    if warehouse:
-                                        message_text += f"🏢 <b>Відділення:</b> {warehouse}\n"
-                                    if schedule:
-                                        message_text += f"📅 <b>Очікувана дата:</b> {schedule}\n"
-                            except Exception as np_err:
-                                logger.warning(f"Could not fetch NP tracking status: {np_err}")
-                            message_text += f"\n🔗 <a href=\"https://novaposhta.ua/tracking/{delivery_data.ttn}\">Відстежити на сайті</a>"
+                try:
+                    items_text = "\n".join([f"🔹 {item.product}: <b>{item.quantity}</b>" for item in data.items])
+                    message_text = (
+                        f"✅ <b>Доставка завершена</b>\n\n"
+                        f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
+                        f"📦 Склад:\n{items_text}\n"
+                    )
+                    if delivery_data.ttn:
+                        message_text += f"\n📦 <b>ТТН:</b> <code>{delivery_data.ttn}</code>\n"
+                        # Запитуємо статус посилки з API Нової Пошти
+                        try:
+                            np_result = await call_np_api("TrackingDocument", "getStatusDocuments", {
+                                "Documents": [{"DocumentNumber": delivery_data.ttn, "Phone": ""}]
+                            })
+                            if np_result.get("success") and np_result.get("data"):
+                                track = np_result["data"][0]
+                                status_desc = track.get("Status", "")
+                                warehouse = track.get("WarehouseRecipient", "")
+                                schedule = track.get("ScheduledDeliveryDate", "")
+                                if status_desc:
+                                    message_text += f"📍 <b>Статус:</b> {status_desc}\n"
+                                if warehouse:
+                                    message_text += f"🏢 <b>Відділення:</b> {warehouse}\n"
+                                if schedule:
+                                    message_text += f"📅 <b>Очікувана дата:</b> {schedule}\n"
+                        except Exception as np_err:
+                            logger.warning(f"Could not fetch NP tracking status: {np_err}")
+                        message_text += f"\n🔗 <a href=\"https://novaposhta.ua/tracking/{delivery_data.ttn}\">Відстежити на сайті</a>"
+                    
+                    recipients = set(ALL_RECIPIENTS)
+                    if delivery_data.created_by:
+                        recipients.add(delivery_data.created_by)
                         
-                        await bot.send_message(
-                            chat_id=delivery_data.created_by,
-                            text=message_text,
-                            parse_mode="HTML",
-                            disable_web_page_preview=True
-                        )
-                    except Exception as tg_err:
-                        logger.warning(f"Error sending completion message: {tg_err}")
+                    for recipient_id in recipients:
+                        try:
+                            await bot.send_message(
+                                chat_id=recipient_id,
+                                text=message_text,
+                                parse_mode="HTML",
+                                disable_web_page_preview=True
+                            )
+                        except Exception as tg_err:
+                            logger.warning(f"Error sending completion message to {recipient_id}: {tg_err}")
+                            
+                except Exception as tg_err:
+                    logger.warning(f"Error building completion message: {tg_err}")
 
             elif data.status == 'В очікуванні':
                 if delivery_data.created_by:
