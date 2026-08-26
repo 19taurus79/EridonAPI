@@ -339,6 +339,7 @@ class DeliveryItems(Table):
     quantity = Real()
     party = Varchar(length=255, null=True)
     party_quantity = Real(null=True)
+    line_of_business = Varchar(length=255, null=True)
 
 
 class OrderComments(Table):

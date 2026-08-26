@@ -117,6 +117,7 @@ class DeliveryItem(BaseModel):
     quantity: float
     weight: float
     parties: List[Party]
+    line_of_business: Optional[str] = None
 
 
 class DeliveryOrder(BaseModel):
@@ -126,6 +127,10 @@ class DeliveryOrder(BaseModel):
 
 class DeleteDeliveryRequest(BaseModel):
     delivery_id: int
+
+
+class MapLoBRequest(BaseModel):
+    mappings: dict[str, str]
 
 
 class DeliveryRequest(BaseModel):

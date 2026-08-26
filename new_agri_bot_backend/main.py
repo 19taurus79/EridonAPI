@@ -36,6 +36,7 @@ from .models import (
     DeleteDeliveryRequest,
     UpdateDeliveryRequest, 
     BatchUpdateDeliveryRequest,
+    MapLoBRequest,
     ChangeDeliveryDateRequest,
     CreateCommentRequest,
     UpdateCommentRequest,
@@ -1256,6 +1257,7 @@ async def get_data_for_delivery(X_Telegram_Init_Data: str = Header()):
             grouped_items[delivery_id][grouping_key] = {
                 "order_ref": order_ref,  # Возвращаем order_ref
                 "product": product_name,
+                "line_of_business": item.get("line_of_business"),
                 "quantity": item["quantity"],  # Общее количество для продукта
                 "parties": [],
             }
@@ -1273,6 +1275,38 @@ async def get_data_for_delivery(X_Telegram_Init_Data: str = Header()):
 
     combined_data = list(deliveries_map.values())
     return combined_data
+
+@app.get("/delivery/unmapped_lobs")
+async def get_unmapped_lobs(X_Telegram_Init_Data: str = Header()):
+    parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
+    if not parsed_init_data:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    # Отримуємо унікальні продукти, де line_of_business IS NULL або пустий
+    items = await DeliveryItems.select(DeliveryItems.product).where(
+        (DeliveryItems.line_of_business == None) | (DeliveryItems.line_of_business == "")
+    ).distinct().run()
+    
+    unmapped_products = [item["product"] for item in items if item["product"]]
+    return unmapped_products
+
+@app.post("/delivery/map_lobs")
+async def map_lobs(data: MapLoBRequest, X_Telegram_Init_Data: str = Header()):
+    parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
+    if not parsed_init_data:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    updated_count = 0
+    for product_name, lob in data.mappings.items():
+        if product_name and lob:
+            res = await DeliveryItems.update({
+                DeliveryItems.line_of_business: lob
+            }).where(DeliveryItems.product == product_name).run()
+            # res is usually a list of dicts with updated IDs in Piccolo if returning is used, 
+            # but we just count mappings updated as a batch
+            updated_count += 1
+            
+    return {"message": "Успішно оновлено", "updated_products": updated_count}
 
 @app.post("/delivery/send", dependencies=[Depends(check_not_guest)])
 async def send_delivery(
@@ -1391,6 +1425,7 @@ async def send_delivery(
                                     quantity=item.quantity,
                                     party=party.party,
                                     party_quantity=party.moved_q,
+                                    line_of_business=item.line_of_business,
                                 )
                             )
         if items_to_insert:
