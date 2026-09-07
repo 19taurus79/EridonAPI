@@ -1414,20 +1414,32 @@ async def send_delivery(
         items_to_insert = []
         for order in data.orders:
             for item in order.items:
-                if item.parties:
-                    for party in item.parties:
-                        if party.moved_q > 0:
-                            items_to_insert.append(
-                                DeliveryItems(
-                                    delivery=new_delivery.id,
-                                    order_ref=order.order,
-                                    product=item.product,
-                                    quantity=item.quantity,
-                                    party=party.party,
-                                    party_quantity=party.moved_q,
-                                    line_of_business=item.line_of_business,
-                                )
+                if (float(item.quantity or 0) <= 0):
+                    continue
+                active_parties = [p for p in item.parties if p.moved_q > 0] if item.parties else []
+                if active_parties:
+                    for party in active_parties:
+                        items_to_insert.append(
+                            DeliveryItems(
+                                delivery=new_delivery.id,
+                                order_ref=order.order,
+                                product=item.product,
+                                quantity=item.quantity,
+                                party=party.party,
+                                party_quantity=party.moved_q,
+                                line_of_business=item.line_of_business,
                             )
+                        )
+                else:
+                    items_to_insert.append(
+                        DeliveryItems(
+                            delivery=new_delivery.id,
+                            order_ref=order.order,
+                            product=item.product,
+                            quantity=item.quantity,
+                            line_of_business=item.line_of_business,
+                        )
+                    )
         if items_to_insert:
             await DeliveryItems.insert(*items_to_insert).run()
             logger.info(f"✅ {len(items_to_insert)} позицій по доставці збережено.")
@@ -1538,11 +1550,16 @@ async def update_delivery(
             # Додаткові сповіщення менеджеру та логістам/адмінам при певних статусах
             if data.status == 'Виконано':
                 try:
-                    items_text = "\n".join([f"🔹 {item.product}: <b>{item.quantity}</b>" for item in data.items])
+                    items_list = [
+                        f"🔹 {item.product}: <b>{item.quantity}</b>"
+                        for item in data.items
+                        if item.product and (float(item.quantity or 0) > 0)
+                    ]
+                    items_text = "\n".join(items_list) if items_list else "<i>(не вказано)</i>"
                     message_text = (
                         f"✅ <b>Доставка завершена</b>\n\n"
                         f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
-                        f"📦 Склад:\n{items_text}\n"
+                        f"📦 Товари:\n{items_text}\n"
                     )
                     if delivery_data.ttn:
                         message_text += f"\n📦 <b>ТТН:</b> <code>{delivery_data.ttn}</code>\n"
@@ -1601,14 +1618,19 @@ async def update_delivery(
 
             elif data.status == 'Продукція готова до відвантаження':
                 if delivery_data.created_by:
-                    items_text = "\n".join([f"🔹 {item.product}: <b>{item.quantity}</b>" for item in data.items])
+                    items_list = [
+                        f"🔹 {item.product}: <b>{item.quantity}</b>"
+                        for item in data.items
+                        if item.product and (float(item.quantity or 0) > 0)
+                    ]
+                    items_text = "\n".join(items_list) if items_list else "<i>(не вказано)</i>"
                     try:
                         await bot.send_message(
                             chat_id=delivery_data.created_by,
                             text=(
                                 f"📦 <b>Продукція готова до відвантаження</b>\n\n"
                                 f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
-                                f"📦 Склад:\n{items_text}\n\n"
+                                f"📦 Товари:\n{items_text}\n\n"
                                 f"<i>Підтвердіть дату та час з логістом.</i>\n"),
                             parse_mode="HTML",
                         )
@@ -1629,19 +1651,21 @@ async def update_delivery(
 
             items_to_insert = []
             for item in data.items:
-                if item.parties:
-                    for party in item.parties:
-                        if party.moved_q > 0:
-                            items_to_insert.append(
-                                DeliveryItems(
-                                    delivery=data.delivery_id,
-                                    order_ref=item.order_ref,
-                                    product=item.product,
-                                    quantity=item.quantity,
-                                    party=party.party,
-                                    party_quantity=party.moved_q,
-                                )
+                if (float(item.quantity or 0) <= 0):
+                    continue
+                active_parties = [p for p in item.parties if p.moved_q > 0] if item.parties else []
+                if active_parties:
+                    for party in active_parties:
+                        items_to_insert.append(
+                            DeliveryItems(
+                                delivery=data.delivery_id,
+                                order_ref=item.order_ref,
+                                product=item.product,
+                                quantity=item.quantity,
+                                party=party.party,
+                                party_quantity=party.moved_q,
                             )
+                        )
                 else:
                     items_to_insert.append(
                         DeliveryItems(
