@@ -1,8 +1,10 @@
 from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from .config import bot, LOGISTICS_TELEGRAM_IDS, ADMINS_ID, SEND_NOTIFICATIONS
 from .tables import DeliveryNotifications, Deliveries
 import html
 import logging
+import os
 
 logger = logging.getLogger("agri_bot")
 
@@ -406,6 +408,93 @@ async def check_urgent_pickups_and_notify():
                 logger.info(f"✅ Надіслано та збережено сповіщення про самовивіз адміну/логісту {admin_id}")
             except Exception as e:
                 logger.error(f"❌ Помилка надсилання сповіщення про самовивіз адміну/логісту {admin_id}: {e}")
+
+
+async def notify_request_np_details_to_manager(delivery: Deliveries, comment: str = None):
+    """Надіслати повідомлення менеджеру з кнопкою Mini App для заповнення реквізитів Нової Пошти"""
+    if not SEND_NOTIFICATIONS:
+        logger.info("🔇 Сповіщення вимкнено (SEND_NOTIFICATIONS=false). notify_request_np_details_to_manager пропущено.")
+        return
+
+    if not delivery.created_by:
+        logger.warning(f"⚠️ Немає created_by для доставки {delivery.id}. Неможливо надіслати запит менеджеру.")
+        return
+
+    base_url = (os.getenv("WEBAPP_URL") or "https://telegram-mini-app-six-inky.vercel.app").rstrip("/").replace("localhost", "127.0.0.1")
+    fill_url = f"{base_url}/delivery/np/{delivery.id}"
+
+    if fill_url.startswith("https"):
+        button = InlineKeyboardButton(text="📦 Заповнити дані Нової Пошти", web_app=WebAppInfo(url=fill_url))
+    else:
+        button = InlineKeyboardButton(text="📦 Заповнити дані Нової Пошти", url=fill_url)
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[button]])
+
+    safe_client = html.escape(delivery.client or "")
+    text = (
+        f"⚠️ <b>Потрібні дані для відправки Новою Поштою!</b>\n\n"
+        f"👤 Клієнт: <b>{safe_client}</b>\n"
+        f"📅 Очікувана дата: <b>{delivery.delivery_date or 'Не вказана'}</b>\n"
+    )
+    if comment and comment.strip():
+        text += f"\n💬 <b>Коментар логіста:</b> <i>{html.escape(comment.strip())}</i>\n"
+
+    text += "\nБудь ласка, вкажіть відділення або адресу одержувача та контактні дані, натиснувши кнопку нижче:"
+
+    try:
+        msg = await bot.send_message(
+            chat_id=delivery.created_by,
+            text=text,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+        new_note = DeliveryNotifications(
+            delivery_id=delivery.id,
+            telegram_id=delivery.created_by,
+            message_id=msg.message_id,
+            event_type="request_np_details"
+        )
+        await new_note.save().run()
+        logger.info(f"✅ Сповіщення менеджеру {delivery.created_by} по доставці {delivery.id} надіслано.")
+    except Exception as e:
+        logger.error(f"❌ Помилка надсилання сповіщення менеджеру {delivery.created_by}: {e}")
+
+
+async def notify_np_details_filled(delivery: Deliveries, actor_name: str = None):
+    """Сповістити всіх логістів та адмінів про те, що менеджер заповнив дані Нової Пошти"""
+    if not SEND_NOTIFICATIONS:
+        logger.info("🔇 Сповіщення вимкнено (SEND_NOTIFICATIONS=false). notify_np_details_filled пропущено.")
+        return
+
+    safe_client = html.escape(delivery.client or "")
+    safe_address = html.escape(delivery.address or "Не вказано")
+    safe_contact = html.escape(delivery.contact or "")
+    safe_phone = html.escape(delivery.phone or "")
+    actor_info = f"\n👤 Менеджер: <b>{html.escape(actor_name)}</b>" if actor_name else ""
+
+    text = (
+        f"📦 <b>Дані Нової Пошти заповнено!</b>\n\n"
+        f"👤 Клієнт: <b>{safe_client}</b>{actor_info}\n"
+        f"📍 Відділення / Адреса: <b>{safe_address}</b>\n"
+        f"📞 Одержувач: <b>{safe_contact} {safe_phone}</b>\n"
+    )
+    if delivery.comment:
+        text += f"📝 Коментар: <i>{html.escape(delivery.comment)}</i>\n"
+
+    for admin_id in ALL_RECIPIENTS:
+        try:
+            msg = await bot.send_message(chat_id=admin_id, text=text, parse_mode="HTML")
+            new_note = DeliveryNotifications(
+                delivery_id=delivery.id,
+                telegram_id=admin_id,
+                message_id=msg.message_id,
+                event_type="np_filled"
+            )
+            await new_note.save().run()
+            logger.info(f"✅ Сповіщення про заповнення НП надіслано логісту/адміну {admin_id}")
+        except Exception as e:
+            logger.error(f"❌ Помилка надсилання сповіщення про заповнення НП отримувачу {admin_id}: {e}")
+
 
 
 

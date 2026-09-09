@@ -38,6 +38,7 @@ from .models import (
     BatchUpdateDeliveryRequest,
     MapLoBRequest,
     ChangeDeliveryDateRequest,
+    RequestNPDetailsRequest,
     CreateCommentRequest,
     UpdateCommentRequest,
     CommentResponse,
@@ -103,7 +104,15 @@ from .nova_poshta import router as nova_poshta_router, call_np_api
 from .bot_handlers import setup_bot_handlers
 from .scheduler import setup_scheduler
 from .utils import send_message_to_managers, create_composite_key_from_dict
-from .delivery_notifications import notify_new_delivery, notify_delivery_status_change, delete_delivery_notifications, notify_delivery_date_change, ALL_RECIPIENTS
+from .delivery_notifications import (
+    notify_new_delivery, 
+    notify_delivery_status_change, 
+    delete_delivery_notifications, 
+    notify_delivery_date_change, 
+    ALL_RECIPIENTS,
+    notify_request_np_details_to_manager,
+    notify_np_details_filled
+)
 from .error_notifier import notify_admins_error
 
 # Импорт TELEGRAM_BOT_TOKEN из config.py для инициализации бота
@@ -1223,6 +1232,104 @@ async def get_telegram_id(id):
         return
 
 
+@app.get("/delivery/get/{id}")
+async def get_delivery_by_id(id: int, X_Telegram_Init_Data: str = Header()):
+    parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
+    if not parsed_init_data:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    delivery = await Deliveries.select().where(Deliveries.id == id).first().run()
+    if not delivery:
+        raise HTTPException(status_code=404, detail="Delivery not found")
+
+    items_list = await DeliveryItems.select().where(DeliveryItems.delivery == id).run()
+    grouped_items = {}
+    for item in items_list:
+        grouping_key = (item.get("order_ref"), item.get("product"))
+        if grouping_key not in grouped_items:
+            grouped_items[grouping_key] = {
+                "order_ref": item.get("order_ref"),
+                "product": item.get("product"),
+                "line_of_business": item.get("line_of_business"),
+                "quantity": item.get("quantity"),
+                "parties": [],
+            }
+        grouped_items[grouping_key]["parties"].append(
+            {"party": item.get("party"), "party_quantity": item.get("party_quantity")}
+        )
+
+    delivery["items"] = list(grouped_items.values())
+
+    client_address = await ClientAddress.select().where(
+        ClientAddress.client == delivery["client"]
+    ).first().run()
+    default_np_data = client_address.get("default_np_data") if client_address else None
+
+    return {
+        "delivery": delivery,
+        "default_np_data": default_np_data,
+        "client_address": client_address
+    }
+
+
+
+@app.post("/delivery/request_np_details", dependencies=[Depends(check_not_guest)])
+async def request_np_details(
+    data: RequestNPDetailsRequest,
+    X_Telegram_Init_Data: str = Header()
+):
+    parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
+    if not parsed_init_data:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    delivery = await Deliveries.objects().where(Deliveries.id == data.delivery_id).first().run()
+    if not delivery:
+        raise HTTPException(status_code=404, detail="Delivery not found")
+
+    delivery.status = "Потрібні дані НП"
+
+    user_name = "Логіст"
+    user_id = None
+    user_data_json = parsed_init_data.get("user")
+    if user_data_json:
+        try:
+            user_obj = json.loads(user_data_json)
+            user_id = user_obj.get("id")
+            first_name = user_obj.get("first_name", "")
+            last_name = user_obj.get("last_name", "")
+            full_name = f"{first_name} {last_name}".strip()
+            if full_name:
+                user_name = full_name
+        except Exception:
+            pass
+
+    if data.comment and data.comment.strip():
+        note = f"\n[Логіст {user_name}]: {data.comment.strip()}"
+        delivery.comment = (delivery.comment or "") + note
+
+    await delivery.save().run()
+
+    # Сповіщення менеджеру з WebApp-кнопкою
+    if delivery.created_by:
+        try:
+            await notify_request_np_details_to_manager(delivery, data.comment)
+        except Exception as e:
+            logger.error(f"Помилка надсилання сповіщення менеджеру по НП: {e}")
+
+    # Сповіщення іншим логістам про зміну статусу
+    try:
+        await notify_delivery_status_change(
+            delivery=delivery,
+            status="Потрібні дані НП",
+            actor_name=user_name,
+            actor_id=user_id
+        )
+    except Exception as e:
+        logger.error(f"Помилка сповіщення логістів про статус 'Потрібні дані НП': {e}")
+
+    return {"status": "success", "message": "Запит успішно надіслано менеджеру"}
+
+
 @app.get("/delivery/get_data_for_delivery")
 async def get_data_for_delivery(X_Telegram_Init_Data: str = Header()):
     parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
@@ -1505,9 +1612,23 @@ async def update_delivery(
         if not delivery_data:
             raise HTTPException(status_code=404, detail="Delivery not found")
 
-        # Оновлюємо TTN, якщо він переданий
+        # Оновлюємо атрибути, якщо вони передані
         if data.ttn is not None:
             delivery_data.ttn = data.ttn
+        if data.total_weight is not None:
+            delivery_data.total_weight = data.total_weight
+        if data.address is not None:
+            delivery_data.address = data.address
+        if data.contact is not None:
+            delivery_data.contact = data.contact
+        if data.phone is not None:
+            delivery_data.phone = data.phone
+        if data.comment is not None:
+            delivery_data.comment = data.comment
+        if data.latitude is not None:
+            delivery_data.latitude = data.latitude
+        if data.longitude is not None:
+            delivery_data.longitude = data.longitude
 
         # 2. Оновлюємо статус, якщо змінився
         if delivery_data.status != data.status:
@@ -1525,12 +1646,18 @@ async def update_delivery(
                     except Exception:
                         pass
 
-                await notify_delivery_status_change(
-                    delivery=delivery_data, 
-                    status=data.status, 
-                    actor_name=data.actor_name,
-                    actor_id=user_id
-                )
+                if old_status == "Потрібні дані НП" and data.status == "Нова Пошта":
+                    await notify_np_details_filled(
+                        delivery=delivery_data,
+                        actor_name=data.actor_name
+                    )
+                else:
+                    await notify_delivery_status_change(
+                        delivery=delivery_data, 
+                        status=data.status, 
+                        actor_name=data.actor_name,
+                        actor_id=user_id
+                    )
             except Exception as e:
                 logger.error(f"Error notifying status change: {e}")
                 warnings.append(f"Помилка сповіщення Telegram: {e}")
@@ -1637,10 +1764,7 @@ async def update_delivery(
                     except Exception as tg_err:
                         logger.warning(f"Error sending ready message: {tg_err}")
 
-        # 3. Оновлюємо вагу та зберігаємо зміни доставки
-        if data.total_weight is not None:
-            delivery_data.total_weight = data.total_weight
-        
+        # 3. Зберігаємо зміни доставки
         await delivery_data.save().run()
 
         # 4. Оновлюємо склад доставки (позиції та партії)

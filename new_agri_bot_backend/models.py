@@ -174,11 +174,22 @@ class UpdateDeliveryRequest(BaseModel):
     items: List[UpdateItem]
     actor_name: Optional[str] = None
     ttn: Optional[str] = None
+    address: Optional[str] = None
+    contact: Optional[str] = None
+    phone: Optional[str] = None
+    comment: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 class ChangeDeliveryDateRequest(BaseModel):
     delivery_id: int
     new_date: str
+
+
+class RequestNPDetailsRequest(BaseModel):
+    delivery_id: int
+    comment: Optional[str] = None
 
 
 class BatchUpdateDeliveryRequest(BaseModel):
