@@ -1,5 +1,6 @@
 from __future__ import annotations
 import csv
+import html
 import json
 import io
 import os
@@ -59,6 +60,9 @@ from .tables import (
     OrderComments,
     ScheduledDeletions,
     ValidWarehouseAdmin,
+    Users,
+    ClientManagerGuide,
+    DetailsForOrders,
 )
 from aiogram.types import FSInputFile
 from fastapi import (
@@ -1415,6 +1419,76 @@ async def map_lobs(data: MapLoBRequest, X_Telegram_Init_Data: str = Header()):
             
     return {"message": "Успішно оновлено", "updated_products": updated_count}
 
+async def resolve_client_manager_user(client_name: str, manager_name: Optional[str] = None) -> Optional[Users]:
+    """
+    Знаходить об'єкт Users для менеджера, закріпленого за клієнтом.
+    1. Якщо manager_name передано і не є заглушкою, використовуємо його.
+    2. Якщо ні, шукаємо в довідниках: ClientManagerGuide, ClientAddress, DetailsForOrders.
+    3. Шукаємо відповідного користувача в Users за full_name_for_orders (точний збіг, ilike, нормалізація).
+    """
+    target_manager = None
+    if manager_name and manager_name.strip():
+        m_stripped = manager_name.strip()
+        if m_stripped.lower() not in ["", "невідомий", "менеджер", "null", "none", "undefined"]:
+            target_manager = m_stripped
+
+    if not target_manager and client_name and client_name.strip():
+        clean_client = client_name.strip()
+        try:
+            guide_record = await ClientManagerGuide.select(ClientManagerGuide.manager).where(
+                ClientManagerGuide.client == clean_client
+            ).first().run()
+            if guide_record and guide_record.get("manager"):
+                target_manager = guide_record["manager"].strip()
+        except Exception as e:
+            logger.error(f"Помилка пошуку менеджера в ClientManagerGuide: {e}")
+
+        if not target_manager:
+            try:
+                addr_record = await ClientAddress.select(ClientAddress.manager).where(
+                    ClientAddress.client == clean_client
+                ).first().run()
+                if addr_record and addr_record.get("manager"):
+                    target_manager = addr_record["manager"].strip()
+            except Exception as e:
+                logger.error(f"Помилка пошуку менеджера в ClientAddress: {e}")
+
+        if not target_manager:
+            try:
+                order_record = await DetailsForOrders.select(DetailsForOrders.manager).where(
+                    DetailsForOrders.client == clean_client
+                ).first().run()
+                if order_record and order_record.get("manager"):
+                    target_manager = order_record["manager"].strip()
+            except Exception as e:
+                logger.error(f"Помилка пошуку менеджера в DetailsForOrders: {e}")
+
+    if not target_manager:
+        return None
+
+    try:
+        # 1. Точний збіг
+        user = await Users.objects().where(Users.full_name_for_orders == target_manager).first().run()
+        if user:
+            return user
+
+        # 2. Збіг без урахування регістру (ilike)
+        user = await Users.objects().where(Users.full_name_for_orders.ilike(target_manager)).first().run()
+        if user:
+            return user
+
+        # 3. Нормалізація пробілів (подвійні пробіли або пробіли по краях)
+        norm_name = " ".join(target_manager.split())
+        if norm_name != target_manager:
+            user = await Users.objects().where(Users.full_name_for_orders.ilike(norm_name)).first().run()
+            if user:
+                return user
+    except Exception as e:
+        logger.error(f"Помилка пошуку менеджера в таблиці Users: {e}")
+
+    return None
+
+
 @app.post("/delivery/send", dependencies=[Depends(check_not_guest)])
 async def send_delivery(
     data: DeliveryRequest, 
@@ -1425,6 +1499,44 @@ async def send_delivery(
     user_info_str = parsed_init_data.get("user")
     user_data = json.loads(user_info_str)
     telegram_id = user_data.get("id")
+
+    # Отримуємо дані користувача з БД для перевірки ролі адміна/логіста
+    user_in_db = await Users.objects().where(Users.telegram_id == telegram_id).first().run()
+    is_admin_or_logist = (
+        telegram_id in ALL_RECIPIENTS or 
+        (user_in_db and getattr(user_in_db, "is_admin", False))
+    )
+
+    effective_created_by = telegram_id
+    effective_manager_name = data.manager
+
+    # Якщо заявку створює адмін або логіст — автором має стати менеджер клієнта
+    if is_admin_or_logist:
+        # Якщо вже передано явний override_created_by і він не є адміном/логістом (наприклад, при спліті)
+        if data.override_created_by and data.override_created_by not in ALL_RECIPIENTS:
+            effective_created_by = data.override_created_by
+        else:
+            manager_user = await resolve_client_manager_user(data.client, data.manager)
+            if manager_user:
+                effective_created_by = manager_user.telegram_id
+                if manager_user.full_name_for_orders:
+                    effective_manager_name = manager_user.full_name_for_orders
+                logger.info(
+                    f"👤 Автор доставки для клієнта '{data.client}' автоматично призначений на менеджера: "
+                    f"{effective_manager_name} (TG ID: {effective_created_by}) замість ініціатора (TG ID: {telegram_id})"
+                )
+            else:
+                logger.warning(
+                    f"⚠️ Не знайдено Telegram-користувача для менеджера '{data.manager}' (клієнт: '{data.client}'). "
+                    f"Автором залишається ініціатор (TG ID: {telegram_id})"
+                )
+    elif data.override_created_by:
+        effective_created_by = data.override_created_by
+
+    actor_display = data.actor_name or (
+        (user_in_db.full_name_for_orders or f"{user_in_db.first_name} {user_in_db.last_name or ''}".strip())
+        if user_in_db else "Логіст / Адміністратор"
+    )
 
     # 1. Формування повідомлення для Telegram
     if data.status == "Самовивіз":
@@ -1437,8 +1549,13 @@ async def send_delivery(
     message_lines = [
         header,
         "",
-        f"👤 Менеджер: {data.manager}",
+        f"👤 Менеджер: {effective_manager_name}",
         f"🚚 Контрагент: <code>{data.client}</code>",
+    ]
+    if telegram_id != effective_created_by:
+        message_lines.append(f"✍️ Створив: {actor_display}")
+
+    message_lines.extend([
         f"📍 Адреса: {data.address}",
         f"👤 Контакт: {data.contact}",
         f"📞 Телефон: {data.phone}",
@@ -1446,7 +1563,7 @@ async def send_delivery(
         f"⚖️ Вага: {data.total_weight} кг",
         f"💬 Коментар: {data.comment}",
         "",
-    ]
+    ])
 
     for order in data.orders:
         message_lines.append(f"📦 <b>Замовлення</b> <code>{order.order}</code>")
@@ -1487,8 +1604,8 @@ async def send_delivery(
         await Events.insert(
             Events(
                 event_id=calendar_id,
-                event_creator=data.override_created_by if data.override_created_by else telegram_id,
-                event_creator_name=data.manager,
+                event_creator=effective_created_by,
+                event_creator_name=effective_manager_name,
                 event_status=0,
                 start_event=date_val,
                 event=data.client,
@@ -1501,7 +1618,7 @@ async def send_delivery(
     try:
         new_delivery = Deliveries(
             client=data.client,
-            manager=data.manager,
+            manager=effective_manager_name,
             address=data.address,
             contact=data.contact,
             phone=data.phone,
@@ -1512,11 +1629,11 @@ async def send_delivery(
             longitude=data.longitude,
             total_weight=data.total_weight,
             status=data.status,
-            created_by=data.override_created_by if data.override_created_by else telegram_id,
+            created_by=effective_created_by,
             calendar_id=calendar_id,
         )
         await new_delivery.save().run()
-        logger.info(f"✅ Основна інформація по доставці ID: {new_delivery.id} збережена.")
+        logger.info(f"✅ Основна інформація по доставці ID: {new_delivery.id} збережена (автор: {effective_created_by}).")
 
         items_to_insert = []
         for order in data.orders:
@@ -1561,11 +1678,18 @@ async def send_delivery(
         raise HTTPException(status_code=500, detail=f"Помилка збереження в БД: {e}")
 
     # 5. Відправка повідомлень власнику та ініціатору
-    owner_id = data.override_created_by if data.override_created_by else telegram_id
+    owner_id = effective_created_by
     if owner_id not in ALL_RECIPIENTS:
         if SEND_NOTIFICATIONS:
             try:
-                await bot.send_message(chat_id=owner_id, text='<b>Ви успішно зареєстрували доставку:</b>', parse_mode='HTML')
+                if telegram_id != owner_id:
+                    owner_header = (
+                        f"ℹ️ <b>Для вашого клієнта зареєстровано доставку!</b>\n"
+                        f"<i>(Ініціатор: {html.escape(actor_display)})</i>\n"
+                    )
+                    await bot.send_message(chat_id=owner_id, text=owner_header, parse_mode='HTML')
+                else:
+                    await bot.send_message(chat_id=owner_id, text='<b>Ви успішно зареєстрували доставку:</b>', parse_mode='HTML')
                 await bot.send_message(chat_id=owner_id, text=message, parse_mode='HTML')
             except Exception as e:
                 logger.error(f'Помилка при сповіщенні власника {owner_id}: {e}')
@@ -1575,7 +1699,7 @@ async def send_delivery(
             try:
                 await bot.send_message(
                     chat_id=telegram_id, 
-                    text='✅ Ви успішно зареєстрували доставку. Дякуємо за роботу!'
+                    text=f'✅ Ви успішно зареєстрували доставку для менеджера {effective_manager_name}. Дякуємо за роботу!'
                 )
             except Exception as e:
                 logger.error(f'Помилка при сповіщенні ініціатора {telegram_id}: {e}')
