@@ -1788,6 +1788,7 @@ async def update_delivery(
                                 quantity=item.quantity,
                                 party=party.party,
                                 party_quantity=party.moved_q,
+                                line_of_business=item.line_of_business,
                             )
                         )
                 else:
@@ -1797,6 +1798,7 @@ async def update_delivery(
                             order_ref=item.order_ref,
                             product=item.product,
                             quantity=item.quantity,
+                            line_of_business=item.line_of_business,
                         )
                     )
 

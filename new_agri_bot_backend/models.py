@@ -165,6 +165,7 @@ class UpdateItem(BaseModel):
     order_ref: Optional[str] = Field(None, alias="orderRef")
     weight: float
     parties: List[UpdateParty]
+    line_of_business: Optional[str] = None
 
 
 class UpdateDeliveryRequest(BaseModel):
