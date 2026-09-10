@@ -395,3 +395,31 @@ class ValidWarehouseAdmin(Table):
     @classmethod
     def get_readable(cls):
         return Readable(template="%s", columns=[cls.name])
+
+
+class Accountants(Table):
+    """Таблиця бухгалтерів"""
+    id = UUID(primary_key=True)
+    name = Varchar(length=255, required=True)
+    email = Varchar(length=255, null=True)
+    telegram_id = BigInt(null=True)
+    telegram_username = Varchar(length=100, null=True)
+    phone = Varchar(length=50, null=True)
+    is_active = Boolean(default=True)
+    is_default = Boolean(default=False)
+
+    @classmethod
+    def get_readable(cls):
+        return Readable(template="%s", columns=[cls.name])
+
+
+class ManagerAccountantGuide(Table):
+    """Таблиця прив'язки менеджерів до бухгалтерів"""
+    id = UUID(primary_key=True)
+    manager = Varchar(length=255, required=True, unique=True, index=True)
+    accountant = ForeignKey(references=Accountants, on_delete=OnDelete.cascade)
+
+    @classmethod
+    def get_readable(cls):
+        return Readable(template="%s", columns=[cls.manager])
+

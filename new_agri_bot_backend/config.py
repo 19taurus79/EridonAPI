@@ -101,3 +101,13 @@ if not TELEGRAM_BOT_TOKEN:
     logger.error("TELEGRAM_BOT_TOKEN not found in environment variables")
 else:
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
+
+# --- Налаштування SMTP (Пошта) ---
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER or "")
+SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "false").lower() == "true"
+

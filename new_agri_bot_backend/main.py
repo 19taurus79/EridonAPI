@@ -63,6 +63,8 @@ from .tables import (
     Users,
     ClientManagerGuide,
     DetailsForOrders,
+    Accountants,
+    ManagerAccountantGuide,
 )
 from aiogram.types import FSInputFile
 from fastapi import (
@@ -156,7 +158,19 @@ admin_allowed_hosts = list({urlparse(origin).hostname for origin in CORS_ORIGINS
 if "localhost" not in admin_allowed_hosts: admin_allowed_hosts.append("localhost")
 if "127.0.0.1" not in admin_allowed_hosts: admin_allowed_hosts.append("127.0.0.1")
 
-admin_router = create_admin([Remains, ValidWarehouseAdmin], allowed_hosts=admin_allowed_hosts)
+admin_router = create_admin(
+    [Remains, ValidWarehouseAdmin, Accountants, ManagerAccountantGuide],
+    allowed_hosts=admin_allowed_hosts
+)
+
+from .models import SendToAccountantRequest
+from .services.accountant_service import (
+    send_accountant_telegram,
+    send_accountant_email,
+    generate_printable_html,
+    generate_mailto_url,
+)
+
 
 sessions = {}
 
@@ -1975,10 +1989,260 @@ async def update_delivery(
             detail=f"Помилка при оновленні доставки: {e}",
         )
 
+
+@app.get("/accountants", dependencies=[Depends(check_not_guest)])
+async def get_accountants(X_Telegram_Init_Data: str = Header()):
+    """Отримати список активних бухгалтерів для вибору в інтерфейсі"""
+    accountants = await Accountants.select(
+        Accountants.id,
+        Accountants.name,
+        Accountants.email,
+        Accountants.telegram_id,
+        Accountants.telegram_username,
+        Accountants.phone,
+        Accountants.is_default
+    ).where(Accountants.is_active == True).run()
+    
+    serialized = []
+    for acc in accountants:
+        serialized.append({
+            "id": str(acc["id"]),
+            "name": acc["name"],
+            "email": acc["email"] or "",
+            "telegram_id": acc["telegram_id"],
+            "telegram_username": acc["telegram_username"] or "",
+            "phone": acc["phone"] or "",
+            "is_default": bool(acc["is_default"])
+        })
+
+    return {"status": "ok", "accountants": serialized}
+
+
+@app.get("/accountants/for-manager", dependencies=[Depends(check_not_guest)])
+async def get_accountant_for_manager(manager: str = Query(...), X_Telegram_Init_Data: str = Header()):
+    """Отримати закріпленого бухгалтера для менеджера або дефолтного"""
+    clean_mgr = manager.strip()
+    link = await ManagerAccountantGuide.objects().where(
+        ManagerAccountantGuide.manager.ilike(clean_mgr)
+    ).first().run()
+
+    accountant = None
+    if link and link.accountant:
+        acc_obj = await Accountants.objects().where(
+            Accountants.id == link.accountant,
+            Accountants.is_active == True
+        ).first().run()
+        if acc_obj:
+            accountant = {
+                "id": str(acc_obj.id),
+                "name": acc_obj.name,
+                "email": acc_obj.email or "",
+                "telegram_id": acc_obj.telegram_id,
+                "telegram_username": acc_obj.telegram_username or "",
+                "phone": acc_obj.phone or "",
+                "is_default": bool(acc_obj.is_default)
+            }
+
+    if not accountant:
+        default_acc = await Accountants.objects().where(
+            Accountants.is_default == True,
+            Accountants.is_active == True
+        ).first().run()
+        if not default_acc:
+            default_acc = await Accountants.objects().where(
+                Accountants.is_active == True
+            ).first().run()
+        if default_acc:
+            accountant = {
+                "id": str(default_acc.id),
+                "name": default_acc.name,
+                "email": default_acc.email or "",
+                "telegram_id": default_acc.telegram_id,
+                "telegram_username": default_acc.telegram_username or "",
+                "phone": default_acc.phone or "",
+                "is_default": bool(default_acc.is_default)
+            }
+
+    return {"status": "ok", "accountant": accountant}
+
+
+@app.post("/delivery/send-to-accountant", dependencies=[Depends(check_not_guest)])
+async def send_delivery_to_accountant(
+    data: SendToAccountantRequest,
+    X_Telegram_Init_Data: str = Header()
+):
+    """
+    Зберігає актуальні партії (якщо передані) та надсилає дані доставки бухгалтеру
+    через обрані канали (Telegram, Email) + повертає посилання mailto для відкриття поштової програми.
+    """
+    delivery = await Deliveries.objects().where(Deliveries.id == data.delivery_id).first().run()
+    if not delivery:
+        raise HTTPException(status_code=404, detail="Доставку не знайдено")
+
+    if data.ttn and data.ttn != delivery.ttn:
+        delivery.ttn = data.ttn
+        await delivery.save().run()
+
+    if data.items is not None:
+        async with DeliveryItems._meta.db.transaction():
+            await DeliveryItems.delete().where(DeliveryItems.delivery == data.delivery_id).run()
+            items_to_insert = []
+            for item in data.items:
+                if (float(item.quantity or 0) <= 0):
+                    continue
+                active_parties = [p for p in item.parties if p.moved_q > 0] if item.parties else []
+                if active_parties:
+                    for party in active_parties:
+                        items_to_insert.append(
+                            DeliveryItems(
+                                delivery=data.delivery_id,
+                                order_ref=item.order_ref,
+                                product=item.product,
+                                quantity=item.quantity,
+                                party=party.party,
+                                party_quantity=party.moved_q,
+                                line_of_business=item.line_of_business,
+                            )
+                        )
+                else:
+                    items_to_insert.append(
+                        DeliveryItems(
+                            delivery=data.delivery_id,
+                            order_ref=item.order_ref,
+                            product=item.product,
+                            quantity=item.quantity,
+                            line_of_business=item.line_of_business,
+                        )
+                    )
+            if items_to_insert:
+                await DeliveryItems.insert(*items_to_insert).run()
+
+    db_items = await DeliveryItems.objects().where(DeliveryItems.delivery == data.delivery_id).run()
+    grouped_items = {}
+    for it in db_items:
+        key = (it.order_ref or "", it.product)
+        if key not in grouped_items:
+            grouped_items[key] = {
+                "order_ref": it.order_ref or "",
+                "product": it.product,
+                "nomenclature": it.product,
+                "quantity": it.quantity,
+                "line_of_business": it.line_of_business,
+                "parties": []
+            }
+        if it.party:
+            grouped_items[key]["parties"].append({
+                "party": it.party,
+                "party_quantity": it.party_quantity or it.quantity,
+                "moved_q": it.party_quantity or it.quantity
+            })
+    items_for_report = list(grouped_items.values())
+
+    accountant = None
+    if data.accountant_id:
+        accountant = await Accountants.objects().where(
+            Accountants.id == data.accountant_id,
+            Accountants.is_active == True
+        ).first().run()
+    
+    if not accountant and delivery.manager:
+        link = await ManagerAccountantGuide.objects().where(
+            ManagerAccountantGuide.manager.ilike(delivery.manager.strip())
+        ).first().run()
+        if link and link.accountant:
+            accountant = await Accountants.objects().where(
+                Accountants.id == link.accountant,
+                Accountants.is_active == True
+            ).first().run()
+
+    if not accountant:
+        accountant = await Accountants.objects().where(
+            Accountants.is_default == True,
+            Accountants.is_active == True
+        ).first().run()
+
+    if not accountant:
+        accountant = await Accountants.objects().where(
+            Accountants.is_active == True
+        ).first().run()
+
+    if not accountant:
+        raise HTTPException(
+            status_code=400,
+            detail="Не знайдено жодного активного бухгалтера в системі. Будь ласка, додайте бухгалтера через панель керування."
+        )
+
+    delivery_dict = {
+        "id": delivery.id,
+        "client": delivery.client,
+        "manager": delivery.manager,
+        "ttn": delivery.ttn,
+        "delivery_date": str(delivery.delivery_date) if delivery.delivery_date else "",
+        "address": delivery.address,
+        "contact": delivery.contact,
+        "phone": delivery.phone,
+        "comment": delivery.comment
+    }
+
+    printable_html = generate_printable_html(delivery_dict, items_for_report, data.comment)
+    mailto_url = generate_mailto_url(accountant.email or "", delivery_dict, items_for_report, data.comment)
+
+    res_tg = {"success": False, "skipped": True}
+    res_mail = {"success": False, "skipped": True}
+    warnings = []
+
+    if "telegram" in data.channels:
+        if accountant.telegram_id:
+            res_tg = await send_accountant_telegram(
+                telegram_id=accountant.telegram_id,
+                delivery_data=delivery_dict,
+                items=items_for_report,
+                printable_html=printable_html,
+                custom_comment=data.comment
+            )
+            if not res_tg.get("success"):
+                warnings.append(f"Telegram: {res_tg.get('error')}")
+        else:
+            res_tg = {"success": False, "error": "Telegram ID не вказано для цього бухгалтера"}
+            warnings.append("Telegram ID не вказано для обраного бухгалтера")
+
+    if "email" in data.channels:
+        if accountant.email:
+            res_mail = await send_accountant_email(
+                to_email=accountant.email,
+                delivery_data=delivery_dict,
+                items=items_for_report,
+                printable_html=printable_html,
+                custom_comment=data.comment
+            )
+            if not res_mail.get("success") and not res_mail.get("skipped"):
+                warnings.append(f"Email: {res_mail.get('error')}")
+        else:
+            res_mail = {"success": False, "error": "Email не вказано для цього бухгалтера"}
+            warnings.append("Email не вказано для обраного бухгалтера")
+
+    return {
+        "status": "ok",
+        "accountant": {
+            "id": str(accountant.id),
+            "name": accountant.name,
+            "email": accountant.email,
+            "telegram_id": accountant.telegram_id,
+            "telegram_username": accountant.telegram_username
+        },
+        "telegram": res_tg,
+        "email": res_mail,
+        "mailto_url": mailto_url,
+        "warnings": warnings,
+        "printable_html": printable_html
+    }
+
+
 async def update_delivery_date(
     data: ChangeDeliveryDateRequest,
     user: dict = Depends(get_current_telegram_user)
 ):
+
     """
     Оновлює дату доставки, оновлює подію в Google Calendar та відправляє повідомлення менеджеру.
     """

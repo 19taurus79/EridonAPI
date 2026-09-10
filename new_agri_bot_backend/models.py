@@ -329,3 +329,13 @@ class ClientData(BaseModel):
     deliveryAddress: Optional[str]
     contactPerson: Optional[str]
     deliveryDate: Optional[str]
+
+
+class SendToAccountantRequest(BaseModel):
+    delivery_id: int
+    accountant_id: Optional[str] = None
+    channels: List[str] = ["telegram", "email"]
+    comment: Optional[str] = None
+    items: Optional[List[UpdateItem]] = None
+    ttn: Optional[str] = None
+
