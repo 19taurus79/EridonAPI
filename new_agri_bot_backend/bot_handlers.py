@@ -60,3 +60,54 @@ def setup_bot_handlers(dp: Dispatcher):
             await callback.answer()
         except Exception:
             pass
+
+    @dp.callback_query(F.data.startswith("np_remind:done:"))
+    async def handle_np_remind_done(callback: CallbackQuery):
+        """Обробник кнопки 'Готово' у нагадуванні по доставці НП"""
+        reminder_id_str = callback.data.split(":", 2)[2]
+        try:
+            reminder_id = int(reminder_id_str)
+            from .tables import DeliveryReminders
+            rem = await DeliveryReminders.objects().where(DeliveryReminders.id == reminder_id).first().run()
+            if rem:
+                rem.status = "done"
+                await rem.save().run()
+        except Exception as e:
+            logger.error(f"Помилка оновлення статусу нагадування {reminder_id_str}: {e}")
+
+        try:
+            await callback.message.delete()
+        except Exception as e:
+            logger.warning(f"Не вдалося видалити повідомлення нагадування: {e}")
+
+        try:
+            await callback.answer("✅ Нагадування закрито!")
+        except Exception:
+            pass
+
+    @dp.callback_query(F.data.startswith("np_remind:delay:"))
+    async def handle_np_remind_delay(callback: CallbackQuery):
+        """Обробник кнопки 'Перенести' у нагадуванні по доставці НП (переносить на 15 хв)"""
+        reminder_id_str = callback.data.split(":", 2)[2]
+        try:
+            reminder_id = int(reminder_id_str)
+            from datetime import datetime, timedelta
+            from .tables import DeliveryReminders
+            rem = await DeliveryReminders.objects().where(DeliveryReminders.id == reminder_id).first().run()
+            if rem:
+                rem.remind_at = datetime.now() + timedelta(minutes=15)
+                rem.status = "pending"
+                rem.message_id = None
+                await rem.save().run()
+        except Exception as e:
+            logger.error(f"Помилка перенесення нагадування {reminder_id_str}: {e}")
+
+        try:
+            await callback.message.delete()
+        except Exception as e:
+            logger.warning(f"Не вдалося видалити повідомлення при перенесенні: {e}")
+
+        try:
+            await callback.answer("⏰ Нагадування перенесено на 15 хвилин", show_alert=False)
+        except Exception:
+            pass

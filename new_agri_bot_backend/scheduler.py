@@ -128,7 +128,11 @@ def setup_scheduler():
     from .delivery_notifications import check_urgent_pickups_and_notify
     scheduler.add_job(check_urgent_pickups_and_notify, 'interval', minutes=5, misfire_grace_time=60, coalesce=True)
 
+    # Перевірка та відправка нагадувань по доставках НП (щохвилини)
+    from .services.delivery_reminder_service import process_due_reminders
+    scheduler.add_job(process_due_reminders, 'interval', minutes=1, misfire_grace_time=30, coalesce=True)
+
     scheduler.start()
-    logger.info("Scheduler started with cleanup, summary, supplement check, delivery status check, and urgent pickup check jobs.")
+    logger.info("Scheduler started with cleanup, summary, supplement check, delivery status check, urgent pickup check, and NP reminder jobs.")
 
 

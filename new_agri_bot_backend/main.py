@@ -1769,8 +1769,10 @@ async def update_delivery(
             delivery_data.longitude = data.longitude
 
         # 2. Оновлюємо статус, якщо змінився
+        status_changed = False
+        old_status = delivery_data.status
         if delivery_data.status != data.status:
-            old_status = delivery_data.status
+            status_changed = True
             delivery_data.status = data.status
             
             # Повідомлення про зміну статусу
@@ -1814,6 +1816,12 @@ async def update_delivery(
 
             # Додаткові сповіщення менеджеру та логістам/адмінам при певних статусах
             if data.status == 'Виконано':
+                try:
+                    from .services.delivery_reminder_service import cancel_np_reminder
+                    await cancel_np_reminder(delivery_data.id)
+                except Exception as rem_err:
+                    logger.warning(f"Error cancelling np reminder: {rem_err}")
+
                 try:
                     items_list = [
                         f"🔹 {item.product}: <b>{item.quantity}</b>"
@@ -1952,6 +1960,23 @@ async def update_delivery(
 
         # Надіслати сповіщення менеджеру про взяття в роботу (робиться в кінці, коли DeliveryItems вже збережені)
         if data.status == 'В роботі':
+            # Планування нагадування для Нової Пошти через 15 хвилин
+            if status_changed:
+                try:
+                    from .services.delivery_reminder_service import is_np_delivery, schedule_np_reminder
+                    if is_np_delivery(delivery_data, old_status):
+                        user_data_json = parsed_init_data.get("user")
+                        taker_id = None
+                        if user_data_json:
+                            try:
+                                taker_id = json.loads(user_data_json).get("id")
+                            except Exception:
+                                pass
+                        if taker_id:
+                            await schedule_np_reminder(delivery_data.id, taker_id, delay_minutes=15)
+                except Exception as rem_err:
+                    logger.warning(f"Error scheduling np reminder: {rem_err}")
+
             if delivery_data.created_by:
                 try:
                     from .utils import format_delivery_final_data
@@ -2369,6 +2394,21 @@ async def batch_update_deliveries(
                     delivery.status = data.status
                     changes.append(f"статус: {old_status} ➔ <b>{data.status}</b>")
                     
+                    # Нагадування для Нової Пошти
+                    if data.status == "В роботі":
+                        try:
+                            from .services.delivery_reminder_service import is_np_delivery, schedule_np_reminder
+                            if is_np_delivery(delivery, old_status):
+                                await schedule_np_reminder(delivery.id, user_id, delay_minutes=15)
+                        except Exception as rem_err:
+                            logger.warning(f"Error scheduling np reminder in batch: {rem_err}")
+                    elif data.status == "Виконано":
+                        try:
+                            from .services.delivery_reminder_service import cancel_np_reminder
+                            await cancel_np_reminder(delivery.id)
+                        except Exception as rem_err:
+                            logger.warning(f"Error cancelling np reminder in batch: {rem_err}")
+
                     # Google Calendar color update
                     if delivery.calendar_id:
                         cal_status = 2 if data.status == "Виконано" else 1

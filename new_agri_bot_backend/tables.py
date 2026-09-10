@@ -390,6 +390,18 @@ class ScheduledDeletions(Table):
     created_at = Timestamp(default=TimestampNow())
 
 
+class DeliveryReminders(Table):
+    """Таблиця для нагадувань по доставках (наприклад, перевірка переміщень Нової Пошти)"""
+    delivery_id = BigInt(index=True)
+    telegram_id = BigInt(index=True)
+    reminder_type = Varchar(length=50, default="np_movement_check")
+    remind_at = Timestamp()
+    message_id = BigInt(null=True)
+    status = Varchar(length=20, default="pending")  # 'pending', 'sent', 'done', 'cancelled'
+    created_at = Timestamp(default=TimestampNow())
+    updated_at = Timestamp(auto_update=datetime.now)
+
+
 class ValidWarehouseAdmin(Table):
     """Таблиця для валідних складів (Налаштування)"""
     id = UUID(primary_key=True)
