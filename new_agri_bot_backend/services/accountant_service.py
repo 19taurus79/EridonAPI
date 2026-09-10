@@ -87,61 +87,57 @@ def generate_printable_html(delivery_data: dict, items: list, custom_comment: st
         }}
         .header {{
             text-align: center;
-            border-bottom: 2px solid #222;
+            border-bottom: 2px solid #0284c7;
             padding-bottom: 12px;
-            margin-bottom: 15px;
+            margin-bottom: 20px;
         }}
-        .header h2 {{
-            margin: 0 0 5px 0;
-            font-size: 18px;
-            text-transform: uppercase;
+        h2 {{
+            margin: 0 0 6px 0;
+            color: #0f172a;
+            font-size: 20px;
         }}
-        .header .meta {{
-            font-size: 12px;
-            color: #555;
+        .meta {{
+            font-size: 13px;
+            color: #64748b;
         }}
         .info-grid {{
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 8px 20px;
-            margin-bottom: 15px;
-            background: #fdfdfd;
-            border: 1px solid #e2e2e2;
-            padding: 12px;
-            border-radius: 4px;
-        }}
-        .info-row {{
-            font-size: 13px;
+            gap: 10px;
+            background: #f8fafc;
+            padding: 14px;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            margin-bottom: 20px;
+            font-size: 14px;
         }}
         .info-row strong {{
-            color: #333;
+            color: #475569;
         }}
         .ttn-badge {{
-            font-size: 14px;
-            font-weight: bold;
-            color: #d63384;
-            background: #ffeef0;
-            padding: 2px 6px;
-            border-radius: 4px;
             display: inline-block;
+            background: #e0f2fe;
+            color: #0369a1;
+            font-weight: bold;
+            padding: 2px 8px;
+            border-radius: 4px;
+            letter-spacing: 0.5px;
         }}
         table {{
             width: 100%;
             border-collapse: collapse;
-            margin-top: 10px;
-            margin-bottom: 20px;
+            margin-bottom: 30px;
+            font-size: 13px;
         }}
         th, td {{
-            border: 1px solid #ccc;
-            padding: 7px 10px;
-            vertical-align: middle;
+            border: 1px solid #cbd5e1;
+            padding: 8px 10px;
+            text-align: left;
         }}
         th {{
-            background-color: #f2f2f2;
+            background-color: #f1f5f9;
+            color: #334155;
             font-weight: 600;
-            text-align: left;
-            font-size: 12px;
-            text-transform: uppercase;
         }}
         .signatures {{
             margin-top: 40px;
@@ -165,13 +161,13 @@ def generate_printable_html(delivery_data: dict, items: list, custom_comment: st
 </head>
 <body>
     <div class="header">
-        <h2>Відомість на відвантаження (Нова Пошта)</h2>
+        <h2>Відомість на відвантаження{title_suffix}</h2>
         <div class="meta">Згенеровано з автоматизованої системи логістики | Дата: {date}</div>
     </div>
 
     <div class="info-grid">
         <div class="info-row"><strong>Клієнт:</strong> {client}</div>
-        <div class="info-row"><strong>Номер ТТН:</strong> <span class="ttn-badge">{ttn}</span></div>
+        {f'<div class="info-row"><strong>Номер ТТН:</strong> <span class="ttn-badge">{ttn}</span></div>' if has_ttn else '<div class="info-row"><strong>Тип:</strong> Доставка / Відвантаження</div>'}
         <div class="info-row"><strong>Менеджер:</strong> {manager}</div>
         <div class="info-row"><strong>Дата відвантаження:</strong> {date}</div>
         <div class="info-row"><strong>Адреса / Відділення:</strong> {address}</div>
@@ -223,11 +219,11 @@ def generate_mailto_url(accountant_email: str, delivery_data: dict, items: list,
     Формує посилання mailto для відкриття поштової програми за замовчуванням (Outlook, Thunderbird тощо)
     """
     client = delivery_data.get("client") or ""
-    ttn = delivery_data.get("ttn") or ""
+    ttn = (delivery_data.get("ttn") or "").strip()
     manager = delivery_data.get("manager") or ""
     date = delivery_data.get("delivery_date") or delivery_data.get("date") or ""
     
-    subject = f"Відомість на відвантаження Нова Пошта: ТТН {ttn} ({client})"
+    subject = format_delivery_subject(delivery_data)
     
     items_lines = []
     for it in items:
@@ -249,16 +245,19 @@ def generate_mailto_url(accountant_email: str, delivery_data: dict, items: list,
 
     items_text = "\n".join(items_lines) if items_lines else "(товари не вказані)"
     
+    is_np = bool(ttn and ttn != "Не вказано")
+    delivery_type_str = "Нова Пошта" if is_np else "Доставка / Самовивіз"
+    ttn_line = f"- ТТН Нова Пошта: {ttn}\n" if is_np else ""
+
     body = f"""Доброго дня!
 
-Інформація щодо відвантаження Новою Поштою:
+Інформація щодо відвантаження ({delivery_type_str}):
 - Клієнт: {client}
 - Менеджер: {manager}
-- ТТН Нова Пошта: {ttn}
-- Дата: {date}
+{ttn_line}- Дата: {date}
 - Адреса: {delivery_data.get("address") or "—"}
 
-Товари та партії:
+Товари та складські партії:
 {items_text}
 """
     if custom_comment:
@@ -286,7 +285,7 @@ async def send_accountant_telegram(
 
     client = html.escape(str(delivery_data.get("client") or ""))
     manager = html.escape(str(delivery_data.get("manager") or ""))
-    ttn = html.escape(str(delivery_data.get("ttn") or ""))
+    ttn = (delivery_data.get("ttn") or "").strip()
     date = html.escape(str(delivery_data.get("delivery_date") or delivery_data.get("date") or ""))
     address = html.escape(str(delivery_data.get("address") or ""))
 
@@ -310,21 +309,31 @@ async def send_accountant_telegram(
 
     items_text = "\n".join(items_list) if items_list else "<i>(товари не вказані)</i>"
 
+    is_np = bool(ttn and ttn != "Не вказано")
+    if is_np:
+        header_title = f"📦 <b>[Нова Пошта] ВІДОМІСТЬ НА ВІДВАНТАЖЕННЯ</b>"
+        ttn_info = f"📦 <b>ТТН:</b> <code>{html.escape(ttn)}</code>\n"
+        tracking_link = f"\n🔗 <a href=\"https://novaposhta.ua/tracking/{html.escape(ttn)}\">Відстежити на сайті Нової Пошти</a>"
+    else:
+        header_title = f"🚚 <b>[Доставка] ВІДОМІСТЬ НА ВІДВАНТАЖЕННЯ</b>"
+        ttn_info = ""
+        tracking_link = ""
+
     caption_text = (
-        f"📋 <b>Відомість на відвантаження (Нова Пошта)</b>\n\n"
+        f"{header_title}\n\n"
         f"👤 <b>Клієнт:</b> {client}\n"
         f"👨‍💼 <b>Менеджер:</b> {manager}\n"
-        f"📦 <b>ТТН:</b> <code>{ttn}</code>\n"
+        f"{ttn_info}"
         f"📅 <b>Дата:</b> {date}\n"
         f"📍 <b>Адреса:</b> {address}\n\n"
-        f"📦 <b>Товари та партії:</b>\n{items_text}\n"
+        f"📋 <b>Товари та партії:</b>\n{items_text}\n"
     )
 
     if custom_comment:
         caption_text += f"\n💬 <b>Коментар:</b> {html.escape(custom_comment)}\n"
 
-    if ttn:
-        caption_text += f"\n🔗 <a href=\"https://novaposhta.ua/tracking/{ttn}\">Відстежити на сайті Нової Пошти</a>"
+    if tracking_link:
+        caption_text += tracking_link
 
     try:
         # 1. Надсилаємо текстове повідомлення
@@ -337,14 +346,15 @@ async def send_accountant_telegram(
 
         # 2. Надсилаємо вкладений файл друкованої форми HTML
         html_bytes = printable_html.encode("utf-8")
+        file_tag = ttn if is_np else str(delivery_data.get('id') or 'delivery')
         doc_file = BufferedInputFile(
             file=html_bytes,
-            filename=f"Vidomist_NP_{ttn or 'delivery'}.html"
+            filename=f"Vidomist_{file_tag}.html"
         )
         await bot.send_document(
             chat_id=telegram_id,
             document=doc_file,
-            caption=f"📄 Друкована форма відомості (ТТН: {ttn})"
+            caption=f"📄 Друкована форма відомості ({'ТТН: ' + ttn if is_np else client})"
         )
         return {"success": True}
     except Exception as e:
@@ -369,14 +379,15 @@ def _send_email_sync(to_email: str, subject: str, html_body: str, attachment_con
     att.add_header("Content-Disposition", "attachment", filename=filename)
     msg.attach(att)
 
+    # Надсилання через SMTP
     if SMTP_USE_SSL:
         server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=15)
     else:
         server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15)
+        if SMTP_USE_TLS:
+            server.starttls()
 
     try:
-        if SMTP_USE_TLS and not SMTP_USE_SSL:
-            server.starttls()
         if SMTP_USER and SMTP_PASSWORD:
             server.login(SMTP_USER, SMTP_PASSWORD)
         server.send_message(msg)
@@ -405,10 +416,11 @@ async def send_accountant_email(
             "skipped": True
         }
 
-    client = delivery_data.get("client") or ""
-    ttn = delivery_data.get("ttn") or ""
-    subject = f"Відомість на відвантаження Нова Пошта: ТТН {ttn} ({client})"
-    filename = f"Vidomist_NP_{ttn or 'delivery'}.html"
+    ttn = (delivery_data.get("ttn") or "").strip()
+    is_np = bool(ttn and ttn != "Не вказано")
+    subject = format_delivery_subject(delivery_data)
+    file_tag = ttn if is_np else str(delivery_data.get('id') or 'delivery')
+    filename = f"Vidomist_{file_tag}.html"
 
     try:
         await asyncio.to_thread(
