@@ -154,6 +154,10 @@ class Users(Table):
     full_name_for_orders = Varchar()
     status_message_id = Integer(null=True)
 
+    @classmethod
+    def get_readable(cls):
+        return Readable(template="%s", columns=[cls.full_name_for_orders])
+
 
 class ClientManagerGuide(Table):
     id = BigInt(primary_key=True)
@@ -416,10 +420,10 @@ class Accountants(Table):
 class ManagerAccountantGuide(Table):
     """Таблиця прив'язки менеджерів до бухгалтерів"""
     id = UUID(primary_key=True)
-    manager = Varchar(length=255, required=True, unique=True, index=True)
+    manager = ForeignKey(references=Users, on_delete=OnDelete.cascade)
     accountant = ForeignKey(references=Accountants, on_delete=OnDelete.cascade)
 
     @classmethod
     def get_readable(cls):
-        return Readable(template="%s", columns=[cls.manager])
+        return Readable(template="%s -> %s", columns=[cls.manager.full_name_for_orders, cls.accountant.name])
 

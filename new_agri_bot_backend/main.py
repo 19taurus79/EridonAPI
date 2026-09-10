@@ -159,7 +159,7 @@ if "localhost" not in admin_allowed_hosts: admin_allowed_hosts.append("localhost
 if "127.0.0.1" not in admin_allowed_hosts: admin_allowed_hosts.append("127.0.0.1")
 
 admin_router = create_admin(
-    [Remains, ValidWarehouseAdmin, Accountants, ManagerAccountantGuide],
+    [Remains, ValidWarehouseAdmin, Users, Accountants, ManagerAccountantGuide],
     allowed_hosts=admin_allowed_hosts
 )
 
@@ -2022,9 +2022,20 @@ async def get_accountants(X_Telegram_Init_Data: str = Header()):
 async def get_accountant_for_manager(manager: str = Query(...), X_Telegram_Init_Data: str = Header()):
     """Отримати закріпленого бухгалтера для менеджера або дефолтного"""
     clean_mgr = manager.strip()
-    link = await ManagerAccountantGuide.objects().where(
-        ManagerAccountantGuide.manager.ilike(clean_mgr)
-    ).first().run()
+    user = None
+    if clean_mgr.isdigit():
+        user = await Users.objects().where(Users.telegram_id == int(clean_mgr)).first().run()
+    if not user:
+        user = await Users.objects().where(
+            (Users.full_name_for_orders.ilike(clean_mgr)) |
+            (Users.username.ilike(clean_mgr.lstrip('@')))
+        ).first().run()
+
+    link = None
+    if user:
+        link = await ManagerAccountantGuide.objects().where(
+            ManagerAccountantGuide.manager == user.telegram_id
+        ).first().run()
 
     accountant = None
     if link and link.accountant:
@@ -2146,14 +2157,25 @@ async def send_delivery_to_accountant(
         ).first().run()
     
     if not accountant and delivery.manager:
-        link = await ManagerAccountantGuide.objects().where(
-            ManagerAccountantGuide.manager.ilike(delivery.manager.strip())
-        ).first().run()
-        if link and link.accountant:
-            accountant = await Accountants.objects().where(
-                Accountants.id == link.accountant,
-                Accountants.is_active == True
+        mgr_str = delivery.manager.strip()
+        user = None
+        if mgr_str.isdigit():
+            user = await Users.objects().where(Users.telegram_id == int(mgr_str)).first().run()
+        if not user:
+            user = await Users.objects().where(
+                (Users.full_name_for_orders.ilike(mgr_str)) |
+                (Users.username.ilike(mgr_str.lstrip('@')))
             ).first().run()
+
+        if user:
+            link = await ManagerAccountantGuide.objects().where(
+                ManagerAccountantGuide.manager == user.telegram_id
+            ).first().run()
+            if link and link.accountant:
+                accountant = await Accountants.objects().where(
+                    Accountants.id == link.accountant,
+                    Accountants.is_active == True
+                ).first().run()
 
     if not accountant:
         accountant = await Accountants.objects().where(
