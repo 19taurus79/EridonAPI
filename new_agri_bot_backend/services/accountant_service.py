@@ -29,7 +29,10 @@ def generate_printable_html(delivery_data: dict, items: list, custom_comment: st
     """
     client = html.escape(str(delivery_data.get("client") or "Не вказано"))
     manager = html.escape(str(delivery_data.get("manager") or "Не вказано"))
-    ttn = html.escape(str(delivery_data.get("ttn") or "Не вказано"))
+    raw_ttn = str(delivery_data.get("ttn") or "").strip()
+    has_ttn = bool(raw_ttn and raw_ttn != "Не вказано")
+    ttn = html.escape(raw_ttn if has_ttn else "Не вказано")
+    title_suffix = f" (ТТН {ttn})" if has_ttn else ""
     address = html.escape(str(delivery_data.get("address") or "Не вказано"))
     contact = html.escape(str(delivery_data.get("contact") or ""))
     phone = html.escape(str(delivery_data.get("phone") or ""))
@@ -180,7 +183,7 @@ def generate_printable_html(delivery_data: dict, items: list, custom_comment: st
         <thead>
             <tr>
                 <th style="width: 4%; text-align: center;">№</th>
-                <th style="width: 16%;">Заявка</th>
+                <th style="width: 16%;">Доповнення</th>
                 <th style="width: 40%;">Товар / Номенклатура</th>
                 <th style="width: 12%; text-align: center;">К-сть</th>
                 <th style="width: 28%;">Складські партії</th>
@@ -214,6 +217,19 @@ def generate_printable_html(delivery_data: dict, items: list, custom_comment: st
     return html_content
 
 
+def format_delivery_subject(delivery_data: dict) -> str:
+    """Формує тему листа для бухгалтера"""
+    client = str(delivery_data.get("client") or "")
+    ttn = str(delivery_data.get("ttn") or "").strip()
+    manager = str(delivery_data.get("manager") or "")
+    date = str(delivery_data.get("delivery_date") or delivery_data.get("date") or "")
+    mgr_part = f" | Менеджер: {manager}" if manager else ""
+    is_np = bool(ttn and ttn != "Не вказано")
+    if is_np:
+        return f"[Нова Пошта] Відомість: {client} | ТТН {ttn}{mgr_part}"
+    return f"[Доставка] Відомість: {client} | Дата: {date}{mgr_part}"
+
+
 def generate_mailto_url(accountant_email: str, delivery_data: dict, items: list, custom_comment: str = None) -> str:
     """
     Формує посилання mailto для відкриття поштової програми за замовчуванням (Outlook, Thunderbird тощо)
@@ -228,6 +244,8 @@ def generate_mailto_url(accountant_email: str, delivery_data: dict, items: list,
     items_lines = []
     for it in items:
         prod = it.get("nomenclature") or it.get("product") or ""
+        order_ref = str(it.get("order_ref") or it.get("orderRef") or it.get("order") or "").strip()
+        order_part = f" [Доповнення: {order_ref}]" if order_ref and order_ref != "—" else ""
         qty = it.get("quantity") or 0
         parties = it.get("parties") or []
         p_strs = []
@@ -241,7 +259,7 @@ def generate_mailto_url(accountant_email: str, delivery_data: dict, items: list,
             elif isinstance(p, str):
                 p_strs.append(p)
         parties_part = f" [Партії: {', '.join(p_strs)}]" if p_strs else ""
-        items_lines.append(f"• {prod} — {qty} шт{parties_part}")
+        items_lines.append(f"• {prod}{order_part} — {qty} шт{parties_part}")
 
     items_text = "\n".join(items_lines) if items_lines else "(товари не вказані)"
     
@@ -292,6 +310,8 @@ async def send_accountant_telegram(
     items_list = []
     for item in items:
         prod = html.escape(str(item.get("nomenclature") or item.get("product") or ""))
+        order_ref = str(item.get("order_ref") or item.get("orderRef") or item.get("order") or "").strip()
+        order_ref_part = f"\n   📄 <i>Доповнення: <code>{html.escape(order_ref)}</code></i>" if order_ref and order_ref != "—" else ""
         qty = item.get("quantity") or 0
         parties = item.get("parties") or []
         p_strs = []
@@ -305,7 +325,7 @@ async def send_accountant_telegram(
             elif isinstance(p, str):
                 p_strs.append(html.escape(p))
         parties_part = f"\n   ↳ <i>Партії: {', '.join(p_strs)}</i>" if p_strs else ""
-        items_list.append(f"▫️ <b>{prod}</b> — <b>{qty}</b> шт{parties_part}")
+        items_list.append(f"▫️ <b>{prod}</b> — <b>{qty}</b> шт{order_ref_part}{parties_part}")
 
     items_text = "\n".join(items_list) if items_list else "<i>(товари не вказані)</i>"
 
