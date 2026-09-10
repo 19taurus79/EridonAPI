@@ -2,6 +2,21 @@ from piccolo.apps.migrations.auto.migration_manager import MigrationManager
 from piccolo.columns.column_types import Boolean, BigInt, ForeignKey, UUID, Varchar, OnDelete, OnUpdate
 from piccolo.columns.defaults.uuid import UUID4
 from piccolo.columns.indexes import IndexMethod
+from piccolo.table import Table
+
+
+class Accountants(Table, tablename="accountants", schema=None):
+    id = UUID(
+        default=UUID4(),
+        null=False,
+        primary_key=True,
+        unique=False,
+        index=False,
+        index_method=IndexMethod.btree,
+        choices=None,
+        db_column_name=None,
+        secret=False,
+    )
 
 
 ID = "2026-09-09T18:30:00:000000"
@@ -253,10 +268,10 @@ async def forwards():
         column_class_name="ForeignKey",
         column_class=ForeignKey,
         params={
-            "references": "Accountants",
+            "references": Accountants,
             "on_delete": OnDelete.cascade,
             "on_update": OnUpdate.cascade,
-            "target_column": "id",
+            "target_column": None,
             "null": False,
             "primary_key": False,
             "unique": False,
