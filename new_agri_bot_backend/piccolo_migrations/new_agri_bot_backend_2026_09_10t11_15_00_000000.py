@@ -27,12 +27,16 @@ async def forwards():
         migration_id=ID, app_name="new_agri_bot_backend", description=DESCRIPTION
     )
 
-    manager.drop_column(
-        table_class_name="ManagerAccountantGuide",
-        tablename="manager_accountant_guide",
-        column_name="manager",
-        db_column_name="manager",
-    )
+    async def drop_old_manager_column():
+        from piccolo.engine.finder import engine_finder
+        engine = engine_finder()
+        if engine:
+            await engine.run_ddl(
+                "ALTER TABLE manager_accountant_guide DROP COLUMN IF EXISTS manager CASCADE;"
+            )
+
+    # Спочатку видаляємо стару varchar-колонку в транзакції перед додаванням ForeignKey
+    manager.add_raw(drop_old_manager_column)
 
     manager.add_column(
         table_class_name="ManagerAccountantGuide",
