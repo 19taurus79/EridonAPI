@@ -190,3 +190,12 @@ async def validate_ttn(ttn: str):
         return {"success": False, "errors": ["ТТН не знайдено (Статус 3)"], "data": []}
         
     return {"success": True, "data": results[0]}
+
+
+@router.post("/check-tracking", dependencies=[Depends(check_not_guest)])
+async def trigger_check_np_deliveries():
+    """Manual trigger for NP deliveries status tracking"""
+    import asyncio
+    from .services.np_tracking_service import check_np_deliveries_status
+    asyncio.create_task(check_np_deliveries_status())
+    return {"status": "ok", "message": "NP deliveries tracking check triggered in background."}

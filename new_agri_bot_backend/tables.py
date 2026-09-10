@@ -333,6 +333,10 @@ class Deliveries(Table):
     created_at = Timestamp(default=TimestampNow())
     calendar_id = Varchar(null=True)
     ttn = Varchar(length=255, null=True)
+    is_received = Boolean(default=False, index=True)
+    received_at = Timestamp(null=True)
+    np_status = Varchar(length=255, null=True)
+    np_status_code = Varchar(length=10, null=True)
 
 
 # Таблица товаров в доставке
