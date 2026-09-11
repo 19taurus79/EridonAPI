@@ -32,6 +32,7 @@ def _normalize_orders_data(delivery_data: dict, orders: list = None, items: list
             "client": "Назва клієнта",
             "manager": "Менеджер",
             "address": "Адреса",
+            "comment": "Примітка конкретної заявки",
             "items": [ ... ]
         }, ...
     ]
@@ -58,6 +59,7 @@ def _normalize_orders_data(delivery_data: dict, orders: list = None, items: list
                 "client": str(o_dict.get("client") or delivery_data.get("client") or "Не вказано").strip(),
                 "manager": str(o_dict.get("manager") or delivery_data.get("manager") or "").strip(),
                 "address": str(o_dict.get("address") or delivery_data.get("address") or "").strip(),
+                "comment": str(o_dict.get("comment") or "").strip(),
                 "items": items_list
             })
         return normalized
@@ -70,6 +72,8 @@ def _normalize_orders_data(delivery_data: dict, orders: list = None, items: list
         client = str(it_dict.get("client") or delivery_data.get("client") or "Не вказано").strip()
         manager = str(it_dict.get("manager") or delivery_data.get("manager") or "").strip()
         address = str(it_dict.get("address") or delivery_data.get("address") or "").strip()
+        item_comment = str(it_dict.get("comment") or "").strip()
+
         key = (client, o_ref)
         if key not in grouped:
             grouped[key] = {
@@ -77,8 +81,12 @@ def _normalize_orders_data(delivery_data: dict, orders: list = None, items: list
                 "client": client,
                 "manager": manager,
                 "address": address,
+                "comment": item_comment,
                 "items": []
             }
+        elif not grouped[key]["comment"] and item_comment:
+            grouped[key]["comment"] = item_comment
+
         grouped[key]["items"].append(it_dict)
     return list(grouped.values())
 
@@ -128,7 +136,7 @@ def format_delivery_subject(delivery_data: dict, orders: list = None) -> str:
 def generate_printable_html(delivery_data: dict, orders: list = None, custom_comment: str = None, items: list = None) -> str:
     """
     Генерує чистий HTML-документ печаткової форми відомості відвантаження
-    зі структурованою групуванням по Доповненнях та Клієнтах.
+    зі структурованим групуванням по Доповненнях та Клієнтах.
     """
     orders_data = _normalize_orders_data(delivery_data, orders, items)
 
@@ -137,7 +145,6 @@ def generate_printable_html(delivery_data: dict, orders: list = None, custom_com
     ttn = html.escape(raw_ttn if has_ttn else "Не вказано")
     title_suffix = f" (ТТН {ttn})" if has_ttn else ""
     date = html.escape(str(delivery_data.get("delivery_date") or delivery_data.get("date") or ""))
-    comment = html.escape(str(delivery_data.get("comment") or ""))
     additional_note = html.escape(str(custom_comment or ""))
 
     # Збираємо унікальних клієнтів та менеджерів для загальної шапки
@@ -160,26 +167,23 @@ def generate_printable_html(delivery_data: dict, orders: list = None, custom_com
     managers_header_str = ", ".join([html.escape(m) for m in unique_managers]) if unique_managers else "Не вказано"
 
     orders_count = len(orders_data)
-    total_qty = 0
     total_items_count = 0
     sections_html = []
 
-    for order_idx, order in enumerate(orders_data, 1):
+    for order in orders_data:
         order_ref = html.escape(str(order.get("order_ref") or "—"))
         order_client = html.escape(str(order.get("client") or "Не вказано"))
         order_manager = html.escape(str(order.get("manager") or ""))
         order_address = html.escape(str(order.get("address") or ""))
+        order_comment = html.escape(str(order.get("comment") or ""))
 
         order_items = order.get("items") or []
-        order_qty = 0
         order_rows = []
 
         for item_idx, it in enumerate(order_items, 1):
             total_items_count += 1
             prod = html.escape(str(it.get("nomenclature") or it.get("product") or ""))
             qty = float(it.get("quantity") or 0)
-            order_qty += qty
-            total_qty += qty
 
             parties = it.get("parties") or []
             parties_str_list = []
@@ -215,18 +219,10 @@ def generate_printable_html(delivery_data: dict, orders: list = None, custom_com
             header_meta.append(f"<span>👨‍💼 <strong>Менеджер:</strong> {order_manager}</span>")
         if order_address:
             header_meta.append(f"<span>📍 <strong>Адреса:</strong> {order_address}</span>")
+        if order_comment:
+            header_meta.append(f"<span style=\"color: #b45309;\">💬 <strong>Примітка:</strong> {order_comment}</span>")
 
         meta_html = " &nbsp;│&nbsp; ".join(header_meta)
-
-        subtotal_html = ""
-        if len(order_items) > 1:
-            subtotal_html = f"""
-                <tr style="background: #f8fafc; font-weight: 600; font-size: 12px;">
-                    <td colspan="2" style="text-align: right; color: #475569;">Разом по доповненню #{order_ref}:</td>
-                    <td style="text-align: center; color: #0284c7;">{order_qty:g}</td>
-                    <td></td>
-                </tr>
-            """
 
         sections_html.append(f"""
             <!-- Секція замовлення: {order_ref} -->
@@ -238,7 +234,6 @@ def generate_printable_html(delivery_data: dict, orders: list = None, custom_com
                 </td>
             </tr>
             {items_tbody}
-            {subtotal_html}
         """)
 
     table_body = "\n".join(sections_html)
@@ -352,8 +347,7 @@ def generate_printable_html(delivery_data: dict, orders: list = None, custom_com
         <div class="info-row"><strong>Менеджер:</strong> {managers_header_str}</div>
         <div class="info-row"><strong>Дата відвантаження:</strong> {date}</div>
         <div class="info-row"><strong>Кількість заявок / доповнень:</strong> {orders_count}</div>
-        <div class="info-row"><strong>Всього найменувань товару:</strong> {total_items_count}</div>
-        {f'<div class="info-row" style="grid-column: span 2;"><strong>Примітка доставки:</strong> {comment}</div>' if comment else ''}
+        <div class="info-row"><strong>Всього позицій товару:</strong> {total_items_count}</div>
         {f'<div class="info-row" style="grid-column: span 2; color: #0056b3;"><strong>Коментар для бухгалтера:</strong> {additional_note}</div>' if additional_note else ''}
     </div>
 
@@ -369,13 +363,6 @@ def generate_printable_html(delivery_data: dict, orders: list = None, custom_com
         <tbody>
             {table_body}
         </tbody>
-        <tfoot>
-            <tr style="background: #fafafa; font-weight: bold; font-size: 14px;">
-                <td colspan="2" style="text-align: right;">Всього по відомості:</td>
-                <td style="text-align: center; color: #0284c7;">{total_qty:g}</td>
-                <td></td>
-            </tr>
-        </tfoot>
     </table>
 
     <div class="signatures">
@@ -409,19 +396,18 @@ def generate_mailto_url(accountant_email: str, delivery_data: dict, orders: list
     ttn_line = f"- ТТН Нова Пошта: {ttn}\n" if is_np else ""
 
     order_blocks = []
-    total_qty = 0
 
-    for idx, order in enumerate(orders_data, 1):
+    for order in orders_data:
         o_ref = order.get("order_ref") or "—"
         o_client = order.get("client") or "Не вказано"
         o_manager = order.get("manager") or ""
         o_address = order.get("address") or ""
+        o_comment = order.get("comment") or ""
 
         items_lines = []
         for it in order.get("items", []):
             prod = it.get("nomenclature") or it.get("product") or ""
             qty = float(it.get("quantity") or 0)
-            total_qty += qty
 
             parties = it.get("parties") or []
             p_strs = []
@@ -441,11 +427,12 @@ def generate_mailto_url(accountant_email: str, delivery_data: dict, orders: list
 
         mgr_line = f"- Менеджер: {o_manager}\n" if o_manager else ""
         addr_line = f"- Адреса: {o_address}\n" if o_address else ""
+        comment_line = f"- Примітка заявки: {o_comment}\n" if o_comment else ""
 
         block = f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🏢 Клієнт: {o_client}
 📄 Доповнення: #{o_ref}
-{mgr_line}{addr_line}Товари та складські партії:
+{mgr_line}{addr_line}{comment_line}Товари та складські партії:
 {items_text}"""
         order_blocks.append(block)
 
@@ -458,14 +445,9 @@ def generate_mailto_url(accountant_email: str, delivery_data: dict, orders: list
 - Кількість заявок / доповнень: {len(orders_data)}
 
 {all_orders_text}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Всього товарів: {total_qty:g} шт
 """
     if custom_comment:
-        body += f"\nКоментар для бухгалтера: {custom_comment}\n"
-    if delivery_data.get("comment"):
-        body += f"Примітка доставки: {delivery_data.get('comment')}\n"
+        body += f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nКоментар для бухгалтера: {custom_comment}\n"
 
     body += "\n---\nЗгенеровано з додатку логістики"
 
@@ -503,19 +485,18 @@ async def send_accountant_telegram(
         tracking_link = ""
 
     blocks = []
-    total_qty = 0
 
     for order in orders_data:
         o_ref = html.escape(str(order.get("order_ref") or "—"))
         o_client = html.escape(str(order.get("client") or "Не вказано"))
         o_manager = html.escape(str(order.get("manager") or ""))
         o_address = html.escape(str(order.get("address") or ""))
+        o_comment = html.escape(str(order.get("comment") or ""))
 
         items_lines = []
         for it in order.get("items", []):
             prod = html.escape(str(it.get("nomenclature") or it.get("product") or ""))
             qty = float(it.get("quantity") or 0)
-            total_qty += qty
 
             parties = it.get("parties") or []
             p_strs = []
@@ -535,12 +516,13 @@ async def send_accountant_telegram(
 
         mgr_line = f"👨‍💼 <b>Менеджер:</b> {o_manager}\n" if o_manager else ""
         addr_line = f"📍 <b>Адреса:</b> {o_address}\n" if o_address else ""
+        comment_line = f"💬 <b>Примітка:</b> <i>{o_comment}</i>\n" if o_comment else ""
 
         block = (
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"🏢 <b>Клієнт:</b> {o_client}\n"
             f"📄 <b>Доповнення:</b> <code>#{o_ref}</code>\n"
-            f"{mgr_line}{addr_line}"
+            f"{mgr_line}{addr_line}{comment_line}"
             f"<b>Товари та партії:</b>\n{items_text}"
         )
         blocks.append(block)
@@ -552,13 +534,11 @@ async def send_accountant_telegram(
         f"{ttn_info}"
         f"📅 <b>Дата:</b> {date}\n"
         f"📋 <b>Кількість заявок:</b> {len(orders_data)}\n\n"
-        f"{orders_content}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📊 <b>Всього товару:</b> <b>{total_qty:g}</b> шт\n"
+        f"{orders_content}\n"
     )
 
     if custom_comment:
-        caption_text += f"\n💬 <b>Коментар:</b> {html.escape(custom_comment)}\n"
+        caption_text += f"\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Коментар:</b> {html.escape(custom_comment)}\n"
 
     if tracking_link:
         caption_text += tracking_link
@@ -579,11 +559,10 @@ async def send_accountant_telegram(
             f"📅 <b>Дата:</b> {date}\n"
             f"📋 <b>Заявки у відомості ({len(orders_data)}):</b>\n"
             + "\n".join(compact_blocks)
-            + f"\n\n📊 <b>Всього товару:</b> <b>{total_qty:g}</b> шт\n"
-            + f"\n📄 <i>Повний перелік позицій і складських партій дивіться у прикріпленому файлі відомості.</i>\n"
+            + f"\n\n📄 <i>Повний перелік позицій і складських партій дивіться у прикріпленому файлі відомості.</i>\n"
         )
         if custom_comment:
-            caption_text += f"\n💬 <b>Коментар:</b> {html.escape(custom_comment)}\n"
+            caption_text += f"\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Коментар:</b> {html.escape(custom_comment)}\n"
         if tracking_link:
             caption_text += tracking_link
 

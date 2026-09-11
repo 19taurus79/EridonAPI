@@ -2197,6 +2197,7 @@ async def send_delivery_to_accountant(
                 "client": o.client,
                 "manager": o.manager,
                 "address": o.address,
+                "comment": o.comment or "",
                 "items": [
                     {
                         "product": it.product,
@@ -2224,6 +2225,7 @@ async def send_delivery_to_accountant(
                     "client": delivery.client or "Не вказано",
                     "manager": delivery.manager or "",
                     "address": delivery.address or "",
+                    "comment": delivery.comment or "",
                     "items": {}
                 }
             p_key = it.product
@@ -2248,6 +2250,7 @@ async def send_delivery_to_accountant(
                 "client": o_data["client"],
                 "manager": o_data["manager"],
                 "address": o_data["address"],
+                "comment": o_data.get("comment") or "",
                 "items": list(o_data["items"].values())
             })
 

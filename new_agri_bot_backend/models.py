@@ -345,6 +345,7 @@ class AccountantOrder(BaseModel):
     client: str
     manager: Optional[str] = ""
     address: Optional[str] = ""
+    comment: Optional[str] = ""
     items: List[AccountantOrderItem] = []
 
 
