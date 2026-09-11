@@ -151,6 +151,23 @@ class DeliveryRequest(BaseModel):
     actor_name: Optional[str] = None
 
 
+class SplitItemRequest(BaseModel):
+    """Один товар для відділення в нову доставку"""
+    product: str
+    transfer_quantity: float  # Скільки одиниць перенести в нову доставку
+    order_ref: Optional[str] = None  # Для ідентифікації, якщо один товар в різних заявках
+
+
+class SplitDeliveryRequest(BaseModel):
+    """Запит на атомарне розділення доставки.
+    Фронтенд надсилає ID оригінальної доставки та список товарів із кількостями для перенесення.
+    Бекенд в одній транзакції створює нову доставку, переносить товари та оновлює оригінал.
+    """
+    delivery_id: int
+    items: List[SplitItemRequest]
+    actor_name: Optional[str] = None
+
+
 class UpdateParty(BaseModel):
     party: str
     moved_q: float

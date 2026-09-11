@@ -46,7 +46,8 @@ from .models import (
     CommentType,
     ClientData,
     Order,
-    Product
+    Product,
+    SplitDeliveryRequest,
 )
 from .tables import (
     Remains,
@@ -1730,6 +1731,325 @@ async def send_delivery(
     })
 
     return {"status": "ok", "id": new_delivery.id}
+
+
+@app.post("/delivery/split", dependencies=[Depends(check_not_guest)])
+async def split_delivery(
+    data: SplitDeliveryRequest,
+    background_tasks: BackgroundTasks,
+    X_Telegram_Init_Data: str = Header(),
+):
+    """
+    Атомарне розділення доставки.
+    Фронтенд надсилає ID доставки та список товарів із кількостями для перенесення.
+    Бекенд в одній транзакції:
+      1. Створює нову доставку (клон метаданих з приміткою "(Розділено)")
+      2. Переносить товари з пропорційним розподілом партій
+      3. Оновлює або видаляє оригінальну доставку
+    """
+    parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
+    if not parsed_init_data:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    user_info_str = parsed_init_data.get("user")
+    user_data = json.loads(user_info_str)
+    telegram_id = user_data.get("id")
+
+    # Завантаження оригінальної доставки
+    original = await Deliveries.objects().where(Deliveries.id == data.delivery_id).first().run()
+    if not original:
+        raise HTTPException(status_code=404, detail="Доставку не знайдено")
+
+    # Завантаження всіх позицій доставки
+    db_items = await DeliveryItems.select().where(
+        DeliveryItems.delivery == data.delivery_id
+    ).run()
+    if not db_items:
+        raise HTTPException(status_code=400, detail="Доставка не містить товарів")
+
+    # Групування позицій по (product, order_ref)
+    groups: Dict[tuple, list] = {}
+    for row in db_items:
+        key = (row["product"], row.get("order_ref") or "")
+        groups.setdefault(key, []).append(row)
+
+    # Валідація та побудова списку перенесених / залишених позицій
+    new_items_to_insert = []    # Для нової доставки
+    remain_items_to_insert = [] # Для оригіналу (залишок)
+    matched_keys = set()
+
+    for split_item in data.items:
+        transfer_qty = split_item.transfer_quantity
+        if transfer_qty <= 0:
+            continue
+
+        # Пошук відповідної групи
+        key = (split_item.product, split_item.order_ref or "")
+        group = groups.get(key)
+        if not group:
+            # Спроба знайти тільки за product (без order_ref)
+            key = next(
+                (k for k in groups if k[0] == split_item.product and k not in matched_keys),
+                None,
+            )
+            if key:
+                group = groups[key]
+            else:
+                logger.warning(
+                    f"⚠️ Split: товар '{split_item.product}' (order_ref='{split_item.order_ref}') "
+                    f"не знайдено в доставці {data.delivery_id}. Пропущено."
+                )
+                continue
+
+        matched_keys.add(key)
+
+        # Загальна кількість в групі (quantity однакове для всіх партій одного товару)
+        group_total_qty = group[0]["quantity"]
+        if group_total_qty <= 0:
+            continue
+
+        # Обмеження: не можна перенести більше, ніж є
+        transfer_qty = min(transfer_qty, group_total_qty)
+        remain_qty = round(group_total_qty - transfer_qty, 3)
+
+        # Пропорція для розподілу партій
+        total_party_sum = sum(float(row.get("party_quantity") or 0) for row in group)
+        transfer_ratio = transfer_qty / total_party_sum if total_party_sum > 0 else 1.0
+
+        order_ref = group[0].get("order_ref") or ""
+        line_of_business = group[0].get("line_of_business")
+
+        for row in group:
+            party_name = row.get("party") or ""
+            party_qty = float(row.get("party_quantity") or 0)
+            warehouse = row.get("warehouse")
+
+            if party_qty <= 0 and not party_name:
+                # Товар без партій — просто за кількістю
+                new_items_to_insert.append(DeliveryItems(
+                    delivery=0,  # placeholder, буде замінено в транзакції
+                    order_ref=order_ref,
+                    product=split_item.product,
+                    quantity=transfer_qty,
+                    line_of_business=line_of_business,
+                ))
+                if remain_qty > 0.001:
+                    remain_items_to_insert.append(DeliveryItems(
+                        delivery=data.delivery_id,
+                        order_ref=order_ref,
+                        product=split_item.product,
+                        quantity=remain_qty,
+                        line_of_business=line_of_business,
+                    ))
+                continue
+
+            # Пропорційний розподіл партії
+            transferred_party_qty = round(party_qty * transfer_ratio, 3)
+            remaining_party_qty = round(party_qty - transferred_party_qty, 3)
+
+            if transferred_party_qty > 0.001:
+                new_items_to_insert.append(DeliveryItems(
+                    delivery=0,  # placeholder
+                    order_ref=order_ref,
+                    product=split_item.product,
+                    quantity=transfer_qty,
+                    party=party_name,
+                    party_quantity=transferred_party_qty,
+                    warehouse=warehouse,
+                    line_of_business=line_of_business,
+                ))
+
+            if remaining_party_qty > 0.001:
+                remain_items_to_insert.append(DeliveryItems(
+                    delivery=data.delivery_id,
+                    order_ref=order_ref,
+                    product=split_item.product,
+                    quantity=remain_qty,
+                    party=party_name,
+                    party_quantity=remaining_party_qty,
+                    warehouse=warehouse,
+                    line_of_business=line_of_business,
+                ))
+
+    # Додаємо до залишку ті позиції, які НЕ були обрані для розділення
+    for key, group in groups.items():
+        if key in matched_keys:
+            continue
+        for row in group:
+            remain_items_to_insert.append(DeliveryItems(
+                delivery=data.delivery_id,
+                order_ref=row.get("order_ref") or "",
+                product=row["product"],
+                quantity=row["quantity"],
+                party=row.get("party"),
+                party_quantity=row.get("party_quantity"),
+                warehouse=row.get("warehouse"),
+                line_of_business=row.get("line_of_business"),
+            ))
+
+    if not new_items_to_insert:
+        raise HTTPException(status_code=400, detail="Немає товарів для перенесення")
+
+    # Пропорційний розрахунок ваги
+    original_total_qty = sum(float(row["quantity"]) for row in db_items)
+    transferred_total_qty = sum(float(si.transfer_quantity) for si in data.items if si.transfer_quantity > 0)
+    if original_total_qty > 0:
+        weight_ratio = min(transferred_total_qty / original_total_qty, 1.0)
+    else:
+        weight_ratio = 0.5
+    new_total_weight = round((original.total_weight or 0) * weight_ratio, 2)
+    remain_total_weight = round((original.total_weight or 0) - new_total_weight, 2)
+
+    # Коментар для нової доставки
+    base_comment = original.comment or ""
+    new_comment = f"{base_comment} (Розділено)".strip()
+
+    # === ТРАНЗАКЦІЯ ===
+    new_delivery_id = None
+    original_deleted = False
+
+    try:
+        async with Deliveries._meta.db.transaction():
+            # 1. Створення нової доставки
+            new_delivery = Deliveries(
+                client=original.client,
+                manager=original.manager,
+                address=original.address,
+                contact=original.contact,
+                phone=original.phone,
+                delivery_date=original.delivery_date,
+                comment=new_comment,
+                is_custom_address=original.is_custom_address,
+                latitude=original.latitude,
+                longitude=original.longitude,
+                total_weight=new_total_weight,
+                status=original.status or "Створено",
+                created_by=original.created_by,
+            )
+            await new_delivery.save().run()
+            new_delivery_id = new_delivery.id
+
+            # 2. Вставка перенесених товарів (з правильним delivery ID)
+            for item in new_items_to_insert:
+                item.delivery = new_delivery_id
+            await DeliveryItems.insert(*new_items_to_insert).run()
+
+            # 3. Видалення старих позицій оригіналу
+            await DeliveryItems.delete().where(
+                DeliveryItems.delivery == data.delivery_id
+            ).run()
+
+            # 4. Вставка залишку або видалення оригіналу
+            if remain_items_to_insert:
+                await DeliveryItems.insert(*remain_items_to_insert).run()
+                # Оновлення ваги оригіналу
+                original.total_weight = remain_total_weight
+                await original.save().run()
+            else:
+                # Всі товари перенесені — видаляємо оригінал
+                await Deliveries.delete().where(
+                    Deliveries.id == data.delivery_id
+                ).run()
+                original_deleted = True
+
+        logger.info(
+            f"✅ Доставку {data.delivery_id} розділено. "
+            f"Нова доставка ID: {new_delivery_id}. "
+            f"Оригінал {'видалено' if original_deleted else 'оновлено'}."
+        )
+
+    except Exception as e:
+        logger.error(f"❌ Помилка транзакції розділення доставки {data.delivery_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Помилка розділення доставки: {e}",
+        )
+
+    # === ПІСЛЯ ТРАНЗАКЦІЇ: Сповіщення (не блокують результат) ===
+    warnings = []
+
+    # Календар для нової доставки
+    try:
+        from .models import DeliveryRequest as DR
+        cal_data = type("CalData", (), {
+            "client": original.client,
+            "date": str(original.delivery_date or ""),
+            "address": original.address or "",
+            "comment": new_comment,
+        })()
+        calendar = await create_calendar_event(cal_data)
+        if calendar:
+            calendar_id = calendar.get("id")
+            await Deliveries.update({Deliveries.calendar_id: calendar_id}).where(
+                Deliveries.id == new_delivery_id
+            ).run()
+            start_info = calendar.get("start", {})
+            date_str = start_info.get("date") or start_info.get("dateTime")
+            if date_str:
+                date_val = datetime.fromisoformat(date_str).date()
+                await Events.insert(Events(
+                    event_id=calendar_id,
+                    event_creator=original.created_by or telegram_id,
+                    event_creator_name=original.manager or "",
+                    event_status=0,
+                    start_event=date_val,
+                    event=original.client,
+                )).run()
+    except Exception as e:
+        logger.warning(f"⚠️ Календар для розділеної доставки: {e}")
+        warnings.append(f"Помилка календаря: {e}")
+
+    # Telegram-сповіщення
+    if SEND_NOTIFICATIONS:
+        try:
+            actor_display = data.actor_name or "Логіст"
+            # Будуємо повідомлення
+            items_lines = []
+            for si in data.items:
+                if si.transfer_quantity > 0:
+                    items_lines.append(f"  🔹 {si.product}: <b>{si.transfer_quantity}</b>")
+            items_text = "\n".join(items_lines) if items_lines else "<i>(не вказано)</i>"
+
+            msg = (
+                f"✂️ <b>Доставку розділено</b>\n\n"
+                f"👤 Клієнт: <b>{html.escape(original.client)}</b>\n"
+                f"📦 Перенесено в нову доставку (ID {new_delivery_id}):\n{items_text}\n\n"
+                f"✍️ Ініціатор: {html.escape(actor_display)}\n"
+            )
+            if original_deleted:
+                msg += "🗑 Оригінальну доставку видалено (всі товари перенесені)\n"
+            else:
+                msg += f"📋 Оригінал (ID {data.delivery_id}) оновлено\n"
+
+            recipients = set(ALL_RECIPIENTS)
+            if original.created_by:
+                recipients.add(original.created_by)
+
+            for rid in recipients:
+                try:
+                    await bot.send_message(chat_id=rid, text=msg, parse_mode="HTML")
+                except Exception as tg_err:
+                    logger.warning(f"⚠️ Telegram notify {rid}: {tg_err}")
+        except Exception as e:
+            logger.warning(f"⚠️ Telegram сповіщення розділення: {e}")
+            warnings.append(f"Помилка Telegram: {e}")
+
+    # WebSocket
+    await manager.broadcast({
+        "type": "DELIVERY_SPLIT",
+        "payload": {
+            "original_id": data.delivery_id,
+            "new_id": new_delivery_id,
+            "original_deleted": original_deleted,
+        },
+    })
+
+    return {
+        "status": "ok",
+        "new_delivery_id": new_delivery_id,
+        "original_deleted": original_deleted,
+        "warnings": warnings,
+    }
 
 
 @app.post("/delivery/update", dependencies=[Depends(check_not_guest)])
