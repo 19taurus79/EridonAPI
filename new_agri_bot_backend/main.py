@@ -180,6 +180,18 @@ def get_fallback_weight(line_of_business: str, nomenclature: str) -> float:
     """
     Вычисляет резервный вес на основе бизнес-логики, если вес отсутствует в Remains.
     """
+    lob = line_of_business or ""
+    nom = nomenclature or ""
+
+    # Эвристика определения LOB по названию, если LOB не передан
+    if not lob:
+        if "Насіння" in nom:
+            lob = "Насіння"
+        elif "ЗЗР" in nom:
+            return 1.2
+        elif "Добрива" in nom or "Міндобрива" in nom:
+            return 1000.0
+
     # Карта для простых случаев
     LOB_WEIGHT_MAP = {
         "Власне виробництво насіння": 1.0,
@@ -187,22 +199,69 @@ def get_fallback_weight(line_of_business: str, nomenclature: str) -> float:
         "Міндобрива (основні)": 1000.0,
     }
 
-    if line_of_business in LOB_WEIGHT_MAP:
-        return LOB_WEIGHT_MAP[line_of_business]
+    if lob in LOB_WEIGHT_MAP:
+        return LOB_WEIGHT_MAP[lob]
 
     # Сложный случай для "Насіння"
-    if line_of_business == "Насіння":
-        if "(1500К)" in nomenclature:
+    if lob == "Насіння":
+        if "(1500К)" in nom:
             return 8.0
-        if "(150К)" in nomenclature:
+        if "(150К)" in nom:
             return 10.0
-        if "(50К)" in nomenclature:
+        if "(50К)" in nom:
             return 15.0
-        if "(80К)" in nomenclature:
+        if "(80К)" in nom:
             return 20.0
 
     # Если ни одно из правил не подошло, возвращаем 1.0
     return 1.0
+
+
+async def calculate_delivery_fallback_weight(delivery_id: int, items_data: Optional[list] = None) -> float:
+    """
+    Автоматично розраховує вагу доставки на основі позицій товарів,
+    якщо вага доставки була 0 або відсутня. Гарантує, що вага не буде нульовою.
+    """
+    total_w = 0.0
+    try:
+        raw_items = []
+        if items_data:
+            for it in items_data:
+                if hasattr(it, "dict"):
+                    raw_items.append(it.dict())
+                elif hasattr(it, "model_dump"):
+                    raw_items.append(it.model_dump())
+                elif isinstance(it, dict):
+                    raw_items.append(it)
+        if not raw_items and delivery_id:
+            raw_items = await DeliveryItems.select().where(DeliveryItems.delivery == delivery_id).run()
+
+        for it in raw_items:
+            product = it.get("product") or ""
+            qty = float(it.get("quantity") or 0.0)
+            if qty <= 0:
+                continue
+            lob = it.get("line_of_business") or ""
+            order_ref = it.get("order_ref") or it.get("orderRef") or ""
+
+            if not lob and order_ref:
+                sub_matches = await Submissions.select().where(Submissions.contract_supplement == str(order_ref)).run()
+                for sub in sub_matches:
+                    sub_nom = sub.get("nomenclature") or ""
+                    if sub_nom in product or product in sub_nom:
+                        lob = sub.get("line_of_business") or ""
+                        break
+
+            unit_w = get_fallback_weight(lob, product)
+            it_w = float(it.get("weight") or 0.0)
+            if it_w > 0:
+                total_w += it_w
+            else:
+                total_w += qty * unit_w
+    except Exception as e:
+        logger.error(f"Помилка розрахунку fallback ваги для доставки {delivery_id}: {e}")
+
+    return round(total_w, 2) if total_w > 0 else 1.0
 
 
 # aiogram Dispatcher для обработки входящих сообщений бота
@@ -1266,11 +1325,17 @@ async def get_delivery_by_id(id: int, X_Telegram_Init_Data: str = Header()):
     for item in items_list:
         grouping_key = (item.get("order_ref"), item.get("product"))
         if grouping_key not in grouped_items:
+            unit_w = get_fallback_weight(item.get("line_of_business") or "", item.get("product") or "")
+            item_qty = float(item.get("quantity") or 0.0)
+            item_w = round(unit_w * item_qty, 2)
             grouped_items[grouping_key] = {
                 "order_ref": item.get("order_ref"),
                 "product": item.get("product"),
                 "line_of_business": item.get("line_of_business"),
                 "quantity": item.get("quantity"),
+                "unit_weight": unit_w,
+                "weight": item_w,
+                "total_weight": item_w,
                 "parties": [],
             }
         grouped_items[grouping_key]["parties"].append(
@@ -1384,11 +1449,17 @@ async def get_data_for_delivery(X_Telegram_Init_Data: str = Header()):
         if delivery_id not in grouped_items:
             grouped_items[delivery_id] = {}
         if grouping_key not in grouped_items[delivery_id]:
+            unit_w = get_fallback_weight(item.get("line_of_business") or "", product_name)
+            item_qty = float(item.get("quantity") or 0.0)
+            item_w = round(unit_w * item_qty, 2)
             grouped_items[delivery_id][grouping_key] = {
                 "order_ref": order_ref,  # Возвращаем order_ref
                 "product": product_name,
                 "line_of_business": item.get("line_of_business"),
                 "quantity": item["quantity"],  # Общее количество для продукта
+                "unit_weight": unit_w,
+                "weight": item_w,
+                "total_weight": item_w,
                 "parties": [],
             }
 
@@ -1402,6 +1473,11 @@ async def get_data_for_delivery(X_Telegram_Init_Data: str = Header()):
         if delivery_id in grouped_items:
             # Преобразуем словарь продуктов в список
             delivery_data["items"] = list(grouped_items[delivery_id].values())
+
+        # Гарантія ненульової ваги: якщо в базі 0 або NULL, беремо суму позицій
+        if not delivery_data.get("total_weight") or float(delivery_data["total_weight"]) <= 0:
+            calc_w = sum(float(it.get("weight") or 0.0) for it in delivery_data.get("items", []))
+            delivery_data["total_weight"] = round(calc_w, 2) if calc_w > 0 else 1.0
 
     combined_data = list(deliveries_map.values())
     return combined_data
@@ -1891,14 +1967,19 @@ async def split_delivery(
         raise HTTPException(status_code=400, detail="Немає товарів для перенесення")
 
     # Пропорційний розрахунок ваги
+    original_weight = float(original.total_weight or 0)
+    if original_weight <= 0:
+        original_weight = await calculate_delivery_fallback_weight(original.id)
+        original.total_weight = original_weight
+
     original_total_qty = sum(float(row["quantity"]) for row in db_items)
     transferred_total_qty = sum(float(si.transfer_quantity) for si in data.items if si.transfer_quantity > 0)
     if original_total_qty > 0:
         weight_ratio = min(transferred_total_qty / original_total_qty, 1.0)
     else:
         weight_ratio = 0.5
-    new_total_weight = round((original.total_weight or 0) * weight_ratio, 2)
-    remain_total_weight = round((original.total_weight or 0) - new_total_weight, 2)
+    new_total_weight = max(1.0, round(original_weight * weight_ratio, 2))
+    remain_total_weight = max(1.0, round(original_weight - new_total_weight, 2))
 
     # Коментар для нової доставки
     base_comment = original.comment or ""
@@ -2077,8 +2158,13 @@ async def update_delivery(
         # Оновлюємо атрибути, якщо вони передані
         if data.ttn is not None:
             delivery_data.ttn = data.ttn
-        if data.total_weight is not None:
-            delivery_data.total_weight = data.total_weight
+        # Оновлення ваги: захист від занулення та автоматичне відновлення
+        if data.total_weight is not None and float(data.total_weight) > 0:
+            delivery_data.total_weight = round(float(data.total_weight), 2)
+        elif not delivery_data.total_weight or float(delivery_data.total_weight) <= 0:
+            calculated_w = await calculate_delivery_fallback_weight(delivery_data.id, data.items)
+            delivery_data.total_weight = calculated_w
+        # Якщо у доставці вже є ненульова вага, а data.total_weight передано <= 0 — зберігаємо поточну вагу!
         if data.address is not None:
             delivery_data.address = data.address
         if data.contact is not None:
