@@ -215,6 +215,8 @@ class BatchUpdateDeliveryRequest(BaseModel):
     delivery_ids: List[int]
     status: Optional[str] = None
     new_date: Optional[str] = None
+    ttn_map: Optional[Dict[str, str]] = None
+    common_ttn: Optional[str] = None
 
 
 class CommentType(str, Enum):

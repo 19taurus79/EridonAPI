@@ -2818,6 +2818,19 @@ async def batch_update_deliveries(
             for delivery in deliveries_to_update:
                 changes = []
                 
+                # Оновлення ТТН якщо передано
+                deliv_ttn = None
+                if data.ttn_map:
+                    deliv_ttn = data.ttn_map.get(str(delivery.id)) or data.ttn_map.get(delivery.id)
+                elif data.common_ttn:
+                    deliv_ttn = data.common_ttn
+
+                if deliv_ttn is not None:
+                    cleaned_ttn = str(deliv_ttn).strip()
+                    if cleaned_ttn and delivery.ttn != cleaned_ttn:
+                        delivery.ttn = cleaned_ttn
+                        changes.append(f"ТТН: <code>{cleaned_ttn}</code>")
+
                 # Оновлення статусу
                 if data.status and delivery.status != data.status:
                     old_status = delivery.status
@@ -2905,7 +2918,8 @@ async def batch_update_deliveries(
             "payload": {
                 "ids": data.delivery_ids,
                 "status": data.status,
-                "new_date": data.new_date
+                "new_date": data.new_date,
+                "ttns": {d.id: d.ttn for d in deliveries_to_update if d.ttn}
             }
         })
 

@@ -141,12 +141,14 @@ async def notify_delivery_status_change(delivery: Deliveries, status: str, actor
         status_text = f"🔄 Статус змінено на: <b>{status}</b>"
 
     actor_info = f"\n👤 Хто: <b>{html.escape(actor_name)}</b>" if actor_name else ""
+    ttn_info = f"\n📦 ТТН: <code>{html.escape(str(delivery.ttn))}</code>" if getattr(delivery, "ttn", None) else ""
     
     text = (
         f"{status_text}\n\n"
         f"👤 Клієнт: <b>{safe_client}</b>"
         f"{actor_info}\n"
         f"📅 Дата: {delivery.delivery_date}"
+        f"{ttn_info}"
     )
     
     # 3. Надсилаємо
