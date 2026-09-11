@@ -154,6 +154,7 @@ class DeliveryRequest(BaseModel):
 class UpdateParty(BaseModel):
     party: str
     moved_q: float
+    warehouse: Optional[str] = None
 
 
 class UpdateItem(BaseModel):

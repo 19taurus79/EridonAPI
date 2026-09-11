@@ -347,6 +347,7 @@ class DeliveryItems(Table):
     quantity = Real()
     party = Varchar(length=255, null=True)
     party_quantity = Real(null=True)
+    warehouse = Varchar(length=255, null=True)
     line_of_business = Varchar(length=255, null=True)
 
 

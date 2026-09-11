@@ -1273,7 +1273,11 @@ async def get_delivery_by_id(id: int, X_Telegram_Init_Data: str = Header()):
                 "parties": [],
             }
         grouped_items[grouping_key]["parties"].append(
-            {"party": item.get("party"), "party_quantity": item.get("party_quantity")}
+            {
+                "party": item.get("party"),
+                "party_quantity": item.get("party_quantity"),
+                "warehouse": item.get("warehouse"),
+            }
         )
 
     delivery["items"] = list(grouped_items.values())
@@ -1934,6 +1938,7 @@ async def update_delivery(
                                 quantity=item.quantity,
                                 party=party.party,
                                 party_quantity=party.moved_q,
+                                warehouse=party.warehouse,
                                 line_of_business=item.line_of_business,
                             )
                         )
@@ -2139,6 +2144,7 @@ async def send_delivery_to_accountant(
                                     quantity=item.quantity,
                                     party=party.party,
                                     party_quantity=party.moved_q,
+                                    warehouse=party.warehouse,
                                     line_of_business=item.line_of_business,
                                 )
                             )
@@ -2172,6 +2178,7 @@ async def send_delivery_to_accountant(
                                 quantity=item.quantity,
                                 party=party.party,
                                 party_quantity=party.moved_q,
+                                warehouse=party.warehouse,
                                 line_of_business=item.line_of_business,
                             )
                         )
@@ -2206,7 +2213,12 @@ async def send_delivery_to_accountant(
                         "weight": it.weight or 0.0,
                         "line_of_business": it.line_of_business,
                         "parties": [
-                            {"party": p.party, "moved_q": p.moved_q, "party_quantity": p.moved_q}
+                            {
+                                "party": p.party,
+                                "moved_q": p.moved_q,
+                                "party_quantity": p.moved_q,
+                                "warehouse": p.warehouse or "",
+                            }
                             for p in it.parties if p.moved_q > 0
                         ]
                     }
@@ -2241,7 +2253,8 @@ async def send_delivery_to_accountant(
                 grouped_orders_dict[o_ref]["items"][p_key]["parties"].append({
                     "party": it.party,
                     "party_quantity": it.party_quantity or it.quantity,
-                    "moved_q": it.party_quantity or it.quantity
+                    "moved_q": it.party_quantity or it.quantity,
+                    "warehouse": it.warehouse or "",
                 })
 
         for o_ref, o_data in grouped_orders_dict.items():

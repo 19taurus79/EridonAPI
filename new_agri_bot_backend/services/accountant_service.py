@@ -186,18 +186,22 @@ def generate_printable_html(delivery_data: dict, orders: list = None, custom_com
             qty = float(it.get("quantity") or 0)
 
             parties = it.get("parties") or []
-            parties_str_list = []
+            parties_html_list = []
             if isinstance(parties, list):
                 for p in parties:
                     if isinstance(p, dict):
-                        p_name = p.get("party") or ""
+                        p_name = html.escape(str(p.get("party") or ""))
                         p_q = p.get("party_quantity")
                         if p_q is None or p_q == "":
                             p_q = p.get("moved_q") or 0
-                        parties_str_list.append(f"{html.escape(str(p_name))} ({p_q})")
+                        p_wh = html.escape(str(p.get("warehouse") or "").strip())
+                        wh_markup = f'<div style="color: #475569; font-size: 11px; margin-top: 2px;">📍 {p_wh}</div>' if p_wh else ""
+                        parties_html_list.append(
+                            f'<div style="margin-bottom: 4px;"><strong>{p_name}</strong> — <strong>{p_q}</strong> шт{wh_markup}</div>'
+                        )
                     elif isinstance(p, str):
-                        parties_str_list.append(html.escape(p))
-            parties_cell = ", ".join(parties_str_list) if parties_str_list else "—"
+                        parties_html_list.append(f'<div style="margin-bottom: 4px;">{html.escape(p)}</div>')
+            parties_cell = "".join(parties_html_list) if parties_html_list else "—"
 
             order_rows.append(f"""
                 <tr>
@@ -417,7 +421,11 @@ def generate_mailto_url(accountant_email: str, delivery_data: dict, orders: list
                     p_q = p.get("party_quantity")
                     if p_q is None or p_q == "":
                         p_q = p.get("moved_q") or 0
-                    p_strs.append(f"{p_name}: {p_q}")
+                    p_wh = (p.get("warehouse") or "").strip()
+                    if p_wh:
+                        p_strs.append(f"{p_name} — {p_q} шт (склад: {p_wh})")
+                    else:
+                        p_strs.append(f"{p_name}: {p_q}")
                 elif isinstance(p, str):
                     p_strs.append(p)
             parties_part = f" [Партії: {', '.join(p_strs)}]" if p_strs else ""
@@ -506,7 +514,11 @@ async def send_accountant_telegram(
                     p_q = p.get("party_quantity")
                     if p_q is None or p_q == "":
                         p_q = p.get("moved_q") or 0
-                    p_strs.append(f"{p_name} ({p_q})")
+                    p_wh = html.escape(str(p.get("warehouse") or "").strip())
+                    if p_wh:
+                        p_strs.append(f"{p_name} — {p_q} шт (склад: {p_wh})")
+                    else:
+                        p_strs.append(f"{p_name} ({p_q})")
                 elif isinstance(p, str):
                     p_strs.append(html.escape(p))
             parties_part = f"\n   ↳ <i>Партії: {', '.join(p_strs)}</i>" if p_strs else ""
