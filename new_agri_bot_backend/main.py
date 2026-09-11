@@ -2119,7 +2119,42 @@ async def send_delivery_to_accountant(
         delivery.ttn = data.ttn
         await delivery.save().run()
 
-    if data.items is not None:
+    # Збереження оновлених партій та товарів (якщо передані)
+    if data.orders is not None:
+        async with DeliveryItems._meta.db.transaction():
+            await DeliveryItems.delete().where(DeliveryItems.delivery == data.delivery_id).run()
+            items_to_insert = []
+            for order in data.orders:
+                for item in order.items:
+                    if float(item.quantity or 0) <= 0:
+                        continue
+                    active_parties = [p for p in item.parties if p.moved_q > 0] if item.parties else []
+                    if active_parties:
+                        for party in active_parties:
+                            items_to_insert.append(
+                                DeliveryItems(
+                                    delivery=data.delivery_id,
+                                    order_ref=order.order_ref,
+                                    product=item.product,
+                                    quantity=item.quantity,
+                                    party=party.party,
+                                    party_quantity=party.moved_q,
+                                    line_of_business=item.line_of_business,
+                                )
+                            )
+                    else:
+                        items_to_insert.append(
+                            DeliveryItems(
+                                delivery=data.delivery_id,
+                                order_ref=order.order_ref,
+                                product=item.product,
+                                quantity=item.quantity,
+                                line_of_business=item.line_of_business,
+                            )
+                        )
+            if items_to_insert:
+                await DeliveryItems.insert(*items_to_insert).run()
+    elif data.items is not None:
         async with DeliveryItems._meta.db.transaction():
             await DeliveryItems.delete().where(DeliveryItems.delivery == data.delivery_id).run()
             items_to_insert = []
@@ -2153,43 +2188,94 @@ async def send_delivery_to_accountant(
             if items_to_insert:
                 await DeliveryItems.insert(*items_to_insert).run()
 
-    db_items = await DeliveryItems.objects().where(DeliveryItems.delivery == data.delivery_id).run()
-    grouped_items = {}
-    for it in db_items:
-        key = (it.order_ref or "", it.product)
-        if key not in grouped_items:
-            grouped_items[key] = {
-                "order_ref": it.order_ref or "",
-                "product": it.product,
-                "nomenclature": it.product,
-                "quantity": it.quantity,
-                "line_of_business": it.line_of_business,
-                "parties": []
-            }
-        if it.party:
-            grouped_items[key]["parties"].append({
-                "party": it.party,
-                "party_quantity": it.party_quantity or it.quantity,
-                "moved_q": it.party_quantity or it.quantity
+    # Підготовка даних замовлень для звіту бухгалтеру
+    orders_for_report = []
+    if data.orders is not None and len(data.orders) > 0:
+        for o in data.orders:
+            orders_for_report.append({
+                "order_ref": o.order_ref,
+                "client": o.client,
+                "manager": o.manager,
+                "address": o.address,
+                "items": [
+                    {
+                        "product": it.product,
+                        "nomenclature": it.nomenclature or it.product,
+                        "quantity": it.quantity,
+                        "weight": it.weight or 0.0,
+                        "line_of_business": it.line_of_business,
+                        "parties": [
+                            {"party": p.party, "moved_q": p.moved_q, "party_quantity": p.moved_q}
+                            for p in it.parties if p.moved_q > 0
+                        ]
+                    }
+                    for it in o.items if (float(it.quantity or 0) > 0)
+                ]
             })
-    items_for_report = list(grouped_items.values())
+    else:
+        # Fallback з бази DeliveryItems
+        db_items = await DeliveryItems.objects().where(DeliveryItems.delivery == data.delivery_id).run()
+        grouped_orders_dict = {}
+        for it in db_items:
+            o_ref = it.order_ref or "Без доповнення"
+            if o_ref not in grouped_orders_dict:
+                grouped_orders_dict[o_ref] = {
+                    "order_ref": o_ref,
+                    "client": delivery.client or "Не вказано",
+                    "manager": delivery.manager or "",
+                    "address": delivery.address or "",
+                    "items": {}
+                }
+            p_key = it.product
+            if p_key not in grouped_orders_dict[o_ref]["items"]:
+                grouped_orders_dict[o_ref]["items"][p_key] = {
+                    "product": it.product,
+                    "nomenclature": it.product,
+                    "quantity": it.quantity,
+                    "line_of_business": it.line_of_business,
+                    "parties": []
+                }
+            if it.party:
+                grouped_orders_dict[o_ref]["items"][p_key]["parties"].append({
+                    "party": it.party,
+                    "party_quantity": it.party_quantity or it.quantity,
+                    "moved_q": it.party_quantity or it.quantity
+                })
 
+        for o_ref, o_data in grouped_orders_dict.items():
+            orders_for_report.append({
+                "order_ref": o_ref,
+                "client": o_data["client"],
+                "manager": o_data["manager"],
+                "address": o_data["address"],
+                "items": list(o_data["items"].values())
+            })
+
+    # Пошук закріпленого бухгалтера
     accountant = None
     if data.accountant_id:
         accountant = await Accountants.objects().where(
             Accountants.id == data.accountant_id,
             Accountants.is_active == True
         ).first().run()
-    
-    if not accountant and delivery.manager:
-        mgr_str = delivery.manager.strip()
+
+    # Якщо бухгалтер не обраний вручну, спробуємо знайти за менеджером замовлення
+    lead_manager = None
+    for o in orders_for_report:
+        if o.get("manager"):
+            lead_manager = o["manager"].strip()
+            break
+    if not lead_manager and delivery.manager:
+        lead_manager = delivery.manager.strip()
+
+    if not accountant and lead_manager:
         user = None
-        if mgr_str.isdigit():
-            user = await Users.objects().where(Users.telegram_id == int(mgr_str)).first().run()
+        if lead_manager.isdigit():
+            user = await Users.objects().where(Users.telegram_id == int(lead_manager)).first().run()
         if not user:
             user = await Users.objects().where(
-                (Users.full_name_for_orders.ilike(mgr_str)) |
-                (Users.username.ilike(mgr_str.lstrip('@')))
+                (Users.full_name_for_orders.ilike(lead_manager)) |
+                (Users.username.ilike(lead_manager.lstrip('@')))
             ).first().run()
 
         if user:
@@ -2219,10 +2305,18 @@ async def send_delivery_to_accountant(
             detail="Не знайдено жодного активного бухгалтера в системі. Будь ласка, додайте бухгалтера через панель керування."
         )
 
+    # Збираємо унікальних клієнтів, менеджерів та доповнення
+    unique_clients = list(dict.fromkeys([o["client"] for o in orders_for_report if o.get("client") and o["client"] != "Не вказано"]))
+    unique_managers = list(dict.fromkeys([o["manager"] for o in orders_for_report if o.get("manager")]))
+    unique_order_refs = list(dict.fromkeys([o["order_ref"] for o in orders_for_report if o.get("order_ref") and o["order_ref"] != "—"]))
+
     delivery_dict = {
         "id": delivery.id,
-        "client": delivery.client,
-        "manager": delivery.manager,
+        "client": ", ".join(unique_clients) if unique_clients else (delivery.client or ""),
+        "clients": unique_clients,
+        "manager": ", ".join(unique_managers) if unique_managers else (delivery.manager or ""),
+        "managers": unique_managers,
+        "order_refs": unique_order_refs,
         "ttn": delivery.ttn,
         "delivery_date": str(delivery.delivery_date) if delivery.delivery_date else "",
         "address": delivery.address,
@@ -2231,8 +2325,8 @@ async def send_delivery_to_accountant(
         "comment": delivery.comment
     }
 
-    printable_html = generate_printable_html(delivery_dict, items_for_report, data.comment)
-    mailto_url = generate_mailto_url(accountant.email or "", delivery_dict, items_for_report, data.comment)
+    printable_html = generate_printable_html(delivery_dict, orders=orders_for_report, custom_comment=data.comment)
+    mailto_url = generate_mailto_url(accountant.email or "", delivery_dict, orders=orders_for_report, custom_comment=data.comment)
 
     res_tg = {"success": False, "skipped": True}
     res_mail = {"success": False, "skipped": True}
@@ -2243,7 +2337,7 @@ async def send_delivery_to_accountant(
             res_tg = await send_accountant_telegram(
                 telegram_id=accountant.telegram_id,
                 delivery_data=delivery_dict,
-                items=items_for_report,
+                orders=orders_for_report,
                 printable_html=printable_html,
                 custom_comment=data.comment
             )
@@ -2258,7 +2352,7 @@ async def send_delivery_to_accountant(
             res_mail = await send_accountant_email(
                 to_email=accountant.email,
                 delivery_data=delivery_dict,
-                items=items_for_report,
+                orders=orders_for_report,
                 printable_html=printable_html,
                 custom_comment=data.comment
             )

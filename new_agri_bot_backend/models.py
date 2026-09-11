@@ -331,11 +331,30 @@ class ClientData(BaseModel):
     deliveryDate: Optional[str]
 
 
+class AccountantOrderItem(BaseModel):
+    product: str
+    nomenclature: Optional[str] = None
+    quantity: float
+    weight: Optional[float] = 0.0
+    parties: List[UpdateParty] = []
+    line_of_business: Optional[str] = None
+
+
+class AccountantOrder(BaseModel):
+    order_ref: str
+    client: str
+    manager: Optional[str] = ""
+    address: Optional[str] = ""
+    items: List[AccountantOrderItem] = []
+
+
 class SendToAccountantRequest(BaseModel):
     delivery_id: int
     accountant_id: Optional[str] = None
     channels: List[str] = ["telegram", "email"]
     comment: Optional[str] = None
+    orders: Optional[List[AccountantOrder]] = None
     items: Optional[List[UpdateItem]] = None
     ttn: Optional[str] = None
+
 
