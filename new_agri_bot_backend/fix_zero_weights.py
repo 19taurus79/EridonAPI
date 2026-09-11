@@ -1,8 +1,19 @@
 import asyncio
 import logging
+import os
+import sys
 from datetime import datetime
+from pathlib import Path
 
-from new_agri_bot_backend.tables import Deliveries, DeliveryItems, Submissions
+# Гарантуємо наявність кореневої папки в sys.path для запуску будь-яким способом
+root_dir = str(Path(__file__).resolve().parent.parent)
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
+
+try:
+    from new_agri_bot_backend.tables import Deliveries, DeliveryItems, Submissions
+except ImportError:
+    from tables import Deliveries, DeliveryItems, Submissions
 def get_fallback_weight(line_of_business: str, nomenclature: str) -> float:
     LOB_WEIGHT_MAP = {
         "Власне виробництво насіння": 1.0,
