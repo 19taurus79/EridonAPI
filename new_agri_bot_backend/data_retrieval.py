@@ -110,42 +110,35 @@ async def get_remains_warehouses():
 
 @router.get("/remains/{product_id}", summary="Отримати залишки за конкретним продуктом")
 @cached_endpoint()
-async def get_remains_by_product(
+async def get_remains_by_product_id(
     product_id: str,
 ):  # Використовуємо product_id для ясності
     """
     Повертає записи про залишки на складі для зазначеного продукту.
     Використовує `product_id` для фільтрації за полем `product`.
+    Якщо залишків немає, повертає порожній список.
     """
     remains = await Remains.select().where(Remains.product == product_id).run()
-    if not remains:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Залишки для продукту з ID '{product_id}' не знайдено.",
-        )
-    return remains
+    return remains or []
 
 
 @router.get(
     "/remains_by_product", summary="Отримати залишки за конкретним продуктом"
 )
 @cached_endpoint()
-async def get_remains_by_product(
+async def get_remains_by_product_name(
     product: str = Query(..., description="Назва продукту"),
 ):
-
-    product_id = (
+    product_records = (
         await ProductGuide.select(ProductGuide.id)
         .where(ProductGuide.product == product)
         .run()
     )
-    remains = await Remains.select().where(Remains.product == product_id[0]["id"]).run()
-    if not remains:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Залишки для продукту з ID '{product_id}' не знайдено.",
-        )
-    return remains
+    if not product_records:
+        return []
+
+    remains = await Remains.select().where(Remains.product == product_records[0]["id"]).run()
+    return remains or []
 
 
 @router.get(
@@ -162,12 +155,7 @@ async def get_group_remains_by_product(product_id: str):
         .group_by(Remains.product)
         .run()
     )
-    if not remains:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Залишки для продукту з ID '{product_id}' не знайдено.",
-        )
-    return remains
+    return remains or []
 
 
 @router.get(
@@ -186,10 +174,7 @@ async def get_av_remains_by_product(
         await AvailableStock.select().where(AvailableStock.product == product_id).run()
     )
     if not remains:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Залишки для продукту з ID '{product_id}' не знайдено.",
-        )
+        return []
     
     # Отримуємо детальні залишки по складах з FreeStock
     free_stocks = await FreeStock.select().where(FreeStock.product == product_id).run()

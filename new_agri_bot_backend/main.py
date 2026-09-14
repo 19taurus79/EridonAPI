@@ -374,11 +374,11 @@ async def error_notify_middleware(request: Request, call_next):
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    """Перехватчик всех HTTPException (400, 401, 403, 404, 500) — логирует и шлёт в Telegram при 400+."""
-    logger.error(
-        f"HTTPException {exc.status_code} on {request.method} {request.url.path}: {exc.detail}"
-    )
-    if exc.status_code >= 400:
+    """Перехватчик HTTPException: логирует предупреждения для 4xx, уведомляет Telegram только при 5xx."""
+    if exc.status_code >= 500:
+        logger.error(
+            f"HTTPException {exc.status_code} on {request.method} {request.url.path}: {exc.detail}"
+        )
         asyncio.create_task(
             notify_admins_error(
                 exc,
@@ -386,6 +386,10 @@ async def http_exception_handler(request: Request, exc: HTTPException):
                 method=request.method,
                 extra=f"Status: {exc.status_code}, Detail: {exc.detail}",
             )
+        )
+    else:
+        logger.warning(
+            f"HTTPException {exc.status_code} on {request.method} {request.url.path}: {exc.detail}"
         )
     return JSONResponse(
         status_code=exc.status_code,
@@ -395,18 +399,10 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Перехватчик ошибок валидации Pydantic — уведомляет Telegram с деталями."""
+    """Перехватчик ошибок валидации Pydantic — логирует как warning, без отправки в Telegram."""
     errors_summary = json.dumps(exc.errors(), ensure_ascii=False)
-    logger.error(
+    logger.warning(
         f"Validation error on {request.method} {request.url.path}: {errors_summary}"
-    )
-    asyncio.create_task(
-        notify_admins_error(
-            exc,
-            path=request.url.path,
-            method=request.method,
-            extra=f"Validation errors: {errors_summary}",
-        )
     )
     return JSONResponse(
         status_code=400,
