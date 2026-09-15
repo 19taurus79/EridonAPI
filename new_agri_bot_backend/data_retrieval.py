@@ -43,6 +43,7 @@ from .tables import (
     Deliveries,
     DeliveryItems,
     FreeStock,
+    ValidWarehouseAdmin,
 )
 from .telegram_auth import get_current_telegram_user, check_not_guest
 from .tasks_handler import (
@@ -106,6 +107,24 @@ async def get_remains_warehouses():
     """
     result = await Remains.raw(query)
     return [row["warehouse"] for row in result]
+
+
+@router.get(
+    "/delivery/warehouses",
+    summary="Отримати список активних складів компанії для доставки",
+    dependencies=[Depends(get_current_telegram_user)],
+)
+@cached_endpoint()
+async def get_delivery_warehouses():
+    """
+    Повертає список активних складів компанії з таблиці ValidWarehouseAdmin (is_active == True).
+    """
+    warehouses = await ValidWarehouseAdmin.select(
+        ValidWarehouseAdmin.name
+    ).where(
+        ValidWarehouseAdmin.is_active == True
+    ).order_by(ValidWarehouseAdmin.name).run()
+    return [w["name"] for w in warehouses if w.get("name")]
 
 
 @router.get("/remains/{product_id}", summary="Отримати залишки за конкретним продуктом")

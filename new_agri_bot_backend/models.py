@@ -137,8 +137,8 @@ class DeliveryRequest(BaseModel):
     client: str
     manager: str
     address: str
-    contact: str = ""   # Не обов'язково при самовивозі
-    phone: str = ""     # Не обов'язково при самовивозі
+    contact: str = ""   # Не обов'язково при самовивозі або доставці на склад
+    phone: str = ""     # Не обов'язково при самовивозі або доставці на склад
     date: str  # ISO-формат строки
     comment: str
     is_custom_address: bool
@@ -146,9 +146,10 @@ class DeliveryRequest(BaseModel):
     longitude: float
     total_weight: float
     orders: List[DeliveryOrder]
-    status: str = "Створено"  # Статус доставки (напр. "Самовивіз")
+    status: str = "Створено"  # Статус доставки (напр. "Самовивіз", "Доставка на склад")
     override_created_by: Optional[int] = None  # Перевизначає автора (для розділення доставки адміном)
     actor_name: Optional[str] = None
+    target_warehouse: Optional[str] = None
 
 
 class SplitItemRequest(BaseModel):
@@ -199,6 +200,7 @@ class UpdateDeliveryRequest(BaseModel):
     comment: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    target_warehouse: Optional[str] = None
 
 
 class ChangeDeliveryDateRequest(BaseModel):

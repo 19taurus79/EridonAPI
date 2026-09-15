@@ -40,7 +40,7 @@ async def notify_new_delivery(delivery: Deliveries, actor_name: str = None, cust
         return
     # Якщо доставка створюється зі статусом відмінним від "Створено", "Самовивіз" або "Нова Пошта",
     # то це фактично створення + зміна статусу.
-    if delivery.status not in ["Створено", "Самовивіз", "Нова Пошта", ""]:
+    if delivery.status not in ["Створено", "Самовивіз", "Нова Пошта", "Доставка на склад", ""]:
         # Видаляємо старі, якщо були
         await delete_delivery_notifications(delivery.id)
         # Надсилаємо сповіщення про статус
@@ -61,14 +61,18 @@ async def notify_new_delivery(delivery: Deliveries, actor_name: str = None, cust
             header = "🚗 <b>Нова заявка на Самовивіз!</b>"
         elif delivery.status == "Нова Пошта":
             header = "📦 <b>Нова заявка на Нову Пошту!</b>"
+        elif delivery.status == "Доставка на склад":
+            header = "🏭 <b>Нова заявка на доставку на склад!</b>"
         else:
             header = "🆕 <b>Нова заявка на доставку!</b>"
+
+        location_line = f"🏢 Склад: <b>{html.escape(delivery.target_warehouse or 'На розсуд логіста')}</b>\n" if delivery.status == "Доставка на склад" else f"📍 Адреса: {safe_address}\n"
 
         text = (
             f"{header}\n\n"
             f"👤 Клієнт: <b>{safe_client}</b>\n"
             f"👨‍💼 Менеджер: {safe_manager}\n"
-            f"📍 Адреса: {safe_address}\n"
+            f"{location_line}"
             f"📅 Дата: {delivery.delivery_date}\n"
             f"⚖️ Вага: {delivery.total_weight} кг\n"
             f"📝 Коментар: {html.escape(delivery.comment or '')}"

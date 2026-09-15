@@ -337,6 +337,7 @@ class Deliveries(Table):
     received_at = Timestamp(null=True)
     np_status = Varchar(length=255, null=True)
     np_status_code = Varchar(length=10, null=True)
+    target_warehouse = Varchar(length=255, null=True)
 
 
 # Таблица товаров в доставке

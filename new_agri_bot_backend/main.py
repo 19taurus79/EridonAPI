@@ -1634,6 +1634,8 @@ async def send_delivery(
         header = "🚗 <b>Нова заявка на Самовивіз!</b>"
     elif data.status == "Нова Пошта":
         header = "📦 <b>Нова заявка на Нову Пошту!</b>"
+    elif data.status == "Доставка на склад":
+        header = "🏭 <b>Нова заявка на доставку на склад!</b>"
     else:
         header = "🆕 <b>Нова заявка на доставку!</b>"
 
@@ -1646,15 +1648,25 @@ async def send_delivery(
     if telegram_id != effective_created_by:
         message_lines.append(f"✍️ Створив: {actor_display}")
 
-    message_lines.extend([
-        f"📍 Адреса: {data.address}",
-        f"👤 Контакт: {data.contact}",
-        f"📞 Телефон: {data.phone}",
-        f"📅 Дата доставки: {data.date}",
-        f"⚖️ Вага: {data.total_weight} кг",
-        f"💬 Коментар: {data.comment}",
-        "",
-    ])
+    if data.status == "Доставка на склад":
+        warehouse_str = data.target_warehouse or "На розсуд логіста"
+        message_lines.extend([
+            f"🏢 Склад: <b>{warehouse_str}</b>",
+            f"📅 Дата доставки: {data.date}",
+            f"⚖️ Вага: {data.total_weight} кг",
+            f"💬 Коментар: {data.comment}",
+            "",
+        ])
+    else:
+        message_lines.extend([
+            f"📍 Адреса: {data.address}",
+            f"👤 Контакт: {data.contact}",
+            f"📞 Телефон: {data.phone}",
+            f"📅 Дата доставки: {data.date}",
+            f"⚖️ Вага: {data.total_weight} кг",
+            f"💬 Коментар: {data.comment}",
+            "",
+        ])
 
     for order in data.orders:
         message_lines.append(f"📦 <b>Замовлення</b> <code>{order.order}</code>")
@@ -1722,6 +1734,7 @@ async def send_delivery(
             status=data.status,
             created_by=effective_created_by,
             calendar_id=calendar_id,
+            target_warehouse=data.target_warehouse,
         )
         await new_delivery.save().run()
         logger.info(f"✅ Основна інформація по доставці ID: {new_delivery.id} збережена (автор: {effective_created_by}).")
@@ -2173,6 +2186,12 @@ async def update_delivery(
             delivery_data.latitude = data.latitude
         if data.longitude is not None:
             delivery_data.longitude = data.longitude
+        if data.target_warehouse is not None:
+            delivery_data.target_warehouse = data.target_warehouse
+
+        # Автоматичне закриття заявки "Доставка на склад" при взятті в роботу
+        if delivery_data.status == "Доставка на склад" and data.status in ["В роботі", "inprogress"]:
+            data.status = "Виконано"
 
         # 2. Оновлюємо статус, якщо змінився
         status_changed = False
@@ -2235,11 +2254,20 @@ async def update_delivery(
                         if item.product and (float(item.quantity or 0) > 0)
                     ]
                     items_text = "\n".join(items_list) if items_list else "<i>(не вказано)</i>"
-                    message_text = (
-                        f"✅ <b>Доставка завершена</b>\n\n"
-                        f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
-                        f"📦 Товари:\n{items_text}\n"
-                    )
+                    if old_status == "Доставка на склад" or getattr(delivery_data, "target_warehouse", None):
+                        warehouse_line = f"🏢 Склад: <b>{html.escape(delivery_data.target_warehouse or 'На розсуд логіста')}</b>\n"
+                        message_text = (
+                            f"🏭 <b>Заявка на склад взята в роботу та закрита</b>\n\n"
+                            f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
+                            f"{warehouse_line}"
+                            f"📦 Товари:\n{items_text}\n"
+                        )
+                    else:
+                        message_text = (
+                            f"✅ <b>Доставка завершена</b>\n\n"
+                            f"👤 Клієнт: <b>{delivery_data.client}</b>\n"
+                            f"📦 Товари:\n{items_text}\n"
+                        )
                     if delivery_data.ttn:
                         message_text += f"\n📦 <b>ТТН:</b> <code>{delivery_data.ttn}</code>\n"
                         # Запитуємо статус посилки з API Нової Пошти
@@ -2916,18 +2944,22 @@ async def batch_update_deliveries(
                 # Оновлення статусу
                 if data.status and delivery.status != data.status:
                     old_status = delivery.status
-                    delivery.status = data.status
-                    changes.append(f"статус: {old_status} ➔ <b>{data.status}</b>")
+                    effective_status = data.status
+                    if old_status == "Доставка на склад" and data.status in ["В роботі", "inprogress"]:
+                        effective_status = "Виконано"
+
+                    delivery.status = effective_status
+                    changes.append(f"статус: {old_status} ➔ <b>{effective_status}</b>")
                     
                     # Нагадування для Нової Пошти
-                    if data.status == "В роботі":
+                    if effective_status == "В роботі":
                         try:
                             from .services.delivery_reminder_service import is_np_delivery, schedule_np_reminder
                             if is_np_delivery(delivery, old_status):
                                 await schedule_np_reminder(delivery.id, user_id, delay_minutes=15)
                         except Exception as rem_err:
                             logger.warning(f"Error scheduling np reminder in batch: {rem_err}")
-                    elif data.status == "Виконано":
+                    elif effective_status == "Виконано":
                         try:
                             from .services.delivery_reminder_service import cancel_np_reminder
                             await cancel_np_reminder(delivery.id)
@@ -2936,7 +2968,7 @@ async def batch_update_deliveries(
 
                     # Google Calendar color update
                     if delivery.calendar_id:
-                        cal_status = 2 if data.status == "Виконано" else 1
+                        cal_status = 2 if effective_status == "Виконано" else 1
                         changed_color_calendar_events_by_id(event_id=delivery.calendar_id, status_code=cal_status)
                         await Events.update({Events.event_status: cal_status}).where(
                             Events.event_id == delivery.calendar_id
