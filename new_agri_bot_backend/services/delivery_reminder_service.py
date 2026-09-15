@@ -194,3 +194,42 @@ async def process_due_reminders():
             await rem.save().run()
         except Exception as e:
             logger.error(f"❌ Помилка обробки нагадування {rem.id}: {e}")
+
+
+async def mark_reminder_done(reminder_id: int) -> bool:
+    """
+    Позначає нагадування як виконане (status = 'done').
+    """
+    try:
+        rem = await DeliveryReminders.objects().where(DeliveryReminders.id == reminder_id).first().run()
+        if rem:
+            rem.status = "done"
+            await rem.save().run()
+            logger.info(f"✅ Нагадування ID {reminder_id} успішно позначено як done.")
+            return True
+        logger.warning(f"⚠️ Нагадування ID {reminder_id} не знайдено.")
+        return False
+    except Exception as e:
+        logger.error(f"❌ Помилка оновлення статусу нагадування {reminder_id} в done: {e}")
+        return False
+
+
+async def delay_reminder(reminder_id: int, delay_minutes: int = 15) -> bool:
+    """
+    Переносить нагадування на вказану кількість хвилин (за замовчуванням 15 хв).
+    """
+    try:
+        rem = await DeliveryReminders.objects().where(DeliveryReminders.id == reminder_id).first().run()
+        if rem:
+            rem.remind_at = datetime.now() + timedelta(minutes=delay_minutes)
+            rem.status = "pending"
+            rem.message_id = None
+            await rem.save().run()
+            logger.info(f"⏰ Нагадування ID {reminder_id} перенесено на {delay_minutes} хв (до {rem.remind_at}).")
+            return True
+        logger.warning(f"⚠️ Нагадування ID {reminder_id} не знайдено.")
+        return False
+    except Exception as e:
+        logger.error(f"❌ Помилка перенесення нагадування {reminder_id}: {e}")
+        return False
+

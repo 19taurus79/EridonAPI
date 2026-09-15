@@ -525,6 +525,27 @@ async def bot_webhook(request: Request):
     return {"ok": True}
 
 
+@app.post("/api/reminders/{reminder_id}/done")
+async def api_reminder_done(reminder_id: int):
+    """Позначає нагадування як виконане (для виклику з Telegram-бота або фронтенду)"""
+    from .services.delivery_reminder_service import mark_reminder_done
+    success = await mark_reminder_done(reminder_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Reminder not found")
+    return {"ok": True, "reminder_id": reminder_id, "status": "done"}
+
+
+@app.post("/api/reminders/{reminder_id}/delay")
+async def api_reminder_delay(reminder_id: int, minutes: int = 15):
+    """Переносить нагадування на вказану кількість хвилин (за замовчуванням 15)"""
+    from .services.delivery_reminder_service import delay_reminder
+    success = await delay_reminder(reminder_id, delay_minutes=minutes)
+    if not success:
+        raise HTTPException(status_code=404, detail="Reminder not found")
+    return {"ok": True, "reminder_id": reminder_id, "status": "pending", "delay_minutes": minutes}
+
+
+
 
 #
 
