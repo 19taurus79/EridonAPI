@@ -1,5 +1,6 @@
 import html
 import logging
+from collections import defaultdict
 from typing import Optional, List, Set
 from datetime import datetime, timedelta
 from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
@@ -77,8 +78,8 @@ async def get_accountant_telegram_id_for_delivery(delivery: Deliveries) -> Optio
 async def check_np_deliveries_status():
     """
     Планова перевірка вручення посилок Нової Пошти за номерами ТТН.
-    Запускається за розкладом (Пн-Пт о 10:00, 13:00, 16:00).
-    Знаходить усі доставки, де ttn непорожній, а is_received == False.
+    Запускається за розкладом.
+    Знаходить усі доставки за останні 30 днів, де ttn непорожній, а is_received == False.
     При статусі 'Отримано' фіксує отримання в БД та сповіщає:
     - Логістів (LOGISTICS_TELEGRAM_IDS)
     - Менеджера (created_by)
@@ -91,9 +92,9 @@ async def check_np_deliveries_status():
     logger.info("🔍 Початок перевірки статусів ТТН Нової Пошти...")
 
     try:
-        min_date = datetime.now().date() - timedelta(days=3)
-        min_dt = datetime.now() - timedelta(days=3)
-        # Вибираємо доставки з ТТН за останні 3 дні, які ще не відмічені як отримані
+        min_date = datetime.now().date() - timedelta(days=30)
+        min_dt = datetime.now() - timedelta(days=30)
+        # Вибираємо доставки з ТТН за останні 30 днів, які ще не відмічені як отримані
         deliveries = await Deliveries.objects().where(
             (Deliveries.ttn.is_not_null()) &
             (Deliveries.ttn != "") &
@@ -102,7 +103,7 @@ async def check_np_deliveries_status():
             (Deliveries.status != "Видалено") &
             (
                 (Deliveries.delivery_date >= min_date) |
-                ((Deliveries.delivery_date.is_null()) & (Deliveries.created_at >= min_dt))
+                (Deliveries.created_at >= min_dt)
             )
         ).run()
     except Exception as e:
@@ -119,7 +120,12 @@ async def check_np_deliveries_status():
     chunk_size = 50
     for i in range(0, len(deliveries), chunk_size):
         chunk = deliveries[i:i + chunk_size]
-        ttn_map = {str(d.ttn).strip(): d for d in chunk if d.ttn and str(d.ttn).strip()}
+        # Підтримка кількох доставок з одним і тим же ТТН
+        ttn_map = defaultdict(list)
+        for d in chunk:
+            clean_ttn = str(d.ttn or "").strip().replace(" ", "").replace("-", "")
+            if clean_ttn and clean_ttn != "Не вказано":
+                ttn_map[clean_ttn].append(d)
 
         if not ttn_map:
             continue
@@ -140,9 +146,9 @@ async def check_np_deliveries_status():
 
         results = np_resp.get("data", [])
         for track_item in results:
-            ttn_num = str(track_item.get("Number") or "").strip()
-            delivery = ttn_map.get(ttn_num)
-            if not delivery:
+            ttn_num = str(track_item.get("Number") or "").strip().replace(" ", "").replace("-", "")
+            matched_deliveries = ttn_map.get(ttn_num, [])
+            if not matched_deliveries:
                 continue
 
             status_code = str(track_item.get("StatusCode") or "").strip()
@@ -152,22 +158,11 @@ async def check_np_deliveries_status():
             is_received = (
                 status_code in RECEIVED_STATUS_CODES
                 or "відправлення отримано" in status_lower
+                or "отримано" in status_lower
                 or "одержано" in status_lower
             )
 
-            # Оновлюємо статус в будь-якому випадку для інформативності
-            delivery.np_status = status_text
-            delivery.np_status_code = status_code
-
-            if not is_received:
-                # Зберігаємо проміжний статус, щоб бачити актуальний стан трекінгу
-                try:
-                    await delivery.save().run()
-                except Exception as save_err:
-                    logger.debug(f"Не вдалося оновити проміжний статус ТТН {ttn_num}: {save_err}")
-                continue
-
-            # Посилку отримано!
+            # Час вручення
             recipient_datetime_str = track_item.get("RecipientDateTime") or ""
             rec_dt = datetime.now()
             if recipient_datetime_str:
@@ -178,18 +173,32 @@ async def check_np_deliveries_status():
                     except ValueError:
                         pass
 
-            delivery.is_received = True
-            delivery.received_at = rec_dt
+            for delivery in matched_deliveries:
+                # Оновлюємо статус в будь-якому випадку для інформативності
+                delivery.np_status = status_text
+                delivery.np_status_code = status_code
 
-            try:
-                await delivery.save().run()
-                logger.info(f"🎉 Доставка ID {delivery.id} (ТТН {ttn_num}) позначена як отримана ({rec_dt}).")
-            except Exception as e:
-                logger.error(f"❌ Помилка збереження статусу отримання для доставки {delivery.id}: {e}")
-                continue
+                if not is_received:
+                    # Зберігаємо проміжний статус, щоб бачити актуальний стан трекінгу
+                    try:
+                        await delivery.save().run()
+                    except Exception as save_err:
+                        logger.debug(f"Не вдалося оновити проміжний статус ТТН {ttn_num}: {save_err}")
+                    continue
 
-            # Формуємо та надсилаємо сповіщення
-            await send_delivery_received_notification(delivery, track_item, rec_dt)
+                # Посилку отримано!
+                delivery.is_received = True
+                delivery.received_at = rec_dt
+
+                try:
+                    await delivery.save().run()
+                    logger.info(f"🎉 Доставка ID {delivery.id} (ТТН {ttn_num}) позначена як отримана ({rec_dt}).")
+                except Exception as e:
+                    logger.error(f"❌ Помилка збереження статусу отримання для доставки {delivery.id}: {e}")
+                    continue
+
+                # Формуємо та надсилаємо сповіщення
+                await send_delivery_received_notification(delivery, track_item, rec_dt)
 
 
 async def send_delivery_received_notification(delivery: Deliveries, track_item: dict, received_dt: datetime):

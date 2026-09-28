@@ -132,11 +132,9 @@ def setup_scheduler():
     from .services.delivery_reminder_service import process_due_reminders
     scheduler.add_job(process_due_reminders, 'interval', minutes=1, misfire_grace_time=30, coalesce=True)
 
-    # Перевірка вручення посилок Нової Пошти за ТТН (Пн-Пт о 10:00, 13:00, 16:00)
+    # Перевірка вручення посилок Нової Пошти за ТТН (щодня з 09:00 до 19:00 кожні 2 години, включаючи вихідні)
     from .services.np_tracking_service import check_np_deliveries_status
-    scheduler.add_job(check_np_deliveries_status, 'cron', day_of_week='mon-fri', hour=10, minute=0, misfire_grace_time=120, coalesce=True)
-    scheduler.add_job(check_np_deliveries_status, 'cron', day_of_week='mon-fri', hour=13, minute=0, misfire_grace_time=120, coalesce=True)
-    scheduler.add_job(check_np_deliveries_status, 'cron', day_of_week='mon-fri', hour=16, minute=0, misfire_grace_time=120, coalesce=True)
+    scheduler.add_job(check_np_deliveries_status, 'cron', hour='9,11,13,15,17,19', minute=0, misfire_grace_time=300, coalesce=True)
 
     scheduler.start()
     logger.info("Scheduler started with cleanup, summary, supplement check, delivery status check, urgent pickup check, NP reminder, and NP tracking jobs.")
