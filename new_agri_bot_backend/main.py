@@ -5,6 +5,7 @@ import json
 import io
 import os
 import tempfile
+import time
 import uuid
 from enum import Enum
 from pathlib import Path
@@ -132,6 +133,7 @@ from .config import (
     CORS_ORIGINS,
     SEND_NOTIFICATIONS,
     LOGISTICS_TELEGRAM_IDS,
+    ADMINS_ID,
 )
 
 # Инициализация Telegram Bot (используется в utils.py, но может быть нужен здесь для глобальной инициализации)
@@ -612,6 +614,59 @@ async def message(message: TelegramMessage):
         )
     else:
         logger.info(f"🔇 Сповіщення вимкнено. Ендпоінт /send_telegram_message_by_event пропущено.")
+
+
+_last_update_requests: Dict[int, float] = {}
+
+
+@app.post("/request_update", tags=["Системні сповіщення"], dependencies=[Depends(check_not_guest)])
+async def request_data_update(current_user: Users = Depends(get_current_telegram_user)):
+    """
+    Надсилає сповіщення адміністраторам про необхідність оновлення даних.
+    Має захист від спаму: не частіше 1 разу на 60 секунд від одного користувача.
+    """
+    now = time.time()
+    last_time = _last_update_requests.get(current_user.telegram_id, 0)
+    cooldown = 60  # секунди
+    if now - last_time < cooldown:
+        remaining = int(cooldown - (now - last_time))
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Запит вже надіслано. Будь ласка, зачекайте {remaining} сек. перед повторною відправкою."
+        )
+
+    _last_update_requests[current_user.telegram_id] = now
+
+    sender_name = (
+        current_user.full_name_for_orders
+        or f"{current_user.first_name or ''} {current_user.last_name or ''}".strip()
+        or current_user.username
+        or f"ID: {current_user.telegram_id}"
+    )
+    username_part = f" (@{current_user.username})" if current_user.username else ""
+    date_str = datetime.now().strftime("%d.%m.%Y %H:%M")
+
+    message_text = (
+        f"🔄 <b>Потрібне оновлення даних!</b>\n\n"
+        f"👤 <b>Відправник:</b> {html.escape(sender_name)}{html.escape(username_part)}\n"
+        f"🆔 <b>Telegram ID:</b> <code>{current_user.telegram_id}</code>\n"
+        f"📅 <b>Час запиту:</b> {date_str}\n\n"
+        f"⚠️ <i>Користувач надіслав запит на оновлення залишків / заявок з головного меню додатку.</i>"
+    )
+
+    if not SEND_NOTIFICATIONS:
+        logger.info(f"🔇 Сповіщення вимкнено (SEND_NOTIFICATIONS=false). Запит на оновлення від {current_user.telegram_id} пропущено.")
+        return {"success": True, "message": "Запит зафіксовано (сповіщення вимкнено в тестовому режимі)."}
+
+    if not ADMINS_ID:
+        logger.warning("ADMINS_ID порожній, нікому відправити сповіщення про оновлення")
+        return {"success": False, "message": "Список адміністраторів порожній."}
+
+    from .services.send_telegram_notification import send_notification
+    await send_notification(bot=bot, chat_ids=ADMINS_ID, text=message_text, parse_mode="HTML")
+    logger.info(f"📤 Сповіщення про оновлення від {sender_name} надіслано адміністраторам {ADMINS_ID}")
+
+    return {"success": True, "message": "Запит на оновлення успішно надіслано адміністраторам!"}
 
 
 # --- Маршрут для загрузки и обработки данных ---
