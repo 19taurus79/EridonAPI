@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from aiogram import Dispatcher, F
 from aiogram.filters import CommandStart
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from .config import logger, bot, ADMINS_ID
 from .telegram_auth import confirm_login_token
 from .tables import Users
@@ -20,9 +20,10 @@ def setup_bot_handlers(dp: Dispatcher):
         username = message.from_user.username or ""
 
         # Автоматично зберігаємо / оновлюємо користувача в таблиці Users
+        user = None
+        now_utc = datetime.now(timezone.utc)
         try:
             user = await Users.objects().where(Users.telegram_id == telegram_id).first().run()
-            now_utc = datetime.now(timezone.utc)
             if not user:
                 user = Users(
                     telegram_id=telegram_id,
@@ -36,22 +37,6 @@ def setup_bot_handlers(dp: Dispatcher):
                 )
                 await user.save().run()
                 logger.info(f"✅ Додано нового користувача в Users через /start: {telegram_id} (@{username})")
-
-                # Сповіщаємо адміністраторів про нового користувача
-                for admin_id in ADMINS_ID:
-                    try:
-                        await bot.send_message(
-                            chat_id=admin_id,
-                            text=(
-                                f"👤 <b>Новий користувач запустив бота!</b>\n\n"
-                                f"Ім'я: <b>{first_name} {last_name}</b>\n"
-                                f"Username: @{username}\n"
-                                f"Telegram ID: <code>{telegram_id}</code>"
-                            ),
-                            parse_mode="HTML"
-                        )
-                    except Exception as err:
-                        logger.warning(f"Не вдалося надіслати сповіщення адміну {admin_id}: {err}")
             else:
                 user.username = username
                 user.first_name = first_name
@@ -61,6 +46,7 @@ def setup_bot_handlers(dp: Dispatcher):
         except Exception as e:
             logger.error(f"❌ Помилка автореєстрації в handle_bot_start: {e}")
 
+        # Обробка weblogin_ токенів для авторизації на сайті
         text = message.text or ""
         parts = text.split(" ", 1)
         if len(parts) == 2 and parts[1].startswith("weblogin_"):
@@ -74,15 +60,137 @@ def setup_bot_handlers(dp: Dispatcher):
                 await message.answer(
                     "❌ Посилання не знайдено або вже використано. Спробуйте ще раз."
                 )
+            return
+
+        is_pending = not user or not user.is_allowed
+
+        if is_pending:
+            # Клавіатура для вибору ролі адміністратором
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="👑 Адмін", callback_data=f"approve_admin_{telegram_id}"),
+                    InlineKeyboardButton(text="👤 Користувач", callback_data=f"approve_user_{telegram_id}"),
+                ],
+                [
+                    InlineKeyboardButton(text="👁 Гість", callback_data=f"approve_guest_{telegram_id}"),
+                    InlineKeyboardButton(text="❌ Відмовити", callback_data=f"reject_{telegram_id}"),
+                ]
+            ])
+
+            for admin_id in ADMINS_ID:
+                try:
+                    await bot.send_message(
+                        chat_id=admin_id,
+                        text=(
+                            f"👤 <b>Запит на доступ від користувача!</b>\n\n"
+                            f"Ім'я: <b>{first_name} {last_name}</b>\n"
+                            f"Username: @{username or 'немає'}\n"
+                            f"Telegram ID: <code>{telegram_id}</code>\n\n"
+                            f"Оберіть роль для надання доступу:"
+                        ),
+                        reply_markup=keyboard,
+                        parse_mode="HTML"
+                    )
+                except Exception as err:
+                    logger.warning(f"Не вдалося надіслати сповіщення адміну {admin_id}: {err}")
+
+            await message.answer(
+                f"Вітаю, {first_name}! 👋\n\n"
+                f"Я бот Eridon.\n"
+                f"Ваш Telegram ID: <code>{telegram_id}</code> <i>(натисніть, щоб скопіювати)</i>\n\n"
+                f"⏳ <b>Ваш запит на доступ надіслано адміністратору.</b>\n"
+                f"Очікуйте підтвердження — вам надійде сповіщення в цей чат.",
+                parse_mode="HTML"
+            )
         else:
             await message.answer(
                 f"Вітаю, {first_name}! 👋\n\n"
                 f"Я бот Eridon.\n"
                 f"Ваш Telegram ID: <code>{telegram_id}</code> <i>(натисніть, щоб скопіювати)</i>\n\n"
-                f"• Якщо ви співробітник або бухгалтер — передайте цей ID адміністратору для налаштування доступу та сповіщень.\n"
-                f"• Якщо ви намагаєтесь увійти у веб-додаток з комп'ютера — надішліть сюди 6-значний код з екрана.",
+                f"✅ У вас є активний доступ до системи.\n"
+                f"• Для входу у веб-додаток з комп'ютера — надішліть 6-значний код з екрана.",
                 parse_mode="HTML"
             )
+
+    @dp.callback_query(F.data.startswith("approve_admin_") | F.data.startswith("approve_user_") | F.data.startswith("approve_guest_"))
+    async def handle_approve_user_callback(callback: CallbackQuery):
+        """Обробник надання доступу та вибору ролі адміністратором"""
+        parts = callback.data.split("_")
+        role = parts[1]  # admin / user / guest
+        user_id = int(parts[2])
+
+        is_admin_flag = (role == "admin")
+        is_guest_flag = (role == "guest")
+
+        try:
+            user = await Users.objects().where(Users.telegram_id == user_id).first().run()
+            if user:
+                user.is_allowed = True
+                user.is_admin = is_admin_flag
+                user.is_guest = is_guest_flag
+                await user.save().run()
+            else:
+                user = Users(
+                    telegram_id=user_id,
+                    is_allowed=True,
+                    is_admin=is_admin_flag,
+                    is_guest=is_guest_flag,
+                    registration_date=datetime.now(timezone.utc),
+                    last_activity_date=datetime.now(timezone.utc),
+                )
+                await user.save().run()
+
+            role_labels = {"admin": "👑 Адмін", "user": "👤 Користувач", "guest": "👁 Гість"}
+            role_label = role_labels.get(role, role)
+
+            orig_text = callback.message.html_text or callback.message.text or ""
+            await callback.message.edit_text(
+                f"{orig_text}\n\n✅ <b>Доступ надано!</b> Роль: {role_label}",
+                parse_mode="HTML"
+            )
+
+            try:
+                await bot.send_message(
+                    chat_id=user_id,
+                    text=f"🎉 <b>Вам надано доступ!</b> Роль: {role_label}.\nТепер ви можете користуватися системою.",
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                logger.warning(f"Не вдалося сповістити користувача {user_id}: {e}")
+
+            await callback.answer(f"Доступ надано: {role_label}")
+        except Exception as e:
+            logger.error(f"Помилка при збереженні доступу для {user_id}: {e}")
+            await callback.answer("❌ Помилка збереження", show_alert=True)
+
+    @dp.callback_query(F.data.startswith("reject_"))
+    async def handle_reject_user_callback(callback: CallbackQuery):
+        """Обробник відхилення запиту на доступ"""
+        user_id = int(callback.data.split("_")[1])
+        try:
+            user = await Users.objects().where(Users.telegram_id == user_id).first().run()
+            if user:
+                user.is_allowed = False
+                await user.save().run()
+
+            orig_text = callback.message.html_text or callback.message.text or ""
+            await callback.message.edit_text(
+                f"{orig_text}\n\n❌ <b>У доступі відмовлено.</b>",
+                parse_mode="HTML"
+            )
+
+            try:
+                await bot.send_message(
+                    chat_id=user_id,
+                    text="❌ Вашу заявку на доступ відхилено адміністратором."
+                )
+            except Exception as e:
+                logger.warning(f"Не вдалося сповістити користувача {user_id}: {e}")
+
+            await callback.answer("Відхилено")
+        except Exception as e:
+            logger.error(f"Помилка при відхиленні доступу {user_id}: {e}")
+            await callback.answer("❌ Помилка", show_alert=True)
 
     @dp.message(F.text.regexp(r"^\d{6}$"))
     async def handle_login_code(message):
