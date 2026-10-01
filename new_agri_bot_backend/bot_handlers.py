@@ -1,8 +1,10 @@
+from datetime import datetime, timezone
 from aiogram import Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery
-from .config import logger
+from .config import logger, bot, ADMINS_ID
 from .telegram_auth import confirm_login_token
+from .tables import Users
 
 def setup_bot_handlers(dp: Dispatcher):
     """
@@ -12,11 +14,57 @@ def setup_bot_handlers(dp: Dispatcher):
     @dp.message(CommandStart())
     async def handle_bot_start(message):
         """Handle /start command"""
+        telegram_id = message.from_user.id
+        first_name = message.from_user.first_name or ""
+        last_name = message.from_user.last_name or ""
+        username = message.from_user.username or ""
+
+        # Автоматично зберігаємо / оновлюємо користувача в таблиці Users
+        try:
+            user = await Users.objects().where(Users.telegram_id == telegram_id).first().run()
+            now_utc = datetime.now(timezone.utc)
+            if not user:
+                user = Users(
+                    telegram_id=telegram_id,
+                    username=username,
+                    first_name=first_name,
+                    last_name=last_name,
+                    is_allowed=False,
+                    is_guest=False,
+                    registration_date=now_utc,
+                    last_activity_date=now_utc,
+                )
+                await user.save().run()
+                logger.info(f"✅ Додано нового користувача в Users через /start: {telegram_id} (@{username})")
+
+                # Сповіщаємо адміністраторів про нового користувача
+                for admin_id in ADMINS_ID:
+                    try:
+                        await bot.send_message(
+                            chat_id=admin_id,
+                            text=(
+                                f"👤 <b>Новий користувач запустив бота!</b>\n\n"
+                                f"Ім'я: <b>{first_name} {last_name}</b>\n"
+                                f"Username: @{username}\n"
+                                f"Telegram ID: <code>{telegram_id}</code>"
+                            ),
+                            parse_mode="HTML"
+                        )
+                    except Exception as err:
+                        logger.warning(f"Не вдалося надіслати сповіщення адміну {admin_id}: {err}")
+            else:
+                user.username = username
+                user.first_name = first_name
+                user.last_name = last_name
+                user.last_activity_date = now_utc
+                await user.save().run()
+        except Exception as e:
+            logger.error(f"❌ Помилка автореєстрації в handle_bot_start: {e}")
+
         text = message.text or ""
         parts = text.split(" ", 1)
         if len(parts) == 2 and parts[1].startswith("weblogin_"):
             token = parts[1][len("weblogin_"):]
-            telegram_id = message.from_user.id
             success = await confirm_login_token(token, telegram_id)
             if success:
                 await message.answer(
@@ -28,8 +76,12 @@ def setup_bot_handlers(dp: Dispatcher):
                 )
         else:
             await message.answer(
-                "Вітаю! Я бот авторизації Eridon.\n\n"
-                "Якщо ви намагаєтесь увійти в систему, відправте мені 6-значний код з екрану."
+                f"Вітаю, {first_name}! 👋\n\n"
+                f"Я бот Eridon.\n"
+                f"Ваш Telegram ID: <code>{telegram_id}</code> <i>(натисніть, щоб скопіювати)</i>\n\n"
+                f"• Якщо ви співробітник або бухгалтер — передайте цей ID адміністратору для налаштування доступу та сповіщень.\n"
+                f"• Якщо ви намагаєтесь увійти у веб-додаток з комп'ютера — надішліть сюди 6-значний код з екрана.",
+                parse_mode="HTML"
             )
 
     @dp.message(F.text.regexp(r"^\d{6}$"))
