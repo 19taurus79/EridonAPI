@@ -41,6 +41,13 @@ except Exception as e:
     logger.error(f"Error parsing ADMINS_ID: {e}")
     ADMINS_ID = []
 
+# ID суперадміністратора (для запитів на реєстрацію/доступ)
+SUPERADMIN_ID_ENV = os.getenv("ADMIN_TELEGRAM_ID") or os.getenv("SUPERADMIN_TELEGRAM_ID")
+try:
+    SUPERADMIN_TELEGRAM_ID = int(SUPERADMIN_ID_ENV) if SUPERADMIN_ID_ENV else (ADMINS_ID[0] if ADMINS_ID else None)
+except Exception:
+    SUPERADMIN_TELEGRAM_ID = ADMINS_ID[0] if ADMINS_ID else None
+
 # ID логістів (з .env або за замовчуванням)
 LOGISTICS_IDS_JSON = os.getenv("LOGISTICS_TELEGRAM_IDS", "[548019148, 7953178333, 1060393824]")
 try:

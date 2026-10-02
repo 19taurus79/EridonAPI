@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from aiogram import Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
-from .config import logger, bot, ADMINS_ID
+from .config import logger, bot, ADMINS_ID, SUPERADMIN_TELEGRAM_ID
 from .telegram_auth import confirm_login_token
 from .tables import Users
 
@@ -77,10 +77,11 @@ def setup_bot_handlers(dp: Dispatcher):
                 ]
             ])
 
-            for admin_id in ADMINS_ID:
+            target_admin_id = SUPERADMIN_TELEGRAM_ID or (ADMINS_ID[0] if ADMINS_ID else None)
+            if target_admin_id:
                 try:
                     await bot.send_message(
-                        chat_id=admin_id,
+                        chat_id=target_admin_id,
                         text=(
                             f"👤 <b>Запит на доступ від користувача!</b>\n\n"
                             f"Ім'я: <b>{first_name} {last_name}</b>\n"
@@ -92,7 +93,7 @@ def setup_bot_handlers(dp: Dispatcher):
                         parse_mode="HTML"
                     )
                 except Exception as err:
-                    logger.warning(f"Не вдалося надіслати сповіщення адміну {admin_id}: {err}")
+                    logger.warning(f"Не вдалося надіслати сповіщення суперадміну {target_admin_id}: {err}")
 
             await message.answer(
                 f"Вітаю, {first_name}! 👋\n\n"
@@ -115,6 +116,12 @@ def setup_bot_handlers(dp: Dispatcher):
     @dp.callback_query(F.data.startswith("approve_admin_") | F.data.startswith("approve_user_") | F.data.startswith("approve_guest_"))
     async def handle_approve_user_callback(callback: CallbackQuery):
         """Обробник надання доступу та вибору ролі адміністратором"""
+        # Перевірка: тільки суперадмін може затверджувати доступ
+        approver_id = SUPERADMIN_TELEGRAM_ID or (ADMINS_ID[0] if ADMINS_ID else None)
+        if approver_id and callback.from_user.id != approver_id:
+            await callback.answer("❌ Тільки суперадміністратор може підтверджувати доступ.", show_alert=True)
+            return
+
         parts = callback.data.split("_")
         role = parts[1]  # admin / user / guest
         user_id = int(parts[2])
@@ -166,6 +173,12 @@ def setup_bot_handlers(dp: Dispatcher):
     @dp.callback_query(F.data.startswith("reject_"))
     async def handle_reject_user_callback(callback: CallbackQuery):
         """Обробник відхилення запиту на доступ"""
+        # Перевірка: тільки суперадмін може відхиляти доступ
+        approver_id = SUPERADMIN_TELEGRAM_ID or (ADMINS_ID[0] if ADMINS_ID else None)
+        if approver_id and callback.from_user.id != approver_id:
+            await callback.answer("❌ Тільки суперадміністратор може відхиляти доступ.", show_alert=True)
+            return
+
         user_id = int(callback.data.split("_")[1])
         try:
             user = await Users.objects().where(Users.telegram_id == user_id).first().run()
