@@ -1,9 +1,11 @@
+import html
 from datetime import datetime, timezone
 from aiogram import Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from .config import logger, bot, ADMINS_ID, SUPERADMIN_TELEGRAM_ID
 from .telegram_auth import confirm_login_token
+from .mcp_linking import confirm_mcp_linking, cancel_mcp_linking
 from .tables import Users
 
 def setup_bot_handlers(dp: Dispatcher):
@@ -60,6 +62,44 @@ def setup_bot_handlers(dp: Dispatcher):
                 await message.answer(
                     "❌ Посилання не знайдено або вже використано. Спробуйте ще раз."
                 )
+            return
+
+        # Обробка mcp_ токенів для зв'язування з ChatGPT / MCP Gateway
+        if len(parts) == 2 and (parts[1].startswith("mcp_") or parts[1].startswith("link_")):
+            nonce = parts[1][4:] if parts[1].startswith("mcp_") else parts[1][5:]
+            if len(nonce) > 52:
+                await message.answer(
+                    "❌ Недійсне посилання для прив'язки: токен перевищує допустиму довжину."
+                )
+                return
+
+            if not user or not user.is_allowed:
+                await message.answer(
+                    "❌ Доступ заборонено: ваш акаунт не активовано або заблоковано в системі Eridon."
+                )
+                return
+
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="✅ Підтвердити прив'язку",
+                        callback_data=f"mcp_confirm_{nonce}"
+                    ),
+                    InlineKeyboardButton(
+                        text="❌ Скасувати",
+                        callback_data=f"mcp_cancel_{nonce}"
+                    ),
+                ]
+            ])
+            display_name = html.escape(str(user.full_name_for_orders or first_name or "Користувач"))
+            await message.answer(
+                "⚠️ <b>Запит на підключення до ChatGPT MCP Gateway</b>\n\n"
+                f"👤 Користувач: <b>{display_name}</b>\n"
+                f"🆔 Telegram ID: <code>{telegram_id}</code>\n\n"
+                "Ви підтверджуєте прив'язку вашого облікового запису Eridon до ChatGPT?",
+                reply_markup=keyboard,
+                parse_mode="HTML",
+            )
             return
 
         is_pending = not user or not user.is_allowed
@@ -275,4 +315,39 @@ def setup_bot_handlers(dp: Dispatcher):
             await callback.answer("⏰ Нагадування перенесено на 15 хвилин", show_alert=False)
         except Exception:
             pass
+
+    @dp.callback_query(F.data.startswith("mcp_confirm_"))
+    async def handle_mcp_confirm(callback: CallbackQuery):
+        nonce = callback.data[len("mcp_confirm_"):]
+        telegram_id = callback.from_user.id
+
+        user = await Users.objects().where(Users.telegram_id == telegram_id).first().run()
+        if not user or not user.is_allowed:
+            await callback.answer("❌ Доступ заборонено.", show_alert=True)
+            return
+
+        success = await confirm_mcp_linking(nonce, telegram_id)
+        if success:
+            await callback.message.edit_text(
+                "✅ <b>Прив'язку успішно підтверджено!</b>\n\n"
+                "Тепер ви можете повернутися до ChatGPT та продовжити роботу з MCP Gateway.",
+                parse_mode="HTML"
+            )
+            await callback.answer("Прив'язку успішно підтверджено!")
+        else:
+            await callback.message.edit_text(
+                "❌ <b>Помилка прив'язки:</b> час дії посилання минув або воно вже використане.",
+                parse_mode="HTML"
+            )
+            await callback.answer("Посилання застаріло або недійсне.", show_alert=True)
+
+    @dp.callback_query(F.data.startswith("mcp_cancel_"))
+    async def handle_mcp_cancel(callback: CallbackQuery):
+        nonce = callback.data[len("mcp_cancel_"):]
+        await cancel_mcp_linking(nonce)
+        await callback.message.edit_text(
+            "❌ <b>Прив'язку до ChatGPT скасовано.</b>",
+            parse_mode="HTML"
+        )
+        await callback.answer("Прив'язку скасовано.")
 

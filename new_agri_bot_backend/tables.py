@@ -445,3 +445,21 @@ class ManagerAccountantGuide(Table):
     def get_readable(cls):
         return Readable(template="%s -> %s", columns=[cls.manager.full_name_for_orders, cls.accountant.name])
 
+
+
+class UserOAuthLink(Table):
+    """Таблиця зв'язування зовнішньої OAuth-ідентичності (ChatGPT / MCP) з користувачем Eridon."""
+    id = UUID(primary_key=True)
+    telegram_id = BigInt(index=True, required=True)
+    oauth_sub = Varchar(length=255, index=True, required=True)
+    issuer = Varchar(length=255, required=True)
+    created_at = Timestamptz(default=TimestamptzNow())
+    revoked_at = Timestamptz(null=True)
+    is_active = Boolean(default=True)
+
+    class Meta:
+        tablename = "user_oauth_links"
+
+    @classmethod
+    def get_readable(cls):
+        return Readable(template="%s <-> %s", columns=[cls.telegram_id, cls.oauth_sub])

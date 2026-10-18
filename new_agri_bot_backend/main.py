@@ -109,6 +109,7 @@ from .bi_pandas import router as bi_pandas_router
 from .order_chat import router as chat_router
 from .notification import router as notification_router
 from .nova_poshta import router as nova_poshta_router, call_np_api
+from .warehouse_directory_api import router as warehouse_directory_router
 from .bot_handlers import setup_bot_handlers
 from .scheduler import setup_scheduler
 from .utils import send_message_to_managers, create_composite_key_from_dict
@@ -134,6 +135,8 @@ from .config import (
     SEND_NOTIFICATIONS,
     LOGISTICS_TELEGRAM_IDS,
     ADMINS_ID,
+    APP_ENV,
+    should_manage_telegram_webhook,
 )
 
 # Инициализация Telegram Bot (используется в utils.py, но может быть нужен здесь для глобальной инициализации)
@@ -285,22 +288,36 @@ async def lifespan(app: FastAPI):
 
     # Ініціалізація планувальника повідомлень
     setup_scheduler()
-    # Регистрируем webhook для бота если есть BACKEND_URL
-    if BACKEND_URL:
+    # Безпечне керування життєвим циклом Telegram Webhook
+    webhook_was_registered = False
+    if should_manage_telegram_webhook():
         webhook_url = f"{BACKEND_URL}/webhook/bot"
         try:
             await bot.set_webhook(webhook_url)
+            webhook_was_registered = True
             logger.info(f"Telegram webhook registered: {webhook_url}")
         except Exception as e:
             logger.info(f"Failed to set webhook: {e}")
+    else:
+        logger.info(
+            f"Telegram webhook management is disabled (APP_ENV='{APP_ENV}'). "
+            "Skipping set_webhook to protect production webhook."
+        )
+
     yield
-    # Видаляем webhook при остановке
-    if BACKEND_URL:
+
+    # Видаляємо webhook при зупинці ТІЛЬКИ якщо цей процес його успішно зареєстрував
+    if webhook_was_registered:
         try:
             await bot.delete_webhook()
             logger.info("Telegram webhook removed.")
         except Exception:
             pass
+    else:
+        logger.info(
+            "Telegram webhook was not registered by this process. "
+            "Skipping delete_webhook to protect production webhook."
+        )
     logger.info("Piccolo database engine shutdown. Connections are closed automatically.")
 
 
@@ -469,6 +486,7 @@ app.include_router(bi_pandas_router)
 app.include_router(chat_router)
 app.include_router(notification_router)
 app.include_router(nova_poshta_router)
+app.include_router(warehouse_directory_router)
 app.mount("/admin", admin_router)
 
 

@@ -329,3 +329,6 @@ exporting
 naming
 transferring
 writing
+
+# Test environment configuration
+.env.test

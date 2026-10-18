@@ -84,6 +84,55 @@ SEND_NOTIFICATIONS = os.getenv("SEND_NOTIFICATIONS", "true").lower() == "true"
 USE_CACHE = os.getenv("USE_CACHE", "true").lower() == "true"
 BACKEND_URL = os.getenv("BACKEND_URL", "")
 
+# --- Безпечне керування життєвим циклом Telegram Webhook ---
+APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
+MANAGE_TELEGRAM_WEBHOOK = os.getenv("MANAGE_TELEGRAM_WEBHOOK", "").strip().lower()
+
+def should_manage_telegram_webhook(
+    app_env: str | None = None,
+    backend_url: str | None = None,
+    manage_flag: str | None = None,
+) -> bool:
+    """
+    Визначає, чи має поточний процес право реєструвати або видаляти Telegram webhook.
+
+    Правила безпеки:
+    1. Локальна розробка та тести (development, local, test, dev):
+       Керування webhook СУВОРО ЗАБОРОНЕНО (завжди повертає False).
+       Це унеможливлює випадкове видалення або перезапис бойового webhook при локальному запуску.
+    2. Робоче/бойове середовище (production, prod):
+       Керування дозволене тільки за наявності BACKEND_URL.
+       Якщо задано явний прапорець MANAGE_TELEGRAM_WEBHOOK:
+         - 'true', '1', 'yes' -> True
+         - 'false', '0', 'no' -> False
+       За замовчуванням для production за наявності BACKEND_URL -> True (зберігає роботу production-бота без несподіванок).
+    """
+    env = (app_env if app_env is not None else APP_ENV).strip().lower()
+    url = (backend_url if backend_url is not None else BACKEND_URL).strip()
+    flag = (manage_flag if manage_flag is not None else MANAGE_TELEGRAM_WEBHOOK).strip().lower()
+
+    # 1. Локальна розробка / тести -> завжди заборонено
+    if env in ("development", "local", "test", "dev"):
+        return False
+
+    # 2. Немає URL бекенду -> керувати нічим
+    if not url:
+        return False
+
+    # 3. Явний прапорець заборони
+    if flag in ("false", "0", "no"):
+        return False
+
+    # 4. Явний прапорець дозволу
+    if flag in ("true", "1", "yes"):
+        return True
+
+    # 5. Production за замовчуванням (зберігає існуючу роботу без змін)
+    if env in ("production", "prod"):
+        return True
+
+    return False
+
 # --- Настройки CORS ---
 CORS_ORIGINS = [
     "https://taurus.pp.ua",

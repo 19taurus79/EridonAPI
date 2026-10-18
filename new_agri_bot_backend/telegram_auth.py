@@ -319,31 +319,85 @@ async def auth(data: InitDataModel):
 
 
 @router.get("/get_user")
-# НОВА ФУНКЦІЯ ЗАЛЕЖНОСТІ
+# ФУНКЦІЯ ЗАЛЕЖНОСТІ З ПІДТРИМКОЮ TELEGRAM ТА MCP GATEWAY DELEGATION
 async def get_current_telegram_user(
-    # Припускаємо, що фронтенд відправлятиме initData як кастомний хедер "X-Telegram-Init-Data"
-    x_telegram_init_data: str = Header(
-        ...,
+    x_telegram_init_data: str | None = Header(
+        None,
         alias="X-Telegram-Init-Data",
         description="Дані ініціалізації Telegram Mini App",
-    )
-    # x_telegram_init_data: str = "user=%7B%22id%22%3A548019148%2C%22first_name%22%3A%22%D0%A1%D0%B5%D1%80%D0%B3%D0%B5%D0%B9%22%2C%22last_name%22%3A%22%D0%9E%D0%BD%D0%B8%D1%89%D0%B5%D0%BD%D0%BA%D0%BE%22%2C%22username%22%3A%22OnyshchenkoSergey%22%2C%22language_code%22%3A%22uk%22%2C%22allows_write_to_pm%22%3Atrue%2C%22photo_url%22%3A%22https%3A%5C%2F%5C%2Ft.me%5C%2Fi%5C%2Fuserpic%5C%2F320%5C%2Fqf0qiya3lYZumE5ExiC55ONcmy-5vzP6pZzzBMV92vw.svg%22%7D&chat_instance=1925380814121275371&chat_type=channel&auth_date=1755268382&signature=-Wek8bfSlr6OOwIVIFYV_5bsXA9Krzzw_I51BXxoIZxn4L0qvcU48b7sgZOPf-AjiQaW1Q5BOkFGG8ekj6ycAw&hash=add338a30c8ad8606d1d303d0a99eb25f95bcf3f4a7a58b34e61f37111215853",
+    ),
+    authorization: str | None = Header(
+        None,
+        alias="Authorization",
+        description="Bearer токен для MCP Gateway / сервісної авторизації",
+    ),
 ):
     """
-    Залежність, яка перевіряє Telegram initData з хедера запиту.
-    Якщо дані валідні та користувач знайдений/дозволений у БД, повертає об'єкт користувача з БД.
-    Інакше - викидає HTTPException.
+    Залежність, яка перевіряє аутентифікацію запиту:
+    1. Захист від колізій: одночасна передача двох різних методів авторизації заборонена (400 Bad Request).
+    2. MCP Gateway / Bearer JWT delegation: перевіряє EdDSA токен, витягує telegram_id (sub).
+    3. Telegram Mini App initData: перевіряє двохетапний HMAC-SHA256 підпис.
+    4. Перевіряє наявність користувача та is_allowed в БД (403 Forbidden).
+    5. Повертає об'єкт користувача з БД.
     """
-    if not x_telegram_init_data:
+    # 1. Collision check: reject ambiguous credentials
+    if x_telegram_init_data and authorization:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Відсутній хедер 'X-Telegram-Init-Data'.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Одночасне використання декількох методів авторизації заборонено.",
         )
 
+    # 2. Neither header provided
+    if not x_telegram_init_data and not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Відсутній заголовок авторизації ('X-Telegram-Init-Data' або 'Authorization').",
+        )
+
+    # 3. Path A: Authorization Bearer (MCP Gateway delegation)
+    if authorization:
+        parts = authorization.strip().split()
+        if len(parts) != 2 or parts[0].lower() != "bearer":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Невірний формат заголовка Authorization. Очікується 'Bearer <token>'.",
+            )
+        bearer_token = parts[1]
+        try:
+            from .jwt_verification import (
+                verify_delegation_token,
+                get_verification_key_store,
+                JWTVerificationError,
+            )
+            claims = verify_delegation_token(bearer_token, get_verification_key_store())
+            sub = claims.get("sub")
+            telegram_id = int(sub)
+        except JWTVerificationError as e:
+            logger.warning(f"[AUTH_ERROR] MCP delegation token verification failed: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Помилка авторизації токена: {e}",
+            )
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Невірний формат Telegram ID (sub) у токені.",
+            )
+
+        user_in_db = (
+            await Users.objects().where(Users.telegram_id == telegram_id).first().run()
+        )
+        if not user_in_db or not user_in_db.is_allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Доступ заборонено. Користувач не зареєстрований або не має дозволу.",
+            )
+        return user_in_db
+
+    # 4. Path B: Existing Telegram Mini App Init Data
     try:
         parsed_init_data = check_telegram_auth(x_telegram_init_data)
     except HTTPException as e:
-        # Перехоплюємо та перевикидаємо помилки, вже визначені в check_telegram_auth
         raise e
     except Exception as e:
         logger.info(
@@ -376,7 +430,6 @@ async def get_current_telegram_user(
             detail="Невірний формат Telegram ID користувача.",
         )
 
-    # Перевіряємо, чи користувач існує в нашій базі даних і чи має він доступ
     user_in_db = (
         await Users.objects().where(Users.telegram_id == telegram_id).first().run()
     )
@@ -387,7 +440,7 @@ async def get_current_telegram_user(
             detail="Доступ заборонено. Користувач не зареєстрований або не має дозволу.",
         )
 
-    return user_in_db  # Повертаємо об'єкт користувача з БД
+    return user_in_db
 
 
 async def check_not_guest(
