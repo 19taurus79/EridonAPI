@@ -81,3 +81,4 @@ uvicorn==0.34.2
 wsproto==1.2.0
 yarl==1.20.0
 apscheduler==3.11.0
+cryptography>=42.0.0
