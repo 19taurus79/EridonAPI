@@ -35,20 +35,26 @@ class ChatMessageResponse(BaseModel):
         from_attributes = True
 
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Path
 from typing import List
 from uuid import UUID
 from datetime import datetime
 
 router = APIRouter(
-    prefix="/orders", tags=["chat"], dependencies=[Depends(get_current_telegram_user)]
+    prefix="/orders", tags=["09. Чат та Коментарі до Заявок"], dependencies=[Depends(get_current_telegram_user)]
 )
 
 
 # Отримання повідомлень
-@router.get("/{order_ref}/chat/messages", response_model=List[ChatMessageResponse])
+@router.get(
+    "/{order_ref}/chat/messages",
+    response_model=List[ChatMessageResponse],
+    summary="Історія повідомлень чату замовлення",
+    description="Повертає повну хронологічну стрічку повідомлень внутрішнього чату замовлення між менеджером та логістами/бухгалтерією з деталями автора та репліками.",
+)
 async def get_chat_messages(
-    order_ref: str, user_data: dict = Depends(get_current_telegram_user)
+    order_ref: str = Path(..., description="Унікальний номер/референс замовлення (order_ref)"),
+    user_data: dict = Depends(get_current_telegram_user),
 ):
     """Отримати всі повідомлення чату для заявки"""
     messages = (
@@ -61,10 +67,16 @@ async def get_chat_messages(
 
 
 # Створення повідомлення
-@router.post("/{order_ref}/chat/messages", response_model=ChatMessageResponse, dependencies=[Depends(check_not_guest)])
+@router.post(
+    "/{order_ref}/chat/messages",
+    response_model=ChatMessageResponse,
+    dependencies=[Depends(check_not_guest)],
+    summary="Надіслати повідомлення у чат замовлення",
+    description="Створює нове повідомлення в інтерактивному чаті замовлення, підтримує відповіді на попередні повідомлення (reply_to_message_id) та фіксує автора.",
+)
 async def create_chat_message(
-    order_ref: str,
-    request: CreateChatMessageRequest,
+    order_ref: str = Path(..., description="Унікальний номер/референс замовлення (order_ref)"),
+    request: CreateChatMessageRequest = ...,
     user_data: dict = Depends(get_current_telegram_user),
 ):
     """Створити нове повідомлення в чаті"""
@@ -98,12 +110,16 @@ async def create_chat_message(
 
 # Редагування повідомлення
 @router.put(
-    "/{order_ref}/chat/messages/{message_id}", response_model=ChatMessageResponse, dependencies=[Depends(check_not_guest)]
+    "/{order_ref}/chat/messages/{message_id}",
+    response_model=ChatMessageResponse,
+    dependencies=[Depends(check_not_guest)],
+    summary="Редагувати повідомлення у чаті замовлення",
+    description="Оновлює текст надісланого повідомлення в чаті замовлення (дозволено виключно автору повідомлення).",
 )
 async def update_chat_message(
-    order_ref: str,
-    message_id: UUID,
-    request: UpdateChatMessageRequest,
+    order_ref: str = Path(..., description="Номер замовлення (order_ref)"),
+    message_id: UUID = Path(..., description="Унікальний UUID повідомлення в чаті"),
+    request: UpdateChatMessageRequest = ...,
     user_data: dict = Depends(get_current_telegram_user),
 ):
     """Редагувати повідомлення (тільки автор)"""
@@ -142,10 +158,15 @@ async def update_chat_message(
 
 
 # Видалення повідомлення
-@router.delete("/{order_ref}/chat/messages/{message_id}", dependencies=[Depends(check_not_guest)])
+@router.delete(
+    "/{order_ref}/chat/messages/{message_id}",
+    dependencies=[Depends(check_not_guest)],
+    summary="Видалити повідомлення з чату замовлення",
+    description="Видаляє повідомлення з чату замовлення (дозволено автору повідомлення або адміністратору).",
+)
 async def delete_chat_message(
-    order_ref: str,
-    message_id: UUID,
+    order_ref: str = Path(..., description="Номер замовлення (order_ref)"),
+    message_id: UUID = Path(..., description="Унікальний UUID повідомлення"),
     user_data: dict = Depends(get_current_telegram_user),
 ):
     """Видалити повідомлення (тільки автор або адмін)"""

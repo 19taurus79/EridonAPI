@@ -7,7 +7,7 @@ from .cache import cached_endpoint
 
 import pandas as pd
 import requests
-from fastapi import APIRouter, Query, HTTPException, status, Depends
+from fastapi import APIRouter, Query, HTTPException, status, Depends, Path, Body
 from fastapi.responses import StreamingResponse
 from piccolo.columns.defaults.timestamptz import TimestamptzNow
 from piccolo.query import Sum
@@ -69,7 +69,12 @@ router = APIRouter(
 )
 
 
-@router.get("/remains", summary="Отримати всі залишки на складі")
+@router.get(
+    "/remains",
+    tags=["01. Залишки та Вільний Товар (Stock)"],
+    summary="Всі бухгалтерські залишки (повний невідфільтрований дамп)",
+    description="Повертає повний список усіх записів із таблиці бухобліку (remains) без фільтрації та пагінації. Увага: фронтенд та бот цей ендпоінт не викликають через великий обсяг даних; для роботи використовуйте /data/remains/{product_id} або /data/remains_by_product.",
+)
 @cached_endpoint()
 async def get_remains():
     """
@@ -79,8 +84,15 @@ async def get_remains():
     return remains
 
 
-@router.get("/geocode")
-def geocode(address: str = Query(..., description="Адрес для поиска")):
+@router.get(
+    "/geocode",
+    tags=["02. Склади та Географія"],
+    summary="Геокодування адреси доставки (OpenStreetMap Nominatim)",
+    description="Проксі-запит до геосервісу OpenStreetMap Nominatim для визначення координат (lat, lon) за текстовою адресою. Використовується модулем карти у фронтенді (MapModule) для відображення точок доставки та візуалізації рейсів.",
+)
+def geocode(
+    address: str = Query(..., description="Текстова адреса або назва населеного пункту для пошуку координат"),
+):
     url = "https://nominatim.openstreetmap.org/search"
     params = {"q": address, "format": "json", "addressdetails": "1", "layer": "address"}
     headers = {"User-Agent": "MyGeocodeApp/1.0"}  # укажи свой
@@ -90,7 +102,9 @@ def geocode(address: str = Query(..., description="Адрес для поиск�
 
 @router.get(
     "/remains/warehouses",
-    summary="Отримати список унікальних складів із залишків",
+    tags=["02. Склади та Географія"],
+    summary="Склади з ненульовими бухгалтерськими залишками (buh > 0)",
+    description="Повертає список унікальних складів компанії з таблиці remains, на яких наразі є ненульові бухгалтерські залишки (buh > 0). Використовується у фільтрах залишків товарів у фронтенді та довіднику складів MCP.",
     dependencies=[Depends(get_current_telegram_user)],
 )
 @cached_endpoint()
@@ -111,7 +125,9 @@ async def get_remains_warehouses():
 
 @router.get(
     "/delivery/warehouses",
-    summary="Отримати список активних складів компанії для доставки",
+    tags=["02. Склади та Географія"],
+    summary="Склади відвантаження та доставки (Харківський підрозділ)",
+    description="Повертає список активних оперативних складів Харківського підрозділу з таблиці valid_warehouse_admin (is_active=True). Використовується логістичним модулем фронтенду для вибору складу завантаження/відправки замовлення та AI-шлюзом MCP.",
     dependencies=[Depends(get_current_telegram_user)],
 )
 @cached_endpoint()
@@ -127,10 +143,34 @@ async def get_delivery_warehouses():
     return [w["name"] for w in warehouses if w.get("name")]
 
 
-@router.get("/remains/{product_id}", summary="Отримати залишки за конкретним продуктом")
+@router.get(
+    "/remains/{product_id}",
+    tags=["01. Залишки та Вільний Товар (Stock)"],
+    summary="Залишки товару за ID (склади Харківського підрозділу)",
+    description="Повертає деталізовані бухгалтерські (buh) та фізичні (skl) залишки обраного товару по складах Харківського підрозділу (Коротич, Балаклія, Супрунівка) за його UUID.\n\n"
+                "**Структура полів у відповіді:**\n"
+                "- `warehouse`: назва складу зберігання\n"
+                "- `buh`: бухгалтерський залишок (облік 1С)\n"
+                "- `skl`: складський фактичний залишок\n"
+                "- `nomenclature_series`: серія або номер партії виробника\n"
+                "- `crop_year`: рік врожаю (для насіння)\n"
+                "- `germination`: схожість насіння (%)\n"
+                "- `mtn`: маса 1000 насінин (МТС/МТН у грамах)\n"
+                "- `active_substance`: діюча речовина (для ЗЗР)\n"
+                "- `certificate`: номер сертифіката якості\n"
+                "- `certificate_start_date` / `certificate_end_date`: термін дії сертифіката\n"
+                "- `party_sign`: ознака партії\n"
+                "- `origin_country`: країна походження\n"
+                "- `weight`: вага одиниці\n"
+                "- `quantity_per_pallet`: кількість на піддоні\n\n"
+                "Використовується фронтендом у картці товару та AI-шлюзом MCP. Для залишків по інших РУ України використовуйте `/data/av_stock/{product_id}`.",
+)
 @cached_endpoint()
 async def get_remains_by_product_id(
-    product_id: str,
+    product_id: str = Path(
+        ...,
+        description="UUID товару з довідника номенклатури (поле 'product' у залишках або 'id' у /data/products). НЕ плутати з полем 'id' рядка партії!",
+    ),
 ):  # Використовуємо product_id для ясності
     """
     Повертає записи про залишки на складі для зазначеного продукту.
@@ -142,11 +182,14 @@ async def get_remains_by_product_id(
 
 
 @router.get(
-    "/remains_by_product", summary="Отримати залишки за конкретним продуктом"
+    "/remains_by_product",
+    tags=["01. Залишки та Вільний Товар (Stock)"],
+    summary="Залишки товару за точною назвою (склади Харківського підрозділу)",
+    description="Пошук залишків товару по складах Харківського підрозділу за точним текстовим найменуванням номенклатури. Важливо: вимагає точного збігу рядка назви з довідником product_guide (без нечіткого пошуку). Використовується фронтендом для швидкого запиту за назвою.",
 )
 @cached_endpoint()
 async def get_remains_by_product_name(
-    product: str = Query(..., description="Назва продукту"),
+    product: str = Query(..., description="Точна повна назва номенклатури зі справочника product_guide"),
 ):
     product_records = (
         await ProductGuide.select(ProductGuide.id)
@@ -162,10 +205,17 @@ async def get_remains_by_product_name(
 
 @router.get(
     "/remains_group/{product_id}",
-    summary="Отримати залишки за конкретним продуктом, згруповані по партії ",
+    tags=["01. Залишки та Вільний Товар (Stock)"],
+    summary="Сумарний бухгалтерський залишок товару (SUM buh)",
+    description="Повертає загальну суму бухгалтерського залишку обраного товару по всіх складах Харківського підрозділу (агрегація SUM(buh) за UUID товару). Увага: попри стару назву remains_group, групування за партіями тут немає — повертається єдина агрегована цифра залишку. У клієнтському коді фронтенду оголошено в lib/api.ts, але наразі в UI активних викликів немає.",
 )
 @cached_endpoint()
-async def get_group_remains_by_product(product_id: str):
+async def get_group_remains_by_product(
+    product_id: str = Path(
+        ...,
+        description="UUID товару з довідника номенклатури (поле 'product' у залишках або 'id' у /data/products)",
+    ),
+):
     remains = (
         await Remains.select(
             Remains.product.as_alias("product_id"), Sum(Remains.buh).as_alias("remains")
@@ -179,11 +229,16 @@ async def get_group_remains_by_product(product_id: str):
 
 @router.get(
     "/av_stock/{product_id}",
-    summary="Отримати вільні залишки на РУ за конкретним продуктом",
+    tags=["01. Залишки та Вільний Товар (Stock)"],
+    summary="Вільні залишки товару по Регіональних Управліннях (РУ України)",
+    description="Повертає доступну вільну кількість товару (AvailableStock та FreeStock) у розрізі Регіональних Управлінь компанії по всій Україні (Київське, Дніпровське, Полтавське РУ тощо) з деталізацією по конкретних майданчиках зберігання. Критичний ендпоінт для міжрегіонального переміщення та перевірки наявності товару по всій компанії.",
 )
 @cached_endpoint()
 async def get_av_remains_by_product(
-    product_id: str,
+    product_id: str = Path(
+        ...,
+        description="UUID товару з довідника номенклатури (поле 'product' або 'id' у /data/products)",
+    ),
 ):  # Використовуємо product_id для ясності
     """
     Повертає записи про залишки на складі для зазначеного продукту.
@@ -221,9 +276,17 @@ async def get_av_remains_by_product(
     return remains
 
 
-@router.get("/products", summary="Отримати список продуктів з можливістю пошуку")
+@router.get(
+    "/products",
+    tags=["03. Номенклатура та Каталог Товарів"],
+    summary="Товари з доступними залишками по РУ (пошук за назвою та категорією)",
+    description="Повертає список товарів із таблиці AvStockProd, які мають зареєстровані вільні залишки по Регіональних Управліннях (РУ) компанії по всій Україні. Підтримує фільтрацію за бізнес-напрямком (category) та нечутливий до регістру пошук за частиною назви (name_part). Використовується на фронтенді на сторінці вільних залишків (av_stock) для вибору номенклатури перед перевіркою розподілу по регіонах.",
+)
 @cached_endpoint()
-async def get_products(category: Optional[str] = None, name_part: Optional[str] = None):
+async def get_products(
+    category: Optional[str] = Query(None, description="Бізнес-напрямок (наприклад: 'Засоби захисту рослин', 'Насіння', 'Добрива')"),
+    name_part: Optional[str] = Query(None, description="Частина назви товару для нечіткого пошуку (без урахування регістру, ILIKE)"),
+):
     """
     Повертає список всіх продуктів.
     Можна використовувати параметр `query` для пошуку продуктів за частиною назви (без урахування регістру).
@@ -242,12 +305,17 @@ async def get_products(category: Optional[str] = None, name_part: Optional[str] 
     return product
 
 
-@router.get("/all_products")
+@router.get(
+    "/all_products",
+    tags=["03. Номенклатура та Каталог Товарів"],
+    summary="Повний генеральний довідник номенклатури (ProductGuide)",
+    description="Повертає список усіх номенклатурних одиниць компанії з генерального довідника ProductGuide із сортуванням за алфавітом. Підтримує фільтрацію за напрямком (category), підгрупою (parent_category) та пошук за фрагментом назви (name_part). На відміну від /data/products, повертає всю номенклатуру компанії незалежно від наявності поточних залишків на складах. Використовується фронтендом для пошуку товарів та автодоповнення.",
+)
 @cached_endpoint()
 async def get_all_product_by_guide(
-    category: Optional[str] = None, 
-    parent_category: Optional[str] = Query(None),
-    name_part: Optional[str] = None
+    category: Optional[str] = Query(None, description="Бізнес-напрямок (line_of_business)"), 
+    parent_category: Optional[str] = Query(None, description="Батьківська підгрупа номенклатури (parent_element)"),
+    name_part: Optional[str] = Query(None, description="Фрагмент назви для пошуку (ILIKE %name_part%)"),
 ):
     query = ProductGuide.select()
 
@@ -266,7 +334,12 @@ async def get_all_product_by_guide(
     return product
 
 
-@router.get("/categories_tree")
+@router.get(
+    "/categories_tree",
+    tags=["03. Номенклатура та Каталог Товарів"],
+    summary="Дерево категорій та бізнес-напрямків номенклатури",
+    description="Повертає повний список унікальних пар 'бізнес-напрямок' (line_of_business) та 'батьківська підгрупа' (parent_element) з довідника ProductGuide. Використовується фронтендом для формування каскадних фільтрів та навігаційного дерева категорій на сторінках залишків та каталогу.",
+)
 @cached_endpoint()
 async def get_categories_tree():
     """
@@ -280,10 +353,15 @@ async def get_categories_tree():
     return data
 
 
-@router.get("/product/{product_id}", summary="Отримати інформацію про продукт за ID")
+@router.get(
+    "/product/{product_id}",
+    tags=["03. Номенклатура та Каталог Товарів"],
+    summary="Картка номенклатурної одиниці за UUID (ProductGuide)",
+    description="Повертає повні паспортні реквізити номенклатури з таблиці ProductGuide за її унікальним ідентифікатором (UUID товару 1C). Якщо товар не знайдено, повертає помилку 404 Not Found. Використовується фронтендом для відображення заголовка та реквізитів товару при фільтрації замовлень та переході за прямим посиланням.",
+)
 @cached_endpoint()
 async def get_product_by_id(
-    product_id: str,
+    product_id: str = Path(..., description="Унікальний UUID товару в довіднику ProductGuide"),
 ):  # Припускаємо, що product_id є цілочисельним первинним ключем
     """
     Повертає інформацію про продукт за його унікальним ID.
@@ -299,7 +377,12 @@ async def get_product_by_id(
     return product
 
 
-@router.get("/managers")
+@router.get(
+    "/managers",
+    tags=["07. Клієнти, Менеджери та Адреси (CRM)"],
+    summary="Список торгових представників та менеджерів",
+    description="Повертає повний список унікальних імен менеджерів із проведених заявок (Submissions) для фільтрації на карті та у логістичному календарі.",
+)
 @cached_endpoint()
 async def get_managers():
     managers = (
@@ -315,12 +398,15 @@ async def get_managers():
 
 @router.get(
     "/clients",
-    summary="отримати клієнтів по менеджеру, якщо адмін то усіх ",
+    tags=["07. Клієнти, Менеджери та Адреси (CRM)"],
+    summary="Список закріплених клієнтів менеджера (CRM)",
+    description="Повертає перелік контрагентів, закріплених за авторизованим менеджером (або всіх клієнтів компанії, якщо запит виконує адміністратор). Підтримує регістронезалежний пошук за фрагментом назви клієнта.",
     dependencies=[Depends(get_current_telegram_user)],
 )
 @cached_endpoint()
 async def get_clients(
-    manager: dict = Depends(get_current_telegram_user), name_part: Optional[str] = None
+    manager: dict = Depends(get_current_telegram_user),
+    name_part: Optional[str] = Query(None, description="Фрагмент назви компанії або господарства клієнта для пошуку"),
 ):
     if manager["is_admin"]:
         query = ClientManagerGuide.select()
@@ -336,7 +422,9 @@ async def get_clients(
 
 @router.get(
     "/product_on_warehouse",
-    summary="Отримати товари, по яким є залишки на складі, з опціональними фільтрами",
+    tags=["02. Склади та Географія"],
+    summary="Каталог товарів у наявності з фільтром по складах",
+    description="Основний робочий реєстр наявності товарів з детальною фільтрацією за бізнес-напрямком, підгрупою, назвою (name_part), ознакою вільного залишку (free_only) та списком конкретних складів (warehouses). Ядро вітрини залишків фронтенду та інструменту пошуку товарів AI-шлюзу MCP.",
     dependencies=[Depends(get_current_telegram_user)],
 )
 @cached_endpoint()
@@ -408,7 +496,9 @@ async def get_product_on_warehouse(
 
 @router.get(
     "/product_on_warehouse/export",
-    summary="Експортувати залишки на складі в Excel",
+    tags=["02. Склади та Географія"],
+    summary="Експорт залишків по складах у файл Excel (.xlsx)",
+    description="Генерує та віддає у вигляді бінарного потоку (StreamingResponse) файл Excel (.xlsx) з відфільтрованою таблицею залишків по обраних складах. Використовується кнопкою експорту у веб-інтерфейсі менеджера.",
     dependencies=[Depends(get_current_telegram_user)],
 )
 async def export_product_on_warehouse(
@@ -558,9 +648,14 @@ async def export_product_on_warehouse(
     )
 
 
-@router.get("/orders")
+@router.get(
+    "/orders",
+    tags=["04. Замовлення та Контракти (CRM)"],
+    summary="Невідвантажені замовлення клієнта (different > 0)",
+    description="Повертає список відкритих замовлень конкретного клієнта з таблиці Submissions, за якими є невідвантажений залишок товару (different > 0). Дозволяє менеджеру бачити поточну оперативну потребу клієнта для планування відвантажень та доставок.",
+)
 @cached_endpoint()
-async def get_orders(client: str = Query(...)):
+async def get_orders(client: str = Query(..., description="Точна текстова назва контрагента (Submissions.client)")) :
     orders = (
         await Submissions.select()
         .where((Submissions.client == client) & (Submissions.different > 0))
@@ -569,9 +664,14 @@ async def get_orders(client: str = Query(...)):
     return orders
 
 
-@router.get("/contracts")
+@router.get(
+    "/contracts",
+    tags=["04. Замовлення та Контракти (CRM)"],
+    summary="Реєстр договорів клієнта з сумами та оплатами",
+    description="Повертає згрупований перелік діючих договорів обраного контрагента за його ID з довідника ClientManagerGuide. Розраховує для кожного договору суму контракту (contract_amount), суму фактичних оплат (paid_amount) та фінансовий залишок заборгованості (different_amount). Критичний ендпоінт для фінансового контролю: використовується у картці клієнта на фронтенді та бізнес-інструменті get_client_orders_summary AI-шлюзу MCP.",
+)
 @cached_endpoint()
-async def get_contracts(client: str = Query(...)):
+async def get_contracts(client: str = Query(..., description="ID контрагента з довідника ClientManagerGuide")) :
     client_from_guide = await ClientManagerGuide.select(
         ClientManagerGuide.client
     ).where(ClientManagerGuide.id == int(client))
@@ -638,7 +738,12 @@ async def get_contracts(client: str = Query(...)):
     return contracts
 
 
-@router.get("/all_contracts")
+@router.get(
+    "/all_contracts",
+    tags=["04. Замовлення та Контракти (CRM)"],
+    summary="Загальний реєстр усіх договорів компанії з підсумками",
+    description="Повертає глобальний реєстр усіх договорів із таблиці Submissions зі зведеними статусами документів (document_status), доставки (delivery_status), складами відвантаження, закріпленими менеджерами та контрагентами. Для кожного договору автоматично агрегуються фінансові суми та стан виконання. Використовується фронтендом для загальних реєстрів і фільтрів.",
+)
 @cached_endpoint()
 async def get_all_contracts():
     query = Submissions.select(
@@ -685,9 +790,14 @@ async def get_all_contracts():
     return contracts
 
 
-@router.get("/contract_detail/{contract}")
+@router.get(
+    "/contract_detail/{contract}",
+    tags=["04. Замовлення та Контракти (CRM)"],
+    summary="Специфікація та товарні позиції договору (Submissions)",
+    description="Повертає детальну специфікацію обраного договору: перелік замовлених номенклатурних позицій, ознаки партій, сезони закупівлі, невідвантажені залишки (different), закріплений склад відвантаження та суми оплат/заборгованості. Використовується на фронтенді при розгортанні деталей договору та в AI-шлюзі MCP для перевірки виконання зобов'язань.",
+)
 @cached_endpoint()
-async def get_contract_detail(contract):
+async def get_contract_detail(contract: str = Path(..., description="Номер або найменування договору/специфікації")) :
     detail = (
         await Submissions.select(
             Submissions.nomenclature,
@@ -707,9 +817,14 @@ async def get_contract_detail(contract):
     return detail
 
 
-@router.get("/sum_order_by_product")
+@router.get(
+    "/sum_order_by_product",
+    tags=["04. Замовлення та Контракти (CRM)"],
+    summary="Сумарна потреба замовлень по товару (SUM different)",
+    description="Повертає загальну сумарну кількість замовленого, але ще не відвантаженого товару (SUM(different)) по всій компанії за проведеними та непроведеними замовленнями. Дозволяє миттєво зіставити поточні складські залишки із загальним обсягом зобов'язань перед клієнтами.",
+)
 @cached_endpoint()
-async def get_sum_order_products(product: str = Query(...)):
+async def get_sum_order_products(product: str = Query(..., description="UUID товару з довідника ProductGuide")) :
     total_sum = (
         await Submissions.select(
             Submissions.product.as_alias("product_id"),
@@ -728,9 +843,14 @@ async def get_sum_order_products(product: str = Query(...)):
     return total_sum
 
 
-@router.get("/sum_orders_tiers_by_product", summary="Потреба по двох рівнях пріоритету")
+@router.get(
+    "/sum_orders_tiers_by_product",
+    tags=["04. Замовлення та Контракти (CRM)"],
+    summary="Дворівнева пріоритизована потреба по товару (Tiers 1 & 2)",
+    description="Розраховує пріоритизовану потребу замовлень по товару у розрізі двох рівнів: Tier 1 (orders_q — документи зі статусом 'Проведено') та Tier 2 (orders_q_product_confirmed — статус 'Проведено' з додатковим підтвердженням наявності товару 'Підтверджено'), а також їх загальну суму. Використовується аналітичним модулем фронтенду для точного планування черги відвантажень.",
+)
 @cached_endpoint()
-async def get_sum_orders_tiers_by_product(product: str = Query(...)):
+async def get_sum_orders_tiers_by_product(product: str = Query(..., description="UUID товару з довідника ProductGuide")) :
     """
     Повертає сумарну потребу по товару у двох рівнях:
     - Tier 1 (orders_q):                   статус 'затверджено'
@@ -767,9 +887,14 @@ async def get_sum_orders_tiers_by_product(product: str = Query(...)):
     }
 
 
-@router.get("/order_by_product")
+@router.get(
+    "/order_by_product",
+    tags=["04. Замовлення та Контракти (CRM)"],
+    summary="Замовлення клієнтів на обраний товар (черга потреби)",
+    description="Повертає деталізований список активних замовлень клієнтів із Submissions, в яких замовлено обраний товар та є невідвантажений залишок (different > 0). Відсортовано за плановою датою відвантаження. Використовується фронтендом у вікні аналізу потреби товару для перегляду черги клієнтів, які очікують відвантаження.",
+)
 @cached_endpoint()
-async def get_orders_by_product(product: str = Query(...)):
+async def get_orders_by_product(product: str = Query(..., description="UUID товару з довідника ProductGuide")) :
     data = (
         await Submissions.select()
         .where(
@@ -816,27 +941,48 @@ async def get_orders_by_product(product: str = Query(...)):
     return data
 
 
-@router.get("/moved_products_for_order/{order}")
+@router.get(
+    "/moved_products_for_order/{order}",
+    tags=["04. Замовлення та Контракти (CRM)"],
+    summary="Активні переміщення товару під конкретний договір (MovedData)",
+    description="Повертає список активних міжскладських переміщень (MovedData.is_active = True), оформлених для забезпечення конкретного договору/специфікації замовлення. Допоміжний ендпоінт для аудиту логістичного ланцюжка окремої заявки.",
+)
 @cached_endpoint()
-async def get_moved_products_for_order(order: str):
+async def get_moved_products_for_order(order: str = Path(..., description="Номер договору/специфікації (MovedData.contract)")) :
     data = await MovedData.select().where(
         (MovedData.contract == order) & (MovedData.is_active == True)
     )
     return data
 
 
-@router.get("/products_for_all_orders")
+@router.get(
+    "/products_for_all_orders",
+    tags=["04. Замовлення та Контракти (CRM)"],
+    summary="Повний реєстр зв'язків товарів та замовлень (ProductsForOrders)",
+    description="Повертає повний реєстр зв'язків товарів і замовлень із системної таблиці ProductsForOrders. Допоміжний службовий дамп для аналітики та аудиту відповідності номенклатур у замовленнях.",
+)
 @cached_endpoint()
 async def get_products_for_all_orders():
     data = await ProductsForOrders.select().run()
     return data
 
 
-@router.get("/party_data")
+@router.get(
+    "/party_data",
+    tags=["01. Залишки та Вільний Товар (Stock)"],
+    summary="Агрономічний паспорт партії (схожість, МТС, рік, вага)",
+    description="Повертає якісні показники конкретної партії товару (рік врожаю, схожість у %, масу 1000 насінин, країну походження та вагу) за ID рядка залишку (Remains.id) або номером серії (nomenclature_series). Використовується фронтендом при переході в картку партії з таблиці специфікації договору.",
+)
 @cached_endpoint()
 async def get_party_data(
-    id: Optional[str] = Query(None, description="Унікальний ID партії в базі даних"),
-    party: Optional[str] = Query(None, description="Номер серії номенклатури (партія)"),
+    id: Optional[str] = Query(
+        None,
+        description="UUID рядка залишку в таблиці remains (поле 'id' з /data/remains)",
+    ),
+    party: Optional[str] = Query(
+        None,
+        description="Номер серії або партії номенклатури (поле 'nomenclature_series')",
+    ),
 ):
     """
     Отримує дані по партії. Пошук можливий або по ID, або по номеру партії.
@@ -869,9 +1015,16 @@ async def get_party_data(
     return data
 
 
-@router.get("/id_in_remains")
+@router.get(
+    "/id_in_remains",
+    tags=["01. Залишки та Вільний Товар (Stock)"],
+    summary="Пошук ID рядка залишку за номером партії (резолвер)",
+    description="Службовий резолвер для фронтенду: знаходить UUID рядка в таблиці remains за номером серії/партії (nomenclature_series). Використовується в деталях договору для подальшого переходу в картку агрономічного паспорта партії.",
+)
 @cached_endpoint()
-async def get_id_in_remains(party: str):
+async def get_id_in_remains(
+    party: str = Query(..., description="Номер серії або партії номенклатури (nomenclature_series)"),
+):
     data = (
         await Remains.select(Remains.id)
         .where(Remains.nomenclature_series == party)
@@ -934,7 +1087,12 @@ def group_products_with_parties(items):
     return list(grouped.values())
 
 
-@router.post("/details_for_orders/batch")
+@router.post(
+    "/details_for_orders/batch",
+    tags=["04. Замовлення та Контракти (CRM)"],
+    summary="Пакетне отримання деталей замовлень (POST batch)",
+    description="Пакетна версія отримання товарних рядків із DetailsForOrders через HTTP POST. Приймає JSON-масив номерів замовлень (додатків до договорів) у тілі запиту, що запобігає перевищенню ліміту довжини URL (HTTP 414) при масовому виборі замовлень у таблиці логістики.",
+)
 @cached_endpoint()
 async def get_details_for_orders_batch(order_list: List[str]):
     """
@@ -1099,9 +1257,14 @@ async def _process_details_result(result):
 
 
 
-@router.get("/details_for_orders/{order}")
+@router.get(
+    "/details_for_orders/{order}",
+    tags=["04. Замовлення та Контракти (CRM)"],
+    summary="Товарні рядки та деталі замовлень (DetailsForOrders)",
+    description="Повертає деталізовані рядки товарних позицій із таблиці DetailsForOrders для одного або декількох замовлень (підтримує передачу списку номерів через кому). Кожна позиція збагачується даними про поточний статус доставки (в чернетці, заплановано, відвантажено) з DeliveryItems. Використовується фронтендом при формуванні доставок.",
+)
 @cached_endpoint()
-async def get_details_for_order(order: str):
+async def get_details_for_order(order: str = Path(..., description="Номер замовлення/договору або список номерів через кому")) :
     # Підтримка списку замовлень через кому: "ID1,ID2,ID3"
     order_list = [o.strip() for o in order.split(",") if o.strip()]
     
@@ -1136,9 +1299,16 @@ def clean_df_encoding(df: pd.DataFrame) -> pd.DataFrame:
     return df_copy
 
 
-@router.get("/moved_products")
+@router.get(
+    "/moved_products",
+    tags=["03. Номенклатура та Каталог Товарів"],
+    summary="Внутрішні переміщення товару під активні замовлення (MovedData)",
+    description="Повертає реєстр внутрішніх переміщень товару між складами (MovedData), які оформлені під невиконані специфікації замовлень клієнтів (Submissions із different > 0). Дозволяє менеджеру бачити, які обсяги дефіцитного товару вже знаходяться в дорозі (логістичному переміщенні) для покриття поточних замовлень. Використовується в модальних вікнах деталей замовлень у фронтенді.",
+)
 @cached_endpoint()
-async def get_moved_products(product_id: str = Query(...)):
+async def get_moved_products(
+    product_id: str = Query(..., description="UUID товару з довідника ProductGuide для пошуку активних переміщень"),
+):
     orders = (
         await Submissions.select()
         .where((Submissions.product == product_id) & (Submissions.different > 0))
@@ -1193,19 +1363,34 @@ async def get_moved_products(product_id: str = Query(...)):
         return []
 
 
-@router.get("/calendar_events")
-def get_events_route(start: Optional[str] = None, end: Optional[str] = None):
+@router.get(
+    "/calendar_events",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Події логістичного Google Календаря за період",
+    description="Повертає список подій корпоративного логістичного календаря Google Calendar (графік рейсів, відвантажень) за заданий діапазон дат (start, end). Використовується віджетом календаря у фронтенді.",
+)
+def get_events_route(start: Optional[str] = Query(None, description="Початкова дата діапазону (ISO YYYY-MM-DD)"), end: Optional[str] = Query(None, description="Кінцева дата діапазону (ISO YYYY-MM-DD)")):
     data = get_calendar_events(start_date=start, end_date=end)
     return data
 
 
-@router.get("/calendar_event_by_id")
-async def get_calendar_event_by_id_route(id: str):
+@router.get(
+    "/calendar_event_by_id",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Отримання події календаря Google за event_id",
+    description="Повертає повні дані події корпоративного календаря Google за її унікальним event_id (назва рейсу, опис, час подачі авто, учасники).",
+)
+async def get_calendar_event_by_id_route(id: str = Query(..., description="Унікальний ідентифікатор події Google Calendar")):
     data = get_calendar_event_by_id(id)
     return data
 
 
-@router.get("/calendar_events_by_user")
+@router.get(
+    "/calendar_events_by_user",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Події логістичного календаря, закріплені за користувачем",
+    description="Повертає список логістичних подій та рейсів із таблиці Events, в яких поточний авторизований користувач вказаний як відповідальний логіст або менеджер.",
+)
 async def get_events_by_user(user=Depends(get_current_telegram_user)):
     three_days_ago = datetime.now() - timedelta(days=3)
     if user.is_admin:
@@ -1226,7 +1411,12 @@ async def get_events_by_user(user=Depends(get_current_telegram_user)):
     return data
 
 
-@router.get("/get_all_tasks")
+@router.get(
+    "/get_all_tasks",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Реєстр завдань логістичної служби (Tasks)",
+    description="Повертає повний список активних та виконаних завдань логіста з таблиці Tasks та сервісу Google Tasks. Дозволяє диспетчеру/логісту контролювати чергу обробки заявок на доставку.",
+)
 async def get_tasks(user=Depends(get_current_telegram_user)):
     data = await get_all_tasks(user)
     return data
@@ -1238,7 +1428,13 @@ class TaskCreate(BaseModel):
     note: str
 
 
-@router.post("/add_task", dependencies=[Depends(check_not_guest)])
+@router.post(
+    "/add_task",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Створення завдання логісту (Google Tasks)",
+    description="Створює нове завдання для логістичної служби (таблиця Tasks та Google Tasks API) за заявкою на відвантаження. Використовується менеджером або диспетчером у фронтенді для постановки завдання логісту на організацію доставки.",
+    dependencies=[Depends(check_not_guest)],
+)
 async def add_task(task_data: TaskCreate, user=Depends(get_current_telegram_user)):
     date_iso = (
         task_data.date.astimezone(timezone.utc).isoformat()
@@ -1251,14 +1447,24 @@ async def add_task(task_data: TaskCreate, user=Depends(get_current_telegram_user
     return task
 
 
-@router.get("/get_task")
-def get_task(task_id):
+@router.get(
+    "/get_task",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Картка завдання логіста за ID",
+    description="Повертає детальну інформацію про конкретне завдання логіста (опис, терміни, статус, прив'язана доставка) за ідентифікатором task_id.",
+)
+def get_task(task_id: str = Query(..., description="Ідентифікатор завдання task_id")):
     task = get_task_by_id(task_id)
     return task
 
 
-@router.get("/get_delivery_by_task")
-async def get_delivery_by_task(task_id: str):
+@router.get(
+    "/get_delivery_by_task",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Пошук заявки на доставку за ID завдання логіста",
+    description="Знаходить відповідну заявку на відвантаження (Deliveries) за ідентифікатором завдання логіста task_id для швидкого переходу до накладної та специфікації.",
+)
+async def get_delivery_by_task(task_id: str = Query(..., description="Ідентифікатор завдання task_id")):
     logger.info(f"🔍 get_delivery_by_task called with task_id: {task_id}")
     task = get_task_by_id(task_id)
     if not task:
@@ -1312,8 +1518,13 @@ async def get_delivery_by_task(task_id: str):
     }
 
 
-@router.get("/get_delivery_by_event")
-async def get_delivery_by_event(event_id: str):
+@router.get(
+    "/get_delivery_by_event",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Пошук заявки на доставку за event_id календаря",
+    description="Знаходить відповідну заявку на відвантаження (Deliveries) за ідентифікатором події Google Календаря. Використовується при кліку на подію в інтерактивному календарі.",
+)
+async def get_delivery_by_event(event_id: str = Query(..., description="Ідентифікатор події Google Calendar")):
     logger.info(f"🔍 get_delivery_by_event called with event_id: {event_id}")
     delivery = await Deliveries.objects().where(Deliveries.calendar_id == event_id).first().run()
     if not delivery:
@@ -1342,8 +1553,14 @@ async def get_delivery_by_event(event_id: str):
     }
 
 
-@router.patch("/task_in_progress", dependencies=[Depends(check_not_guest)])
-async def task_in_progress(task_id, user=Depends(get_current_telegram_user)):
+@router.patch(
+    "/task_in_progress",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Взяття завдання в роботу логістом (В процесі)",
+    description="Переводить завдання у статус 'В процесі', оновлює кольоровий індикатор у корпоративному календарі та інформує ініціатора заявки в Telegram про початок опрацювання логістом.",
+    dependencies=[Depends(check_not_guest)],
+)
+async def task_in_progress(task_id: str = Query(..., description="Ідентифікатор завдання task_id"), user=Depends(get_current_telegram_user)):
     await Tasks.update(
         {
             Tasks.task_status: 1,
@@ -1396,8 +1613,14 @@ class TaskComplete(BaseModel):
     solution: str
 
 
-@router.patch("/task_completed", dependencies=[Depends(check_not_guest)])
-async def task_completed(task_id: str, body: TaskComplete, user=Depends(get_current_telegram_user)):
+@router.patch(
+    "/task_completed",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Завершення виконання завдання логістом (Виконано)",
+    description="Фіксує успішне завершення виконання завдання логістичною службою, зберігає фінальний коментар логіста, синхронізує статус у Google Tasks та Google Calendar.",
+    dependencies=[Depends(check_not_guest)],
+)
+async def task_completed(task_id: str = Query(..., description="Ідентифікатор завдання task_id"), body: TaskComplete = Body(...), user=Depends(get_current_telegram_user)):
     await Tasks.update(
         {
             Tasks.task_status: 2,
@@ -1432,8 +1655,14 @@ async def task_completed(task_id: str, body: TaskComplete, user=Depends(get_curr
         print(f"Помилка відправки сповіщення: {e}")
 
 
-@router.patch("/event_in_progress", dependencies=[Depends(check_not_guest)])
-async def event_in_progress(event_id, user=Depends(get_current_telegram_user)):
+@router.patch(
+    "/event_in_progress",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Старт виконання рейсу за подією календаря",
+    description="Змінює статус рейсу за event_id та фарбує подію в Google Календарі на жовтий колір ('В дорозі').",
+    dependencies=[Depends(check_not_guest)],
+)
+async def event_in_progress(event_id: str = Query(..., description="Ідентифікатор події Google Calendar"), user=Depends(get_current_telegram_user)):
     await Events.update(
         {
             Events.event_status: 1,
@@ -1463,8 +1692,14 @@ async def event_in_progress(event_id, user=Depends(get_current_telegram_user)):
         logger.info(f"🔇 Сповіщення вимкнено. Подія {event_id} взята в роботу.")
 
 
-@router.patch("/event_completed", dependencies=[Depends(check_not_guest)])
-async def event_completed(event_id, user=Depends(get_current_telegram_user)):
+@router.patch(
+    "/event_completed",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Успішне завершення рейсу за подією календаря",
+    description="Фіксує завершення доставки за event_id, змінює колір у Google Календарі на зелений ('Доставлено').",
+    dependencies=[Depends(check_not_guest)],
+)
+async def event_completed(event_id: str = Query(..., description="Ідентифікатор події Google Calendar"), user=Depends(get_current_telegram_user)):
     await Events.update(
         {
             Events.event_status: 2,
@@ -1484,7 +1719,13 @@ async def event_completed(event_id, user=Depends(get_current_telegram_user)):
         logger.info(f"🔇 Сповіщення вимкнено. Подія {event_id} завершена.")
 
 
-@router.patch("/event_changed_date", dependencies=[Depends(check_not_guest)])
+@router.patch(
+    "/event_changed_date",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Перенесення дати рейсу в Google Календарі",
+    description="Змінює дату запланованого рейсу в Google Календарі та таблиці Events на нову дату new_date. Використовується логістом при перенесенні доставки.",
+    dependencies=[Depends(check_not_guest)],
+)
 async def event_changed_date(
     event_id: str, new_date: ChangeDateRequest, user=Depends(get_current_telegram_user)
 ):
@@ -1506,8 +1747,13 @@ async def event_changed_date(
         logger.info(f"🔇 Сповіщення вимкнено. У події {event_id} змінена дата.")
 
 
-@router.get("/get_task_status")
-async def get_task_status(task_id):
+@router.get(
+    "/get_task_status",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Перевірка поточного статусу завдання логіста",
+    description="Швидка перевірка поточного статусу обробки заявки логістом (new, in_progress, completed) за його task_id.",
+)
+async def get_task_status(task_id: str = Query(..., description="Ідентифікатор завдання task_id")):
     try:
         data = await Tasks.objects().where(Tasks.task_id == task_id).run()
         return data[0]

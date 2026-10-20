@@ -338,6 +338,9 @@ class Deliveries(Table):
     np_status = Varchar(length=255, null=True)
     np_status_code = Varchar(length=10, null=True)
     target_warehouse = Varchar(length=255, null=True)
+    is_accountant_sent = Boolean(default=False)
+    accountant_sent_at = Timestamp(null=True)
+    accountant_name = Varchar(length=255, null=True)
 
 
 # Таблица товаров в доставке

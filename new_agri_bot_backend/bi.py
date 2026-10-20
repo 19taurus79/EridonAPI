@@ -14,11 +14,16 @@ from new_agri_bot_backend.cache import cached_endpoint
 
 router = APIRouter(
     prefix="/api/v2",
-    tags=["api"],
+    tags=["11. Системні сервіси, Webhooks та Аналітика"],
 )
 
 
-@router.get("/remains")
+@router.get(
+    "/remains",
+    tags=["01. Залишки та Вільний Товар (Stock)"],
+    summary="[BI] Агреговані залишки для звітності",
+    description="Аналітичний ендпоінт для PowerBI / внутрішньої звітності по залишках.",
+)
 @cached_endpoint()
 async def get_remains():
     remains_with_series = (
@@ -62,7 +67,12 @@ priority_divisions = [
 from collections import defaultdict
 
 
-@router.get("/combined")
+@router.get(
+    "/combined",
+    tags=["11. Системні сервіси, Webhooks та Аналітика"],
+    summary="BI-аналітика балансу замовлень та залишків (SQL ORM)",
+    description="Високопродуктивний прямий SQL/ORM розрахунок дефіциту товарів під клієнтські замовлення з пошуком вільних залишків на інших регіональних складах.",
+)
 @cached_endpoint()
 async def combined_endpoint():
     # Инициализация вспомогательных словарей внутри функции, чтобы не сохранять состояние между вызовами.

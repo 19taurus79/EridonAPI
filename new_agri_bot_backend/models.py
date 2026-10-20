@@ -373,6 +373,7 @@ class AccountantOrder(BaseModel):
 
 class SendToAccountantRequest(BaseModel):
     delivery_id: int
+    delivery_ids: Optional[List[int]] = None
     accountant_id: Optional[str] = None
     channels: List[str] = ["telegram", "email"]
     comment: Optional[str] = None

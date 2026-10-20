@@ -3,7 +3,7 @@ import hmac, hashlib, json, uuid
 from urllib.parse import parse_qsl
 from datetime import datetime, timezone, timedelta
 
-from fastapi import HTTPException, status, APIRouter, Header, Depends, Body
+from fastapi import HTTPException, status, APIRouter, Header, Depends, Body, Path
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
@@ -21,7 +21,7 @@ load_dotenv()
 # либо просто импортируйте из config.py
 # TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") # Лучше брать из config.py
 
-router = APIRouter(tags=["Аутентифікація"])
+router = APIRouter(tags=["08. Авторизація та Сесії Telegram"])
 
 
 class InitDataModel(BaseModel):
@@ -182,7 +182,11 @@ def check_telegram_auth(init_data: str) -> dict:
     return parsed
 
 
-@router.post("/auth", summary="Аутентификация пользователя Telegram Mini App")
+@router.post(
+    "/auth",
+    summary="Аутентифікація Telegram Mini App (initData)",
+    description="Валідація HMAC-SHA256 хешу сесії Telegram WebApp (initData) та генерація/повернення сесійного контексту авторизованого співробітника.",
+)
 async def auth(data: InitDataModel):
     """
     Эндпоинт для аутентификации пользователей Telegram Mini App.
@@ -318,8 +322,12 @@ async def auth(data: InitDataModel):
     }
 
 
-@router.get("/get_user")
-# ФУНКЦІЯ ЗАЛЕЖНОСТІ З ПІДТРИМКОЮ TELEGRAM ТА MCP GATEWAY DELEGATION
+@router.get(
+    "/get_user",
+    summary="Профіль поточного авторизованого користувача",
+    description="Повертає облікові дані та права поточного співробітника (ПІБ, посаду, ознаки is_admin та is_allowed, закріплених клієнтів/склади). Підтримує авторизацію через заголовок Authorization (Bearer EdDSA JWT від MCP Gateway) або X-Telegram-Init-Data. Використовується фронтендом та інструментом get_authenticated_profile у MCP Gateway.",
+)
+# Гібридний ендпоінт Telegram Mini App + MCP Gateway Delegation
 async def get_current_telegram_user(
     x_telegram_init_data: str | None = Header(
         None,
@@ -458,7 +466,11 @@ async def check_not_guest(
     return current_user
 
 
-@router.post("/auth/login-widget", summary="Авторизація через Telegram Login Widget")
+@router.post(
+    "/auth/login-widget",
+    summary="Авторизація через офіційний Telegram Login Widget",
+    description="Перевірка криптографічного підпису callback-даних офіційного веб-віджета Telegram (onTelegramAuth) та видача токена доступу до системи для веб-версії.",
+)
 async def login_via_widget(data: TelegramWidgetData):
     """
     Авторизація для браузерних клієнтів через Telegram Login Widget.
@@ -626,7 +638,11 @@ async def confirm_login_token(token: str, telegram_id: int) -> bool:
     return True
 
 
-@router.post("/auth/generate-login-token", summary="Генерація токену для Bot Deep Link Login")
+@router.post(
+    "/auth/generate-login-token",
+    summary="Генерація Deep Link токену для входу через бота",
+    description="Створює тимчасовий одноразовий UUID-токен та формує URL-посилання для швидкого безпарольного входу у веб-інтерфейс через Telegram-бота (Deep Linking).",
+)
 async def generate_login_token():
     """
     Створює унікальний токен та повертає deep link для входу через Telegram-бота.
@@ -661,8 +677,14 @@ async def generate_login_token():
     return {"token": token, "deep_link": tg_link, "web_link": web_link, "expires_in": 300}
 
 
-@router.get("/auth/check-login-token/{token}", summary="Перевірка статусу Deep Link-токену")
-async def check_login_token(token: str):
+@router.get(
+    "/auth/check-login-token/{token}",
+    summary="Перевірка статусу підтвердження Deep Link токену",
+    description="Періодичне опитування (polling) веб-інтерфейсом статусу токена входу: чи підтвердив користувач вхід натисканням кнопки у Telegram-боті.",
+)
+async def check_login_token(
+    token: str = Path(..., description="Одноразовий токен авторизації (UUID)"),
+):
     """
     Проверяет статус токена авторизации. Фронтенд поллингует этот эндпоинт каждые 2 секунды.
     - status=pending: пользователь ещё не подтвердил
@@ -692,7 +714,11 @@ class ConfirmTokenRequest(BaseModel):
     token: str
     telegram_id: int
 
-@router.post("/auth/confirm-login-token", summary="Підтвердження токену від телеграм-бота")
+@router.post(
+    "/auth/confirm-login-token",
+    summary="Підтвердження токену від Telegram-бота",
+    description="Службовий ендпоінт, що викликається Telegram-ботом, коли користувач натискає кнопку підтвердження входу в чаті бота, активуючи сесію користувача у веб-інтерфейсі.",
+)
 async def api_confirm_login_token(req: ConfirmTokenRequest):
     """
     Ендпоінт для окремого бота, щоб підтвердити 6-значний код або weblogin_token.

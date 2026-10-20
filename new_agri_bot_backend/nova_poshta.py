@@ -5,7 +5,7 @@ import httpx
 from .config import NP_API_KEY, logger
 from .telegram_auth import check_not_guest
 
-router = APIRouter(prefix="/nova-poshta", tags=["Nova Poshta"])
+router = APIRouter(prefix="/nova-poshta", tags=["06. Нова Пошта (Nova Poshta)"])
 
 NP_API_URL = "https://api.novaposhta.ua/v2.0/json/"
 
@@ -40,9 +40,16 @@ async def call_np_api(model: str, method: str, properties: dict) -> dict:
             logger.error(f"Nova Poshta API connection error: {e}")
             raise HTTPException(status_code=502, detail=f"Error connecting to Nova Poshta API: {str(e)}")
 
-@router.get("/cities", dependencies=[Depends(check_not_guest)])
-async def get_cities(q: str = Query(..., min_length=2)):
-    """Search for settlements/cities by name"""
+@router.get(
+    "/cities",
+    dependencies=[Depends(check_not_guest)],
+    summary="Пошук міст та населених пунктів (Нова Пошта)",
+    description="Онлайн-пошук населених пунктів через AddressGeneral.searchSettlements за фрагментом назви для автодоповнення при оформленні доставки.",
+)
+async def get_cities(
+    q: str = Query(..., min_length=2, description="Фрагмент назви населеного пункту (мін. 2 символи)"),
+):
+    """Пошук міст та населених пунктів через API Нової Пошти."""
     # Use searchSettlements for better autocomplete results
     data = await call_np_api("Address", "searchSettlements", {
         "CityName": q,
@@ -67,9 +74,18 @@ async def get_cities(q: str = Query(..., min_length=2)):
     
     return {"success": True, "data": results}
 
-@router.get("/warehouses", dependencies=[Depends(check_not_guest)])
-async def get_warehouses(city_ref: str, q: Optional[str] = None, type_ref: Optional[str] = None):
-    """Get warehouses for a city using its CityRef."""
+@router.get(
+    "/warehouses",
+    dependencies=[Depends(check_not_guest)],
+    summary="Список відділень та поштоматів у місті (за CityRef)",
+    description="Отримання списку вантажних/поштових відділень та поштоматів Нової Пошти у вибраному населеному пункті за його CityRef з можливістю текстового пошуку та фільтрації за типом відділення.",
+)
+async def get_warehouses(
+    city_ref: str = Query(..., description="Унікальний ідентифікатор населеного пункту (CityRef/SettlementRef) у базі Нової Пошти"),
+    q: Optional[str] = Query(None, description="Пошуковий рядок (номер відділення, вулиця або адреса)"),
+    type_ref: Optional[str] = Query(None, description="Ідентифікатор типу відділення (поштове, вантажне, поштомат)"),
+):
+    """Список відділень та поштоматів у місті за CityRef."""
     properties = {
         "CityRef": city_ref,
         "Language": "UA",
@@ -98,9 +114,16 @@ async def get_warehouses(city_ref: str, q: Optional[str] = None, type_ref: Optio
     
     return {"success": True, "data": results}
 
-@router.get("/counterparty", dependencies=[Depends(check_not_guest)])
-async def get_counterparty(edrpou: str):
-    """Find counterparty (organization) by EDRPOU code"""
+@router.get(
+    "/counterparty",
+    dependencies=[Depends(check_not_guest)],
+    summary="Пошук контрагента за ЄДРПОУ (Нова Пошта)",
+    description="Перевірка наявності юридичної особи контрагента в довіднику контрагентів Нової Пошти за кодом ЄДРПОУ (шукає серед одержувачів і відправників) для автозаповнення реквізитів ТТН.",
+)
+async def get_counterparty(
+    edrpou: str = Query(..., description="Код ЄДРПОУ підприємства контрагента (8 або 10 знаків)"),
+):
+    """Пошук контрагента за ЄДРПОУ в базі Нової Пошти."""
     logger.info(f"Searching for NP counterparty by EDRPOU: {edrpou}")
     
     # Try as Recipient first
@@ -141,9 +164,17 @@ async def get_counterparty(edrpou: str):
     
     return data
 
-@router.get("/streets", dependencies=[Depends(check_not_guest)])
-async def get_streets(city_ref: str, q: str):
-    """Search for streets in a city for courier delivery"""
+@router.get(
+    "/streets",
+    dependencies=[Depends(check_not_guest)],
+    summary="Пошук вулиць для адресної кур'єрської доставки",
+    description="Пошук вулиць населеного пункту через Address.searchSettlementStreets за назвою для оформлення адресної кур'єрської доставки «до дверей».",
+)
+async def get_streets(
+    city_ref: str = Query(..., description="Унікальний ідентифікатор населеного пункту (SettlementRef) у базі Нової Пошти"),
+    q: str = Query(..., min_length=2, description="Фрагмент назви вулиці для пошуку"),
+):
+    """Пошук вулиць для адресної кур'єрської доставки."""
     data = await call_np_api("Address", "searchSettlementStreets", {
         "SettlementRef": city_ref,
         "StreetName": q,
@@ -166,9 +197,16 @@ async def get_streets(city_ref: str, q: str):
     return {"success": True, "data": results}
 
 
-@router.get("/validate_ttn", dependencies=[Depends(check_not_guest)])
-async def validate_ttn(ttn: str):
-    """Validate TTN number"""
+@router.get(
+    "/validate_ttn",
+    dependencies=[Depends(check_not_guest)],
+    summary="Перевірка валідності та статусу номера ТТН",
+    description="Перевірка коректності 14-значного номера експрес-накладної та онлайн-запит актуального стану доставки вантажу через TrackingDocument.getStatusDocuments.",
+)
+async def validate_ttn(
+    ttn: str = Query(..., description="14-значний номер електронної накладної Нової Пошти"),
+):
+    """Перевірка валідності та статусу номера ТТН Нової Пошти."""
     data = await call_np_api("TrackingDocument", "getStatusDocuments", {
         "Documents": [
             {
@@ -192,9 +230,14 @@ async def validate_ttn(ttn: str):
     return {"success": True, "data": results[0]}
 
 
-@router.post("/check-tracking", dependencies=[Depends(check_not_guest)])
+@router.post(
+    "/check-tracking",
+    dependencies=[Depends(check_not_guest)],
+    summary="Синхронізація статусів трекінгу ТТН (пакетне оновлення)",
+    description="Службовий ендпоінт пакетного опитування активних ТТН. Знаходить усі відкриті доставки з ТТН у таблиці Deliveries, оновлює статуси та шле Telegram-сповіщення менеджерам при прибутті вантажу у відділення.",
+)
 async def trigger_check_np_deliveries():
-    """Manual trigger for NP deliveries status tracking"""
+    """Ручний або фоновий запуск пакетної перевірки статусів ТТН."""
     import asyncio
     from .services.np_tracking_service import check_np_deliveries_status
     asyncio.create_task(check_np_deliveries_status())

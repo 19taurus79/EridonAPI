@@ -332,3 +332,7 @@ writing
 
 # Test environment configuration
 .env.test
+
+# Backup and temporary edit files
+*.bak*
+

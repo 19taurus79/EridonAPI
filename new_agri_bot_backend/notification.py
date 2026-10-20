@@ -99,18 +99,25 @@ async def send_chat_notification(
 
 
 # routers/chat.py
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Path
 
 
 # from services.telegram_service import send_chat_notification
 # from services.notification_service import determine_recipients
 
-router = APIRouter(prefix="/orders", tags=["chat"])
+router = APIRouter(prefix="/orders", tags=["09. Чат та Коментарі до Заявок"])
 
 
-@router.post("/{order_ref}/chat/messages/{message_id}/notify", dependencies=[Depends(check_not_guest)])
+@router.post(
+    "/{order_ref}/chat/messages/{message_id}/notify",
+    dependencies=[Depends(check_not_guest)],
+    summary="Надіслати Telegram-сповіщення про повідомлення в чаті",
+    description="Службовий ендпоінт надсилання персонального Telegram-сповіщення відповідальним логістам або автору замовлення з кнопкою швидкого переходу у відповідний чат у додатку.",
+)
 async def notify_chat_message(
-    order_ref: str, message_id: str, current_user=Depends(get_current_telegram_user)
+    order_ref: str = Path(..., description="Номер замовлення (order_ref)"),
+    message_id: str = Path(..., description="UUID повідомлення в чаті"),
+    current_user=Depends(get_current_telegram_user),
 ):
     """Відправити Telegram сповіщення про нове повідомлення"""
 

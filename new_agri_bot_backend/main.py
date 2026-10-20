@@ -83,6 +83,7 @@ from fastapi import (
     Header,
     WebSocket,
     WebSocketDisconnect,
+    Path,
 )
 from .websocket_manager import manager
 from fastapi.responses import JSONResponse
@@ -449,7 +450,12 @@ async def internal_server_error_handler(request: Request, exc: Exception):
     )
 
 
-@app.get("/health", tags=["System"])
+@app.get(
+    "/health",
+    tags=["11. Системні сервіси, Webhooks та Аналітика"],
+    summary="Health Check стану працездатності EridonAPI",
+    description="Перевірка доступності сервера, стану підключення пулу бази даних PostgreSQL та готовності приймати трафік.",
+)
 async def health_check():
     """Перевірка працездатності сервісу."""
     return {
@@ -533,7 +539,12 @@ def json_to_csv_temp(data: List[ClientData]) -> str:
         raise
 
 
-@app.post("/webhook/bot", include_in_schema=False)
+@app.post(
+    "/webhook/bot",
+    include_in_schema=False,
+    summary="Telegram Webhook обробник для aiogram бота",
+    description="Точка входу прийому вхідних апдейтів від серверів Telegram Bot API та передача їх у aiogram Dispatcher.",
+)
 async def bot_webhook(request: Request):
     """Отримує оновлення від Telegram та передає до aiogram Dispatcher."""
     data = await request.json()
@@ -545,8 +556,15 @@ async def bot_webhook(request: Request):
     return {"ok": True}
 
 
-@app.post("/api/reminders/{reminder_id}/done")
-async def api_reminder_done(reminder_id: int):
+@app.post(
+    "/api/reminders/{reminder_id}/done",
+    tags=["11. Системні сервіси, Webhooks та Аналітика"],
+    summary="Позначити нагадування логіста як виконане",
+    description="Закриває активне логістичне нагадування за його числовим ID.",
+)
+async def api_reminder_done(
+    reminder_id: int = Path(..., description="Унікальний ідентифікатор нагадування"),
+):
     """Позначає нагадування як виконане (для виклику з Telegram-бота або фронтенду)"""
     from .services.delivery_reminder_service import mark_reminder_done
     success = await mark_reminder_done(reminder_id)
@@ -555,8 +573,16 @@ async def api_reminder_done(reminder_id: int):
     return {"ok": True, "reminder_id": reminder_id, "status": "done"}
 
 
-@app.post("/api/reminders/{reminder_id}/delay")
-async def api_reminder_delay(reminder_id: int, minutes: int = 15):
+@app.post(
+    "/api/reminders/{reminder_id}/delay",
+    tags=["11. Системні сервіси, Webhooks та Аналітика"],
+    summary="Відтермінувати нагадування логіста",
+    description="Переносить час спрацьовування нагадування на вказану кількість хвилин.",
+)
+async def api_reminder_delay(
+    reminder_id: int = Path(..., description="Унікальний ідентифікатор нагадування"),
+    minutes: int = Query(15, description="Кількість хвилин для відтермінування"),
+):
     """Переносить нагадування на вказану кількість хвилин (за замовчуванням 15)"""
     from .services.delivery_reminder_service import delay_reminder
     success = await delay_reminder(reminder_id, delay_minutes=minutes)
@@ -595,10 +621,15 @@ def format_message(data: List[ClientData]) -> str:
 
 
 
-@app.post("/send_telegram_message/")
+@app.post(
+    "/send_telegram_message/",
+    tags=["11. Системні сервіси, Webhooks та Аналітика"],
+    summary="Службова розсилка Telegram-сповіщень клієнтам",
+    description="Масове надсилання повідомлень клієнтам або водіям за структурованим списком ClientData.",
+)
 async def send_telegram_message(
     data: List[ClientData],
-    chat_id: int = Query(..., description="Telegram chat id для отправки сообщения"),
+    chat_id: int = Query(..., description="Telegram chat ID для надсилання повідомлення"),
 ):
     message_text = format_message(data)
     csv_path = None
@@ -624,7 +655,12 @@ class TelegramMessage(BaseModel):  # ← ДОБАВЬ ЭТО
     text: str
 
 
-@app.post("/send_telegram_message_by_event")
+@app.post(
+    "/send_telegram_message_by_event",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Надсилання Telegram-сповіщення за подією рейсу",
+    description="Службовий ендпоінт відправки персоналізованого Telegram-повідомлення відповідальному логісту або менеджеру при зміні статусу або дати рейсу.",
+)
 async def message(message: TelegramMessage):
     if SEND_NOTIFICATIONS:
         await bot.send_message(
@@ -637,7 +673,13 @@ async def message(message: TelegramMessage):
 _last_update_requests: Dict[int, float] = {}
 
 
-@app.post("/request_update", tags=["Системні сповіщення"], dependencies=[Depends(check_not_guest)])
+@app.post(
+    "/request_update",
+    tags=["10. ETL, Завантаження Даних та 1С"],
+    summary="Запит позачергового оновлення даних від адміністратора",
+    description="Надсилає термінове повідомлення адміністраторам у Telegram про необхідність оновлення вивантажень залишків або замовлень. Має вбудований cooldown (1 запит на 60 секунд для запобігання спаму).",
+    dependencies=[Depends(check_not_guest)],
+)
 async def request_data_update(current_user: Users = Depends(get_current_telegram_user)):
     """
     Надсилає сповіщення адміністраторам про необхідність оновлення даних.
@@ -689,11 +731,15 @@ async def request_data_update(current_user: Users = Depends(get_current_telegram
 
 # --- Маршрут для загрузки и обработки данных ---
 @app.post(
-    "/upload_ordered_moved", response_model=models.UploadResponse, tags=["Processing"]
+    "/upload_ordered_moved",
+    response_model=models.UploadResponse,
+    tags=["04. Замовлення та Контракти (CRM)"],
+    summary="Завантаження та обробка звітів 1С по замовленнях та переміщеннях (.xlsx)",
+    description="Приймає два вивантаження Excel з 1С: файл активних замовлень (замовлені.xlsx) та файл міжскладських переміщень (переміщення.xlsx). Здійснює інтелектуальне зіставлення рядків, оновлює таблиці замовлень і переміщень у базі даних та повертає звіт про зіставлені позиції і залишки нерозпізнаних рядків. Використовується у формі завантаження панелі адміністратора (FileUploadForm).",
 )
 async def upload_and_process_files(
-    ordered_file: UploadFile = File(..., description="Файл 'Заказано.xlsx'"),
-    moved_file: UploadFile = File(..., description="Файл 'Перемещено.xlsx'"),
+    ordered_file: UploadFile = File(..., description="Excel-файл вивантаження замовлень клієнтів ('замовлені.xlsx')"),
+    moved_file: UploadFile = File(..., description="Excel-файл вивантаження міжскладських переміщень ('переміщення.xlsx')"),
 ):
     try:
         leftovers, matched_list = processing.process_uploaded_files(
@@ -779,9 +825,14 @@ async def upload_and_process_files(
 @app.post(
     "/process/{session_id}/manual_match",
     response_model=models.MatchResponse,
-    tags=["Processing"],
+    tags=["10. ETL, Завантаження Даних та 1С"],
+    summary="Ручне зіставлення нерозпізнаних номенклатур 1С",
+    description="Інтерфейс прив'язки позицій з файлів постачальників або незіставлених рядків 1С до канонічного каталогу товарів у межах активної сесії обробки.",
 )
-async def manual_match(session_id: str, match_input: models.ManualMatchInput):
+async def manual_match(
+    session_id: str = Path(..., description="Унікальний ідентифікатор сесії імпорту"),
+    match_input: models.ManualMatchInput = ...,
+):
     """
     Эндпоинт для ручного сопоставления с УЛУЧШЕННЫМ АЛГОРИТМОМ.
     Теперь поддерживает частичное сопоставление (когда суммы не равны).
@@ -893,9 +944,13 @@ async def manual_match(session_id: str, match_input: models.ManualMatchInput):
 @app.get(
     "/process/{session_id}/results",
     response_model=models.ResultsResponse,
-    tags=["Processing"],
+    tags=["10. ETL, Завантаження Даних та 1С"],
+    summary="Результати обробки та зіставлення номенклатури",
+    description="Повертає фінальні результати парсингу файлів: автоматично розпізнані позиції, залишок незіставлених рядків та статистику обробки сесії.",
 )
-async def get_results(session_id: str):
+async def get_results(
+    session_id: str = Path(..., description="Унікальний ідентифікатор сесії імпорту"),
+):
     if session_id not in sessions:
         raise HTTPException(status_code=404, detail="Сессия не найдена.")
 
@@ -917,24 +972,19 @@ async def get_results(session_id: str):
 
 @app.post(
     "/upload-data",
-    summary="Загрузить и обработать Excel-файлы",
-    response_description="Статус загрузки данных и уведомление",
+    tags=["10. ETL, Завантаження Даних та 1С"],
+    summary="Пакетне завантаження та імпорт Excel-звітів 1С",
+    description="Службовий ендпоінт імпорту вивантажень 1С у внутрішню базу PostgreSQL у фоновому режимі (BackgroundTasks): вільний товар (av_stock), бухгалтерські залишки (remains), реєстр замовлень (submissions) та взаєморозрахунки (payment).",
+    response_description="Статус запуску фонової обробки та збереження даних",
 )
 async def upload_data(
     background_tasks: BackgroundTasks,
-    av_stock_file: UploadFile = File(
-        ..., description="Файл с доступными остатками по подразделению"
-    ),
-    remains_file: UploadFile = File(..., description="Файл с остатками"),
-    submissions_file: UploadFile = File(..., description="Файл с заявками"),
-    payment_file: UploadFile = File(..., description="Файл с оплатой"),
-    # moved_file: UploadFile = File(..., description="Файл с перемещенными данными"),
-    free_stock: UploadFile = File(
-        default=..., description="Файл с доступными остатками"
-    ),
-    manual_matches_json: Optional[str] = Form(
-        None, description="JSON-строка с результатами ручного сопоставления"
-    ),
+    av_stock_file: UploadFile = File(..., description="Звіт 1С: Вільний залишок товару по підрозділах (Excel)"),
+    remains_file: UploadFile = File(..., description="Звіт 1С: Залишки товарів на складах компанії (Excel)"),
+    submissions_file: UploadFile = File(..., description="Звіт 1С: Реєстр замовлень покупців / заявки (Excel)"),
+    payment_file: UploadFile = File(..., description="Звіт 1С: Взаєморозрахунки та оплати клієнтів (Excel)"),
+    free_stock: UploadFile = File(default=..., description="Звіт 1С: Залишки вільного товару (Excel)"),
+    manual_matches_json: Optional[str] = Form(None, description="JSON-рядок з ручними зіставленнями номенклатури"),
 ):
     """
     Принимает несколько Excel-файлов, обрабатывает их и загружает данные в базу данных.
@@ -984,7 +1034,13 @@ async def upload_data(
 
 
 # 1. Получение списка областей (и городов со спец. статусом)
-@app.get("/regions", response_model=List[RegionResponse])
+@app.get(
+    "/regions",
+    tags=["11. Системні сервіси, Webhooks та Аналітика"],
+    response_model=List[RegionResponse],
+    summary="Довідник областей України (AddressGuide)",
+    description="Повертає перелік усіх областей України (level_1_id) для побудови фільтрів географічного пошуку адрес.",
+)
 async def get_regions():
     # Выбираем категории 'O' (Области) и 'K' (Киев, Севастополь)
     # Сортируем по названию
@@ -1000,7 +1056,12 @@ async def get_regions():
 
 
 # 2. Поиск населенного пункта в области
-@app.get("/get_all_orders_and_address")
+@app.get(
+    "/get_all_orders_and_address",
+    tags=["04. Замовлення та Контракти (CRM)"],
+    summary="Зведений реєстр замовлень із вагою та адресами для логістики (MapModule)",
+    description="Критичний агрегаційний ендпоінт для логістичного модуля карти (MapModule). Автоматично розраховує загальну фізичну вагу вантажу для кожного активного замовлення на основі ваги одиниці товару з ProductGuide/Remains та зіставляє їх із базою адрес розвантаження контрагентів (ClientAddress). Використовується для побудови маршрутів і компонування автотранспорту.",
+)
 @cached_endpoint()
 async def get_all_orders_and_address():
     """
@@ -1067,7 +1128,12 @@ async def get_all_orders_and_address():
     return orders_list, address
 
 
-@app.get("/get_all_addresses")
+@app.get(
+    "/get_all_addresses",
+    tags=["07. Клієнти, Менеджери та Адреси (CRM)"],
+    summary="Повний реєстр адрес розвантаження клієнтів",
+    description="Повертає всі зареєстровані в системі адреси розвантаження, фермерські поля, склади клієнтів та збережені налаштування відділень Нової Пошти за замовчуванням (default_np_data).",
+)
 async def get_all_addresses():
     address = await ClientAddress.select().run()
     for addr in address:
@@ -1080,8 +1146,15 @@ async def get_all_addresses():
     return address
 
 
-@app.get("/get_address_by_client/{client}")
-async def get_address_by_client(client):
+@app.get(
+    "/get_address_by_client/{client}",
+    tags=["07. Клієнти, Менеджери та Адреси (CRM)"],
+    summary="Адреси розвантаження конкретного клієнта",
+    description="Повертає список адрес доставки та господарств, закріплених за вказаним клієнтом, включно з координатами та параметрами прив'язки до Нової Пошти.",
+)
+async def get_address_by_client(
+    client: str = Path(..., description="Назва або унікальний ідентифікатор контрагента (клієнта)"),
+):
     address = await ClientAddress.select().where(ClientAddress.client == client).run()
     for addr in address:
         np = addr.get("default_np_data")
@@ -1093,8 +1166,18 @@ async def get_address_by_client(client):
     return address
 
 
-@app.put("/update_address_for_client/{id}", dependencies=[Depends(check_not_guest)])
-async def update_address_for_client(address_data: AddressCreate, id: int, request: Request):
+@app.put(
+    "/update_address_for_client/{id}",
+    tags=["07. Клієнти, Менеджери та Адреси (CRM)"],
+    summary="Оновлення адреси розвантаження клієнта",
+    description="Оновлює координати, географічну ієрархію (область, район, громада, населений пункт), контактних представників або параметри відділення Нової Пошти для існуючого запису адреси.",
+    dependencies=[Depends(check_not_guest)],
+)
+async def update_address_for_client(
+    address_data: AddressCreate,
+    request: Request,
+    id: int = Path(..., description="Унікальний числовий ID адреси в таблиці ClientAddress"),
+):
     logger.info(f"update_address_for_client id={id}, data={address_data.dict()}")
     try:
         obj = await ClientAddress.objects().get(where=(ClientAddress.id == id))
@@ -1158,8 +1241,17 @@ async def update_address_for_client(address_data: AddressCreate, id: int, reques
 
 
 
-@app.post("/add_address_for_client", dependencies=[Depends(check_not_guest)])
-async def create_address_for_client(address_data: AddressCreate, request: Request):
+@app.post(
+    "/add_address_for_client",
+    tags=["07. Клієнти, Менеджери та Адреси (CRM)"],
+    summary="Створення нової адреси розвантаження клієнта",
+    description="Створює новий запис адреси доставки клієнта з авторозбором рядка повної адреси на область, район, громаду та місто з прив'язкою до менеджера та представника.",
+    dependencies=[Depends(check_not_guest)],
+)
+async def create_address_for_client(
+    address_data: AddressCreate,
+    request: Request,
+):
     """
     Создает новый адрес для клиента, "умно" разбирая строку полного адреса.
     """
@@ -1220,7 +1312,13 @@ async def create_address_for_client(address_data: AddressCreate, request: Reques
         )
 
 
-@app.get("/addresses/search", response_model=List[AddressResponse])
+@app.get(
+    "/addresses/search",
+    tags=["07. Клієнти, Менеджери та Адреси (CRM)"],
+    summary="Швидкий пошук населених пунктів за регіоном (AddressGuide)",
+    description="Пошук міст, селищ та сіл (категорії M, X, C) за фрагментом назви у межах заданої області (level_1_id) за класифікатором AddressGuide.",
+    response_model=List[AddressResponse],
+)
 async def search_addresses(
     q: str = Query(..., min_length=3, description="Название населенного пункта"),
     region_id: str = Query(..., description="ID области (level_1_id)"),
@@ -1262,8 +1360,15 @@ async def search_addresses(
     return response
 
 
-@app.get("/api/vehicle-info/{number}")
-async def get_vehicle_info(number: str):
+@app.get(
+    "/api/vehicle-info/{number}",
+    tags=["11. Системні сервіси, Webhooks та Аналітика"],
+    summary="Інформація про вантажний автомобіль за держномером",
+    description="Повертає нормалізовані параметри транспортного засобу або причепа (марка, вантажопідйомність, тип кузова) за номером.",
+)
+async def get_vehicle_info(
+    number: str = Path(..., description="Державний реєстраційний номер авто"),
+):
     clean_number = number.upper().replace(" ", "")
     # Ограничим длину номера для безопасности
     if len(clean_number) < 3 or len(clean_number) > 20:
@@ -1389,8 +1494,13 @@ async def get_vehicle_info(number: str):
         }
 
 
-@app.get("/delivery/get_telegram_id_from_delivery_by_id/{id}")
-async def get_telegram_id(id):
+@app.get(
+    "/delivery/get_telegram_id_from_delivery_by_id/{id}",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Отримання Telegram ID відповідального за доставкою",
+    description="Повертає числовий Telegram ID користувача (менеджера, що створив заявку) за ID доставки для адресної відправки сервісних повідомлень.",
+)
+async def get_telegram_id(id: int = Path(..., description="Числовий ID доставки в таблиці Deliveries")):
     try:
         telegram_id = (
             await Deliveries.objects().where(Deliveries.calendar_id == str(id)).first()
@@ -1400,8 +1510,13 @@ async def get_telegram_id(id):
         return
 
 
-@app.get("/delivery/get/{id}")
-async def get_delivery_by_id(id: int, X_Telegram_Init_Data: str = Header()):
+@app.get(
+    "/delivery/get/{id}",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Отримання картки доставки за числовим ID",
+    description="Повертає детальні дані конкретної заявки на доставку (Deliveries) за її числовим ідентифікатором, включаючи список товарів, закріплену машину та реквізити отримувача.",
+)
+async def get_delivery_by_id(id: int = Path(..., description="Числовий ID доставки в таблиці Deliveries"), X_Telegram_Init_Data: str = Header()):
     parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
     if not parsed_init_data:
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -1451,7 +1566,13 @@ async def get_delivery_by_id(id: int, X_Telegram_Init_Data: str = Header()):
 
 
 
-@app.post("/delivery/request_np_details", dependencies=[Depends(check_not_guest)])
+@app.post(
+    "/delivery/request_np_details",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Запит реквізитів Нової Пошти у менеджера (Telegram)",
+    description="Автоматично надсилає закріпленому менеджеру запит через Telegram-бота з проханням уточнити номер відділення Нової Пошти, ПІБ та контактний номер телефону отримувача вантажу.",
+    dependencies=[Depends(check_not_guest)],
+)
 async def request_np_details(
     data: RequestNPDetailsRequest,
     X_Telegram_Init_Data: str = Header()
@@ -1508,7 +1629,12 @@ async def request_np_details(
     return {"status": "success", "message": "Запит успішно надіслано менеджеру"}
 
 
-@app.get("/delivery/get_data_for_delivery")
+@app.get(
+    "/delivery/get_data_for_delivery",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Головний реєстр активних заявок на доставку",
+    description="Повертає повний список заявок на доставку з таблиці Deliveries з деталізацією товарних позицій (DeliveryItems), водіїв, автотранспорту, складів відвантаження та статусів. Ядро логістичного модуля диспетчера/логіста.",
+)
 async def get_data_for_delivery(X_Telegram_Init_Data: str = Header()):
     parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
     if not parsed_init_data:
@@ -1572,7 +1698,12 @@ async def get_data_for_delivery(X_Telegram_Init_Data: str = Header()):
     combined_data = list(deliveries_map.values())
     return combined_data
 
-@app.get("/delivery/unmapped_lobs")
+@app.get(
+    "/delivery/unmapped_lobs",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Список незіставлених напрямків бізнесу (Unmapped LOBs)",
+    description="Повертає перелік бізнес-напрямків товарів у доставках, для яких у системі ще не налаштовано правила відповідності та логістичної категоризації.",
+)
 async def get_unmapped_lobs(X_Telegram_Init_Data: str = Header()):
     parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
     if not parsed_init_data:
@@ -1586,7 +1717,12 @@ async def get_unmapped_lobs(X_Telegram_Init_Data: str = Header()):
     unmapped_products = [item["product"] for item in items if item["product"]]
     return unmapped_products
 
-@app.post("/delivery/map_lobs")
+@app.post(
+    "/delivery/map_lobs",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Збереження зіставлення напрямків бізнесу (Map LOBs)",
+    description="Зберігає правила зіставлення бізнес-напрямків номенклатури з категоріями логістики для автоматичного розподілу доставок за типами транспорту.",
+)
 async def map_lobs(data: MapLoBRequest, X_Telegram_Init_Data: str = Header()):
     parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
     if not parsed_init_data:
@@ -1674,7 +1810,13 @@ async def resolve_client_manager_user(client_name: str, manager_name: Optional[s
     return None
 
 
-@app.post("/delivery/send", dependencies=[Depends(check_not_guest)])
+@app.post(
+    "/delivery/send",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Створення нової заявки на доставку/відвантаження",
+    description="Створює нову заявку на доставку (власний транспорт компанії, самовивіз або перевізник) у таблиці Deliveries, фіксує товарні позиції (DeliveryItems), створює подію в Google Календарі та завдання для логіста.",
+    dependencies=[Depends(check_not_guest)],
+)
 async def send_delivery(
     data: DeliveryRequest, 
     background_tasks: BackgroundTasks,
@@ -1912,7 +2054,13 @@ async def send_delivery(
     return {"status": "ok", "id": new_delivery.id}
 
 
-@app.post("/delivery/split", dependencies=[Depends(check_not_guest)])
+@app.post(
+    "/delivery/split",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Атомарне розділення доставки на кілька рейсів (Split)",
+    description="Розділяє одну заявку на доставку на два або більше окремих рейсів (наприклад, коли загальний тоннаж замовлення перевищує вантажопідйомність одного автомобіля), створюючи нові записи у Deliveries та коригуючи товарні рядки.",
+    dependencies=[Depends(check_not_guest)],
+)
 async def split_delivery(
     data: SplitDeliveryRequest,
     background_tasks: BackgroundTasks,
@@ -2236,7 +2384,13 @@ async def split_delivery(
     }
 
 
-@app.post("/delivery/update", dependencies=[Depends(check_not_guest)])
+@app.post(
+    "/delivery/update",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Оновлення параметрів заявки на доставку",
+    description="Оновлює реквізити існуючої заявки на доставку: статус виконання, фактичну вагу вантажу, склад відвантаження, закріпленого водія/авто та обрані товарні партії.",
+    dependencies=[Depends(check_not_guest)],
+)
 async def update_delivery(
     data: UpdateDeliveryRequest,
     X_Telegram_Init_Data: str = Header()
@@ -2544,8 +2698,16 @@ async def update_delivery(
         )
 
 
-@app.get("/accountants", dependencies=[Depends(check_not_guest)])
-async def get_accountants(X_Telegram_Init_Data: str = Header()):
+@app.get(
+    "/accountants",
+    tags=["07. Клієнти, Менеджери та Адреси (CRM)"],
+    summary="Список активних бухгалтерів компанії",
+    description="Повертає довідник активних бухгалтерів (ПІБ, email, Telegram ID, телефон, ознака дефолтного бухгалтера) для вибору відповідального бухгалтера у діалозі надсилання заявки.",
+    dependencies=[Depends(check_not_guest)],
+)
+async def get_accountants(
+    X_Telegram_Init_Data: str = Header(..., description="Заголовок авторизації сесії Telegram Mini App"),
+):
     """Отримати список активних бухгалтерів для вибору в інтерфейсі"""
     accountants = await Accountants.select(
         Accountants.id,
@@ -2572,8 +2734,17 @@ async def get_accountants(X_Telegram_Init_Data: str = Header()):
     return {"status": "ok", "accountants": serialized}
 
 
-@app.get("/accountants/for-manager", dependencies=[Depends(check_not_guest)])
-async def get_accountant_for_manager(manager: str = Query(...), X_Telegram_Init_Data: str = Header()):
+@app.get(
+    "/accountants/for-manager",
+    tags=["07. Клієнти, Менеджери та Адреси (CRM)"],
+    summary="Закріплений бухгалтер для менеджера",
+    description="Визначає персонально закріпленого бухгалтера для поточного торгового представника за його Telegram ID або ім'ям. Якщо персонального закріплення немає, повертає чергового (дефолтного) бухгалтера.",
+    dependencies=[Depends(check_not_guest)],
+)
+async def get_accountant_for_manager(
+    manager: str = Query(..., description="Telegram ID, повне ім'я або username менеджера"),
+    X_Telegram_Init_Data: str = Header(..., description="Заголовок авторизації сесії Telegram Mini App"),
+):
     """Отримати закріпленого бухгалтера для менеджера або дефолтного"""
     clean_mgr = manager.strip()
     user = None
@@ -2631,7 +2802,13 @@ async def get_accountant_for_manager(manager: str = Query(...), X_Telegram_Init_
     return {"status": "ok", "accountant": accountant}
 
 
-@app.post("/delivery/send-to-accountant", dependencies=[Depends(check_not_guest)])
+@app.post(
+    "/delivery/send-to-accountant",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Передача заявки бухгалтеру на виписку видаткових (1С)",
+    description="Фіксує відібрані номенклатурні партії товару та надсилає сформовану заявку закріпленому бухгалтеру підрозділу в Telegram для термінової виписки первинних документів (ТТН, видаткових накладних).",
+    dependencies=[Depends(check_not_guest)],
+)
 async def send_delivery_to_accountant(
     data: SendToAccountantRequest,
     X_Telegram_Init_Data: str = Header()
@@ -2902,6 +3079,33 @@ async def send_delivery_to_accountant(
             res_mail = {"success": False, "error": "Email не вказано для цього бухгалтера"}
             warnings.append("Email не вказано для обраного бухгалтера")
 
+    # Фіксуємо передачу даних бухгалтеру в базі даних Deliveries
+    now_ts = datetime.now()
+    target_delivery_ids = data.delivery_ids if data.delivery_ids else [data.delivery_id]
+
+    try:
+        await Deliveries.update({
+            Deliveries.is_accountant_sent: True,
+            Deliveries.accountant_sent_at: now_ts,
+            Deliveries.accountant_name: accountant.name
+        }).where(Deliveries.id.is_in(target_delivery_ids)).run()
+    except Exception as db_err:
+        logger.warning(f"Failed to update accountant sent status in DB: {db_err}")
+
+    # Сповіщаємо всіх підключених логістів через WebSocket в реальному часі
+    try:
+        await manager.broadcast({
+            "type": "DELIVERIES_BATCH_UPDATED",
+            "payload": {
+                "delivery_ids": target_delivery_ids,
+                "is_accountant_sent": True,
+                "accountant_sent_at": now_ts.isoformat(),
+                "accountant_name": accountant.name
+            }
+        })
+    except Exception as ws_err:
+        logger.warning(f"Failed to broadcast accountant sent event via WebSocket: {ws_err}")
+
     return {
         "status": "ok",
         "accountant": {
@@ -2911,6 +3115,10 @@ async def send_delivery_to_accountant(
             "telegram_id": accountant.telegram_id,
             "telegram_username": accountant.telegram_username
         },
+        "is_accountant_sent": True,
+        "accountant_sent_at": now_ts.isoformat(),
+        "accountant_name": accountant.name,
+        "delivery_ids": target_delivery_ids,
         "telegram": res_tg,
         "email": res_mail,
         "mailto_url": mailto_url,
@@ -2990,7 +3198,13 @@ async def update_delivery_date(
         )
 
 
-@app.post("/delivery/batch_update", tags=["Delivery"], dependencies=[Depends(check_not_guest)])
+@app.post(
+    "/delivery/batch_update",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Масове групове оновлення списку доставок",
+    description="Здійснює групове оновлення статусу виконання або дати відвантаження одразу для декількох обраних заявок на доставку в один клік диспетчера/логіста.",
+    dependencies=[Depends(check_not_guest)],
+)
 async def batch_update_deliveries(
     data: BatchUpdateDeliveryRequest,
     user: dict = Depends(get_current_telegram_user)
@@ -3142,7 +3356,13 @@ async def batch_update_deliveries(
         )
 
 
-@app.post("/delivery/change_date", dependencies=[Depends(check_not_guest)])
+@app.post(
+    "/delivery/change_date",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Зміна дати доставки з синхронізацією календаря",
+    description="Змінює заплановану дату доставки замовлення з одночасною автоматичною синхронізацією в корпоративному Google Календарі та таблиці подій Events.",
+    dependencies=[Depends(check_not_guest)],
+)
 async def change_delivery_date(
     data: ChangeDeliveryDateRequest,
     user: dict = Depends(get_current_telegram_user)
@@ -3215,7 +3435,13 @@ async def change_delivery_date(
         )
 
 
-@app.delete("/delivery/delete", dependencies=[Depends(check_not_guest)])
+@app.delete(
+    "/delivery/delete",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Видалення або скасування заявки на доставку",
+    description="Повністю скасовує та видаляє заявку на доставку з БД, видаляє пов'язані позиції (DeliveryItems), очищує подію в Google Календарі та надсилає Telegram-сповіщення про скасування рейсу.",
+    dependencies=[Depends(check_not_guest)],
+)
 async def delete_delivery(data: DeleteDeliveryRequest):
     """
     Повністю видаляє доставку, пов'язані товари, подію в календарі та сповіщення в Telegram.
@@ -3261,10 +3487,11 @@ async def delete_delivery(data: DeleteDeliveryRequest):
 
 @app.post(
     "/orders/comments/create",
+    tags=["09. Чат та Коментарі до Заявок"],
     response_model=CommentResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Створити коментар",
-    description="Створює новий коментар до заявки або товару",
+    summary="Створити внутрішній коментар до заявки/товару",
+    description="Додає службовий коментар менеджера до всього замовлення або до конкретної товарної позиції (comment_type='order' | 'product').",
     dependencies=[Depends(check_not_guest)],
 )
 async def create_comment(
@@ -3317,13 +3544,14 @@ async def create_comment(
 @app.api_route(
     "/orders/comments/list",
     methods=["GET", "POST"],
+    tags=["09. Чат та Коментарі до Заявок"],
     response_model=List[CommentResponse],
-    summary="Отримати коментарі",
-    description="Отримує всі коментарі для вказаної заявки (GET через query або POST через JSON body)",
+    summary="Отримати список коментарів до замовлень",
+    description="Повертає коментарі для списку замовлень (підтримує GET з повторюваними параметрами order_ref або POST з JSON-масивом [order_ref1, order_ref2, ...]).",
 )
 async def get_comments(
     request: Request,
-    order_ref: Optional[List[str]] = Query(None, description="Номер заявки (для GET)"),
+    order_ref: Optional[List[str]] = Query(None, description="Список order_ref номерів для вибірки коментарів"),
 ):
     """
     Отримання всіх коментарів для заявки або списку заявок.
@@ -3358,14 +3586,15 @@ async def get_comments(
 
 @app.put(
     "/orders/comments/{comment_id}",
+    tags=["09. Чат та Коментарі до Заявок"],
     response_model=CommentResponse,
-    summary="Оновити коментар",
-    description="Оновлює текст коментаря (тільки власник може редагувати)",
+    summary="Редагувати внутрішній коментар",
+    description="Редагування тексту раніше створеного коментаря (дозволено лише автору коментаря або користувачу з правами адміністратора).",
     dependencies=[Depends(check_not_guest)],
 )
 async def update_comment(
-    comment_id: int,
-    request: UpdateCommentRequest,
+    comment_id: int = Path(..., description="Унікальний числовий ID коментаря"),
+    request: UpdateCommentRequest = ...,
     user: dict = Depends(get_current_telegram_user),
 ):
     """
@@ -3417,13 +3646,15 @@ async def update_comment(
 
 @app.delete(
     "/orders/comments/{comment_id}",
+    tags=["09. Чат та Коментарі до Заявок"],
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Видалити коментар",
-    description="Видаляє коментар (тільки власник може видалити)",
+    summary="Видалити внутрішній коментар",
+    description="Видалення внутрішнього коментаря за його числовим ID (дозволено лише автору або адміністратору).",
     dependencies=[Depends(check_not_guest)],
 )
 async def delete_comment(
-    comment_id: int, user: dict = Depends(get_current_telegram_user)
+    comment_id: int = Path(..., description="Унікальний числовий ID коментаря"),
+    user: dict = Depends(get_current_telegram_user),
 ):
     """
     Видалення коментаря

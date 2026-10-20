@@ -94,7 +94,8 @@ def cached_endpoint(ttl: Optional[int] = None):
                 logger.info(f"ℹ️ Кэш отключен. Запрос к БД для {func.__name__} выполнен за {elapsed_ms:.2f} мс.")
                 return result
             
-            key = generate_key(func.__name__, args, kwargs)
+            func_id = f"{getattr(func, '__module__', '')}.{func.__name__}" if hasattr(func, '__module__') else func.__name__
+            key = generate_key(func_id, args, kwargs)
             
             start_time = time.perf_counter()
             cached_value = db_cache.get(key)

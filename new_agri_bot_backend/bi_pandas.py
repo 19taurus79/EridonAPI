@@ -19,7 +19,7 @@ from new_agri_bot_backend.cache import cached_endpoint
 
 router = APIRouter(
     prefix="/api",  # Используем новый префикс для пандас-версии
-    tags=["api-pandas"],
+    tags=["11. Системні сервіси, Webhooks та Аналітика"],
 )
 
 # Список приоритетных подразделений остается тем же
@@ -33,17 +33,22 @@ priority_divisions = [
 ]
 
 
-@router.get("/combined")
+@router.get(
+    "/combined",
+    tags=["11. Системні сервіси, Webhooks та Аналітика"],
+    summary="BI-аналітика дефіциту та залишків (Pandas)",
+    description="Аналіз потреби та забезпечення замовлень у розрізі статусів і складів відвантаження з розподілом на товари з дефіцитом та без нього через обчислення Pandas.",
+)
 @cached_endpoint()
 async def combined_pandas_endpoint(
     document_status: Optional[List[str]] = Query(
-        None, description="Список статусів документів для фільтрації"
+        None, description="Фільтр за статусом проведення документів 1С"
     ),
     order_status: Optional[List[str]] = Query(
-        None, description="Список статусів замовлень для фільтрації"
+        None, description="Фільтр за статусом замовлення покупця"
     ),
     shipping_warehouse: Optional[List[str]] = Query(
-        None, description="Список складів відвантаження для фільтрації"
+        None, description="Фільтр за складами відвантаження"
     ),
 ):
     # --- 1. ИЗВЛЕЧЕНИЕ ДАННЫХ (Extract) ---
