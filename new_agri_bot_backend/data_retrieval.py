@@ -1756,6 +1756,227 @@ async def event_changed_date(
 async def get_task_status(task_id: str = Query(..., description="Ідентифікатор завдання task_id")):
     try:
         data = await Tasks.objects().where(Tasks.task_id == task_id).run()
-        return data[0]
+        return data[0] if data else None
     except Exception as e:
         logger.error(e)
+        return None
+
+
+@router.get(
+    "/orders_search",
+    tags=["04. Замовлення та Контракти (CRM)"],
+    summary="Швидкий адресний пошук відкритих заявок клієнтів (Submissions)",
+    description="Пошук активних замовлень (different > 0) з комбінованою фільтрацією за назвою номенклатури, менеджером, клієнтом або складом відвантаження. Автоматично збагачує замовлення даними про оплату та умови договору (Payment). Використовується AI-шлюзом MCP.",
+    dependencies=[Depends(get_current_telegram_user)],
+)
+@cached_endpoint()
+async def search_orders(
+    product: Optional[str] = Query(None, description="Частина назви номенклатури (ILIKE %product%)"),
+    manager: Optional[str] = Query(None, description="ПІБ або прізвище менеджера (ILIKE %manager%)"),
+    client: Optional[str] = Query(None, description="Назва контрагента (ILIKE %client%)"),
+    warehouse: Optional[str] = Query(None, description="Склад відвантаження (ILIKE %warehouse%)"),
+    document_status: Optional[str] = Query(None, description="Статус документа (наприклад: 'затверджено')"),
+    limit: int = Query(25, description="Максимальна кількість заявок (1-100)"),
+):
+    query = Submissions.select().where(Submissions.different > 0)
+
+    if product and product.strip():
+        query = query.where(Submissions.nomenclature.ilike(f"%{product.strip()}%"))
+
+    if manager and manager.strip():
+        query = query.where(Submissions.manager.ilike(f"%{manager.strip()}%"))
+
+    if client and client.strip():
+        query = query.where(Submissions.client.ilike(f"%{client.strip()}%"))
+
+    if warehouse and warehouse.strip():
+        query = query.where(Submissions.shipping_warehouse.ilike(f"%{warehouse.strip()}%"))
+
+    if document_status and document_status.strip():
+        query = query.where(Submissions.document_status.ilike(f"%{document_status.strip()}%"))
+
+    safe_limit = max(1, min(limit, 100))
+    orders = await query.order_by(Submissions.different, ascending=False).limit(safe_limit).run()
+
+    if not orders:
+        return []
+
+    # Збагачуємо даними про оплату з таблиці Payment
+    contract_ids = [item["contract_supplement"] for item in orders if item.get("contract_supplement")]
+    if contract_ids:
+        payments = await Payment.select(
+            Payment.contract_supplement,
+            Payment.contract_type,
+            Payment.loan_percentage,
+            Payment.planned_amount,
+            Payment.actual_payment_amount,
+        ).where(Payment.contract_supplement.is_in(contract_ids)).run()
+
+        payment_map = {p["contract_supplement"]: p for p in payments}
+        for item in orders:
+            cs = item.get("contract_supplement")
+            p_info = payment_map.get(cs)
+            if p_info:
+                item["contract_type"] = p_info.get("contract_type")
+                item["loan_percentage"] = p_info.get("loan_percentage")
+                item["planned_amount"] = p_info.get("planned_amount")
+                item["actual_payment_amount"] = p_info.get("actual_payment_amount")
+            else:
+                item["contract_type"] = None
+                item["loan_percentage"] = None
+                item["planned_amount"] = None
+                item["actual_payment_amount"] = None
+
+    return orders
+
+
+@router.get(
+    "/national_stock_search",
+    tags=["01. Залишки та Вільний Товар (Stock)"],
+    summary="Пошук залишків товарів по всіх регіонах та складах України (Remains + FreeStock)",
+    description="Комплексний пошук наявності товару по всіх Регіональних Управліннях (РУ) та складах України: об'єднує локальні бухгалтерські залишки (Remains) та міжрегіональний вільний товар (FreeStock). Використовується AI-шлюзом MCP.",
+    dependencies=[Depends(get_current_telegram_user)],
+)
+@cached_endpoint()
+async def search_national_stock(
+    query: Optional[str] = Query(None, description="Частина назви товару (ILIKE)"),
+    division: Optional[str] = Query(None, description="Фільтр за підрозділом / РУ (наприклад: 'Дніпровський', 'Київський', 'Вінницький', 'Харківський')"),
+    warehouse: Optional[str] = Query(None, description="Фільтр за конкретним складом або населеним пунктом"),
+    free_only: bool = Query(True, description="Показувати тільки товари з позитивним вільним залишком"),
+    limit: int = Query(15, description="Максимальна кількість товарів (1-50)"),
+):
+    safe_limit = max(1, min(limit, 50))
+    clean_query = query.strip() if query else None
+    clean_div = division.strip() if division else None
+    clean_wh = warehouse.strip() if warehouse else None
+
+    # 1. Знаходимо підходящі товари в ProductGuide
+    prod_query = ProductGuide.select()
+    if clean_query:
+        prod_query = prod_query.where(ProductGuide.product.ilike(f"%{clean_query}%"))
+    products = await prod_query.limit(safe_limit * 3).run()
+    if not products:
+        return []
+
+    product_ids = [p["id"] for p in products]
+
+    # 2. Отримуємо локальні залишки з Remains
+    rem_query = Remains.select().where(Remains.product.is_in(product_ids) & (Remains.buh > 0))
+    remains_all = await rem_query.run()
+
+    # 3. Отримуємо міжрегіональні залишки з FreeStock
+    fs_query = FreeStock.select().where(FreeStock.product.is_in(product_ids) & (FreeStock.free_qty > 0))
+    if clean_div:
+        fs_query = fs_query.where(FreeStock.division.ilike(f"%{clean_div}%"))
+    if clean_wh:
+        fs_query = fs_query.where(FreeStock.warehouse.ilike(f"%{clean_wh}%"))
+    free_stocks_all = await fs_query.run()
+
+    # 4. Резерви підтверджених заявок (Tier 1 'затверджено')
+    orders_reserves = await Submissions.select(
+        Submissions.product.as_alias("product_id"),
+        Sum(Submissions.different).as_alias("orders_q")
+    ).where(
+        Submissions.product.is_in(product_ids)
+        & (Submissions.different > 0)
+        & (Submissions.document_status == "затверджено")
+    ).group_by(Submissions.product).run()
+    orders_q_map = {r["product_id"]: float(r["orders_q"] or 0.0) for r in orders_reserves}
+
+    # Групуємо локальні залишки по товарах
+    rem_by_prod = defaultdict(list)
+    for r in remains_all:
+        wh_name = r.get("warehouse") or ""
+        if clean_wh and clean_wh.lower() not in wh_name.lower():
+            continue
+        if clean_div and clean_div.lower() not in wh_name.lower():
+            continue
+        rem_by_prod[r["product"]].append(r)
+
+    # Групуємо вільні залишки FreeStock по товарах
+    fs_by_prod = defaultdict(list)
+    for fs in free_stocks_all:
+        fs_by_prod[fs["product"]].append(fs)
+
+    results = []
+    for p in products:
+        p_id = p["id"]
+        local_batches = rem_by_prod.get(p_id, [])
+        regional_entries = fs_by_prod.get(p_id, [])
+
+        local_buh = sum(float(b.get("buh") or 0.0) for b in local_batches)
+        local_skl = sum(float(b.get("skl") or 0.0) for b in local_batches)
+        orders_q = orders_q_map.get(p_id, 0.0)
+        local_free = max(0.0, local_buh - orders_q)
+
+        regional_free = sum(float(fs.get("free_qty") or 0.0) for fs in regional_entries)
+        total_national_free = local_free + regional_free
+
+        # Якщо фільтр по складу/підрозділу вказано і немає залишків — пропускаємо
+        if (clean_div or clean_wh) and not local_batches and not regional_entries:
+            continue
+
+        if free_only and total_national_free <= 0.0:
+            continue
+
+        # Регіональне розбиття по підрозділах
+        div_breakdown = defaultdict(list)
+        for fs in regional_entries:
+            d_name = fs.get("division") or "Інші підрозділи"
+            div_breakdown[d_name].append({
+                "warehouse": fs.get("warehouse"),
+                "free_qty": round(float(fs.get("free_qty") or 0.0), 3),
+            })
+
+        regional_list = [
+            {
+                "division": d_name,
+                "total_available": round(sum(w["free_qty"] for w in wh_list), 3),
+                "warehouses": wh_list,
+            }
+            for d_name, wh_list in sorted(div_breakdown.items(), key=lambda x: x[0])
+        ]
+
+        # Локальні партії з розподіленим вільним залишком
+        rem_alloc = local_free
+        mapped_batches = []
+        for b in local_batches:
+            b_buh = float(b.get("buh") or 0.0)
+            alloc_for_b = min(b_buh, rem_alloc)
+            rem_alloc = max(0.0, rem_alloc - alloc_for_b)
+            mapped_batches.append({
+                "warehouse": b.get("warehouse"),
+                "accounting_stock": round(b_buh, 3),
+                "warehouse_stock": round(float(b.get("skl") or 0.0), 3),
+                "free_stock": round(alloc_for_b, 3),
+                "party_sign": b.get("party_sign"),
+                "crop_year": b.get("crop_year"),
+                "origin_country": b.get("origin_country"),
+                "series": b.get("nomenclature_series"),
+                "germination": b.get("germination"),
+                "mtn": b.get("mtn"),
+                "active_substance": b.get("active_substance"),
+                "certificate": b.get("certificate"),
+                "certificate_valid_until": b.get("certificate_end_date"),
+                "weight": b.get("weight"),
+            })
+
+        results.append({
+            "id": p_id,
+            "product": p["product"],
+            "line_of_business": p.get("line_of_business"),
+            "parent_element": p.get("parent_element"),
+            "total_local_accounting_stock": round(local_buh, 3),
+            "total_local_warehouse_stock": round(local_skl, 3),
+            "total_local_free_stock": round(local_free, 3),
+            "total_reserved_orders": round(orders_q, 3),
+            "total_regional_free_stock": round(regional_free, 3),
+            "total_national_free_stock": round(total_national_free, 3),
+            "local_batches": mapped_batches,
+            "regional_stock": regional_list,
+        })
+
+        if len(results) >= safe_limit:
+            break
+
+    return results
