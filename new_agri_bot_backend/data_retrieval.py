@@ -19,7 +19,7 @@ from .google_calendar import (
     get_calendar_event_by_id,
     get_calendar_events,
 )
-from .config import bot, logger, SEND_NOTIFICATIONS
+from .config import bot, logger, SEND_NOTIFICATIONS, valid_line_of_business
 
 # from .main import get_calendar_events
 
@@ -354,6 +354,19 @@ async def get_categories_tree():
 
 
 @router.get(
+    "/lines_of_business",
+    tags=["03. Номенклатура та Каталог Товарів"],
+    summary="Повний довідник допустимих видів діяльності (Lines of Business)",
+    description="Повертає повний нормативний перелік допустимих видів діяльності (LOB) компанії з конфігурації EridonAPI.",
+)
+async def get_lines_of_business():
+    """
+    Повертає повний канонічний список допустимих видів діяльності.
+    """
+    return list(valid_line_of_business)
+
+
+@router.get(
     "/product/{product_id}",
     tags=["03. Номенклатура та Каталог Товарів"],
     summary="Картка номенклатурної одиниці за UUID (ProductGuide)",
@@ -460,7 +473,10 @@ async def get_product_on_warehouse(
             query = query.where(ProductOnWarehouse.id.is_in(w_ids))
 
     if category:
-        query = query.where(ProductOnWarehouse.line_of_business == category)
+        clean_cat = category.strip()
+        if clean_cat.replace("і", "i").replace("І", "I") == "Позакореневi добрива":
+            clean_cat = "Позакореневi добрива"
+        query = query.where(ProductOnWarehouse.line_of_business == clean_cat)
 
     if parent_category:
         query = query.where(ProductOnWarehouse.parent_element == parent_category)
@@ -531,7 +547,10 @@ async def export_product_on_warehouse(
             query = query.where(ProductOnWarehouse.id.is_in(w_ids))
 
     if category:
-        query = query.where(ProductOnWarehouse.line_of_business == category)
+        clean_cat = category.strip()
+        if clean_cat.replace("і", "i").replace("І", "I") == "Позакореневi добрива":
+            clean_cat = "Позакореневi добрива"
+        query = query.where(ProductOnWarehouse.line_of_business == clean_cat)
 
     if parent_category:
         query = query.where(ProductOnWarehouse.parent_element == parent_category)
@@ -1426,6 +1445,7 @@ class TaskCreate(BaseModel):
     date: Optional[datetime] = Field(default_factory=lambda: datetime.utcnow())
     title: str
     note: str
+    idempotency_key: Optional[str] = None
 
 
 @router.post(
@@ -1442,7 +1462,11 @@ async def add_task(task_data: TaskCreate, user=Depends(get_current_telegram_user
         else datetime.now(timezone.utc).isoformat()
     )
     task = await create_task(
-        date=date_iso, note=task_data.note, title=task_data.title, user=user
+        date=date_iso,
+        note=task_data.note,
+        title=task_data.title,
+        user=user,
+        idempotency_key=task_data.idempotency_key,
     )
     return task
 

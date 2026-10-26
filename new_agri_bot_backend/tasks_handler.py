@@ -19,56 +19,23 @@ SCOPES = ["https://www.googleapis.com/auth/tasks"]
 bot = Bot(TELEGRAM_BOT_TOKEN)
 
 
+from .cache import db_cache
+import uuid
+
+
 async def get_all_tasks(user):
-    """Shows basic usage of the Tasks API.
-    Prints the title and ID of the first 10 task lists.
+    """Retrieves tasks from PostgreSQL Piccolo Tasks table.
+
+    Guarantees that local database tasks are always returned regardless of
+    Google Tasks API availability, network errors, or expired credentials.
     """
-    # creds = None
-    # # The file token.json stores the user's access and refresh tokens, and is
-    # # created automatically when the authorization flow completes for the first
-    # # time.
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    TOKEN_ACCOUNT_FILE = os.path.join(BASE_DIR, "token.json")
-    SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "credentials_task.json")
-    if os.path.exists(TOKEN_ACCOUNT_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_ACCOUNT_FILE, SCOPES)
-    # If there are no (valid) credentials available, let the user log in.
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                SERVICE_ACCOUNT_FILE, SCOPES
-            )
-            creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
-        with open(TOKEN_ACCOUNT_FILE, "w") as token:
-            token.write(creds.to_json())
-    #
-    try:
-        service = build("tasks", "v1", credentials=creds)
+    def date_minus_3_days():
+        return datetime.now(timezone.utc) - timedelta(days=3)
 
-        # Call the Tasks API
-        # results = service.tasklists().list(maxResults=10).execute()
-        results = (
-            service.tasks()
-            .list(
-                tasklist="RnFScjhXZHRvVHhhZWN0Sg",
-                showCompleted=True,
-                showHidden=True,
-            )
-            .execute()
-        )
-        items = results.get("items", [])
+    filter_date = date_minus_3_days()
 
-        def date_minus_3_days():
-            """Возвращает datetime-объект за 3 дня до текущего момента в UTC."""
-            # Получаем текущее время в UTC и вычитаем 3 дня
-            # Использование timezone.utc - лучший и более современный способ
-            return datetime.now(timezone.utc) - timedelta(days=3)
-
-        filter_date = date_minus_3_days()
-        all_tasks = (
+    if user.is_admin:
+        tasks = (
             await Tasks.select()
             .where(
                 (Tasks.task_status != 2)
@@ -78,62 +45,21 @@ async def get_all_tasks(user):
             .order_by(Tasks.created_at, ascending=False)
             .run()
         )
-        if user.is_admin:
-            return all_tasks
-        else:
-            user_tasks = (
-                await Tasks.select()
-                .where(
-                    (Tasks.task_creator == user.telegram_id)
-                    & (
-                        (Tasks.task_status != 2)
-                        | ((Tasks.created_at > filter_date) | (Tasks.task_status == 2))
-                    )
+    else:
+        tasks = (
+            await Tasks.select()
+            .where(
+                (Tasks.task_creator == user.telegram_id)
+                & (
+                    (Tasks.task_status != 2)
+                    | ((Tasks.created_at > filter_date) | (Tasks.task_status == 2))
                 )
-                .order_by(Tasks.task_status)
-                .order_by(Tasks.created_at, ascending=False)
-                .run()
             )
-        return user_tasks
-        # user_tasks_value = []
-        # for task in user_tasks:
-        #     user_tasks_value.append(task["task_id"])
-        # filtered_tasks = [item for item in items if item["id"] in user_tasks_value]
-        # if not items:
-        #     print("No task lists found.")
-        #     return
-        #
-        # print("Task lists:")
-        # for item in items:
-        #     print(f"{item['title']} ({item['id']})")
-        #
-        #     # Берём ID первого списка для примера
-        #     first_tasklist_id = items[0]["id"]
-        #     print(f"\nЗадачи из списка: {items[0]['title']}")
-        #
-        #     # Получаем задачи из первого списка
-        #     tasks_result = (
-        #         service.tasks()
-        #         .list(
-        #             tasklist="RnFScjhXZHRvVHhhZWN0Sg",
-        #             showCompleted=True,
-        #             showHidden=True,
-        #         )
-        #         .execute()
-        #     )
-        #     tasks = tasks_result.get("items", [])
-        #
-        #     if not tasks:
-        #         print("Задачи не найдены.")
-        #         return
-        #
-        #     for task in tasks:
-        #         print(
-        #             f"- {task['title']} (Статус: {task.get('status', 'no status')}, ID:{task['id']})"
-        #         )
-        # return filtered_tasks
-    except HttpError as err:
-        print(err)
+            .order_by(Tasks.task_status)
+            .order_by(Tasks.created_at, ascending=False)
+            .run()
+        )
+    return tasks
 
 
 def complete_task(task_id, user):
@@ -273,92 +199,133 @@ def get_task_by_id(task_id):
     # Получаем задачу
 
 
-async def create_task(date, note, title, user):
-    creds = None
-    # The file token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first
-    # time.
+async def create_task(date, note, title, user, idempotency_key=None):
+    if idempotency_key:
+        cache_k = f"task_idemp:{user.telegram_id}:{idempotency_key}"
+        cached = db_cache.get(cache_k)
+        if cached:
+            logger.info(f"Returning cached task for idempotency_key: {idempotency_key}")
+            return cached
+
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     TOKEN_ACCOUNT_FILE = os.path.join(BASE_DIR, "token.json")
     SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "credentials_task.json")
+    creds = None
     if os.path.exists(TOKEN_ACCOUNT_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_ACCOUNT_FILE, SCOPES)
-    # If there are no (valid) credentials available, let the user log in.
+        try:
+            creds = Credentials.from_authorized_user_file(TOKEN_ACCOUNT_FILE, SCOPES)
+        except Exception as e:
+            logger.warning(f"Failed to read token.json: {e}")
+            creds = None
+
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+                with open(TOKEN_ACCOUNT_FILE, "w") as token:
+                    token.write(creds.to_json())
+            except Exception as e:
+                logger.warning(f"Could not refresh Google Tasks token: {e}")
+                creds = None
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                SERVICE_ACCOUNT_FILE, SCOPES
+            logger.warning("No valid Google Tasks token and cannot refresh non-interactively")
+            creds = None
+
+    actual_task_id = None
+    if creds:
+        try:
+            service = build("tasks", "v1", credentials=creds)
+            task = {
+                "due": date,
+                "notes": note,
+                "title": title,
+            }
+            results = (
+                service.tasks()
+                .insert(tasklist="RnFScjhXZHRvVHhhZWN0Sg", body=task)
+                .execute()
             )
-            creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
-        with open(TOKEN_ACCOUNT_FILE, "w") as token:
-            token.write(creds.to_json())
+            actual_task_id = results.get("id")
+        except Exception as err:
+            logger.warning(f"Google Tasks insert failed: {err}")
+            actual_task_id = None
 
+    if not actual_task_id:
+        actual_task_id = f"local-{uuid.uuid4().hex[:12]}"
+
+    admins_json = os.getenv("ADMINS", "[]")
     try:
-        service = build("tasks", "v1", credentials=creds)
-        task = {
-            "due": date,
-            "notes": note,
-            "title": title,
-        }
-        results = (
-            service.tasks()
-            .insert(tasklist="RnFScjhXZHRvVHhhZWN0Sg", body=task)
-            .execute()
-        )
-
-        admins_json = os.getenv("ADMINS", "[]")
         admins = json.loads(admins_json)
-        web_app_url = f"https://telegram-mini-app-six-inky.vercel.app/tasks/{results['id']}?from_link=1"
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Відкрити", web_app=WebAppInfo(url=web_app_url)
-                    )
-                ]
+    except Exception:
+        admins = []
+
+    web_app_url = f"https://telegram-mini-app-six-inky.vercel.app/tasks/{actual_task_id}?from_link=1"
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Відкрити", web_app=WebAppInfo(url=web_app_url)
+                )
             ]
-        )
-        for admin in admins:
-            if SEND_NOTIFICATIONS:
-                msg = await bot.send_message(
+        ]
+    )
+    for admin in admins:
+        if SEND_NOTIFICATIONS:
+            try:
+                await bot.send_message(
                     chat_id=admin,
                     text="З'явилось нове завдання",
                     parse_mode="HTML",
                     reply_markup=keyboard,
                 )
-                print(msg)
-            else:
-                logger.info(f"🔇 Сповіщення вимкнено. Не надсилаємо задачу адміну {admin}")
-        if SEND_NOTIFICATIONS:
+            except Exception as e:
+                logger.warning(f"Notification to admin {admin} failed: {e}")
+        else:
+            logger.info(f"🔇 Сповіщення вимкнено. Не надсилаємо задачу адміну {admin}")
+
+    if SEND_NOTIFICATIONS:
+        try:
             user_msg = await bot.send_message(
                 chat_id=user.telegram_id, text="Ви надіслали завдання логісту"
             )
-        else:
-            logger.info(f"🔇 Сповіщення вимкнено. Користувач {user.telegram_id} надіслав задачу.")
-            # Створюємо фейковий об'єкт повідомлення для БД, якщо потрібно
+        except Exception:
             class FakeMsg:
                 def __init__(self):
                     self.chat = type('obj', (object,), {'id': 0})()
                     self.message_id = 0
             user_msg = FakeMsg()
-        await Tasks.insert(
-            Tasks(
-                task_id=results["id"],
-                task_creator=user.telegram_id,
-                task_creator_name=user.full_name_for_orders,
-                task_status=0,
-                task=title,
-                chat_id=user_msg.chat.id,
-                message_id=user_msg.message_id,
-            )
+    else:
+        logger.info(f"🔇 Сповіщення вимкнено. Користувач {user.telegram_id} надіслав задачу.")
+        class FakeMsg:
+            def __init__(self):
+                self.chat = type('obj', (object,), {'id': 0})()
+                self.message_id = 0
+        user_msg = FakeMsg()
+
+    await Tasks.insert(
+        Tasks(
+            task_id=actual_task_id,
+            task_creator=user.telegram_id,
+            task_creator_name=user.full_name_for_orders,
+            task_status=0,
+            task=title,
+            chat_id=user_msg.chat.id,
+            message_id=user_msg.message_id,
         )
-        print(user)
-        print(results["webViewLink"])
-    except HttpError as err:
-        print(err)
+    )
+
+    created_result = {
+        "id": actual_task_id,
+        "task_id": actual_task_id,
+        "title": title,
+        "notes": note,
+        "status": "needsAction",
+        "due": date,
+    }
+    if idempotency_key:
+        db_cache.set(cache_k, created_result, ttl=86400)
+
+    return created_result
 
 
 if __name__ == "__main__":

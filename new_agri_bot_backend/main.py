@@ -1638,36 +1638,116 @@ async def request_np_details(
 @app.get(
     "/delivery/get_data_for_delivery",
     tags=["05. Доставка та Логістичний Календар"],
-    summary="Головний реєстр активних заявок на доставку",
-    description="Повертає повний список заявок на доставку з таблиці Deliveries з деталізацією товарних позицій (DeliveryItems), водіїв, автотранспорту, складів відвантаження та статусів. Ядро логістичного модуля диспетчера/логіста.",
+    summary="Головний реєстр заявок на доставку",
+    description="Повертає список заявок на доставку з деталізацією або полегшеним зрізом. Підтримує режими 'active', 'history', 'analytics_light', 'all' та фільтрацію по датах/статусах.",
 )
-async def get_data_for_delivery(X_Telegram_Init_Data: str = Header()):
-    parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
-    if not parsed_init_data:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+async def get_data_for_delivery(
+    user=Depends(get_current_telegram_user),
+    mode: Optional[str] = Query(None, description="Режим вибірки: 'active', 'history', 'analytics_light', 'all'"),
+    status: Optional[str] = Query(None, description="Фільтр за конкретним статусом (наприклад, 'Виконано')"),
+    date_from: Optional[str] = Query(None, description="Початкова дата YYYY-MM-DD"),
+    date_to: Optional[str] = Query(None, description="Кінцева дата YYYY-MM-DD"),
+    manager: Optional[str] = Query(None, description="Фільтр за менеджером"),
+    limit: Optional[int] = Query(None, description="Ліміт записів"),
+    offset: Optional[int] = Query(None, description="Зміщення"),
+):
+    # 1. Формируем запрос к таблице Deliveries
+    if mode == "analytics_light":
+        query = Deliveries.select(
+            Deliveries.id,
+            Deliveries.client,
+            Deliveries.manager,
+            Deliveries.address,
+            Deliveries.delivery_date,
+            Deliveries.total_weight,
+            Deliveries.latitude,
+            Deliveries.longitude,
+            Deliveries.status,
+            Deliveries.is_custom_address,
+            Deliveries.target_warehouse,
+            Deliveries.ttn,
+            Deliveries.is_accountant_sent,
+            Deliveries.accountant_sent_at,
+        )
+    else:
+        query = Deliveries.select()
 
-    # 1. Получаем все доставки и их товарные позиции
-    deliveries_list = (
-        await Deliveries.select().order_by(Deliveries.id, ascending=False).run()
-    )
-    items_list = await DeliveryItems.select().run()
+    # Фильтры по датам
+    if date_from:
+        try:
+            d_from = datetime.strptime(date_from.strip(), "%Y-%m-%d").date()
+            query = query.where(Deliveries.delivery_date >= d_from)
+        except Exception:
+            pass
 
-    # 2. Создаем "карту" доставок для быстрой сборки
+    if date_to:
+        try:
+            d_to = datetime.strptime(date_to.strip(), "%Y-%m-%d").date()
+            query = query.where(Deliveries.delivery_date <= d_to)
+        except Exception:
+            pass
+
+    # Фильтр по статусу
+    if status:
+        st_clean = status.strip()
+        if st_clean.lower() in ["виконано", "completed"]:
+            query = query.where(Deliveries.status.is_in(["Виконано", "completed", "виконано"]))
+        else:
+            query = query.where(Deliveries.status == st_clean)
+    elif mode == "active" or (mode is None and not date_from and not date_to):
+        # По умолчанию (или явный mode="active"): только активные доставки + выполненные за последние 3 дня
+        today = datetime.now(timezone.utc).date()
+        three_days_ago = today - timedelta(days=3)
+        three_days_ago_dt = datetime.now(timezone.utc) - timedelta(days=3)
+
+        active_clause = (
+            Deliveries.status.not_in(["Виконано", "completed", "виконано"])
+        ) | (
+            Deliveries.status.is_in(["Виконано", "completed", "виконано"]) & (
+                (Deliveries.delivery_date >= three_days_ago) |
+                ((Deliveries.delivery_date == None) & (Deliveries.created_at >= three_days_ago_dt))
+            )
+        )
+        query = query.where(active_clause)
+
+    # Фильтр по менеджеру
+    if manager:
+        query = query.where(Deliveries.manager == manager.strip())
+
+    if limit:
+        query = query.limit(limit)
+    if offset:
+        query = query.offset(offset)
+
+    query = query.order_by(Deliveries.id, ascending=False)
+    deliveries_list = await query.run()
+
+    # Если запрошен analytics_light — возвращаем плоский список без загрузки товаров
+    if mode == "analytics_light":
+        return [{**d, "items": []} for d in deliveries_list]
+
+    # 2. Оптимизированная выборка товаров: ТОЛЬКО для отобранных доставок!
+    delivery_ids = [d["id"] for d in deliveries_list]
+    if delivery_ids:
+        items_list = await DeliveryItems.select().where(
+            DeliveryItems.delivery.is_in(delivery_ids)
+        ).run()
+    else:
+        items_list = []
+
+    # 3. Создаем "карту" доставок для быстрой сборки
     deliveries_map = {
         delivery["id"]: {**delivery, "items": []} for delivery in deliveries_list
     }
 
-    # 3. Группируем товарные позиции по доставкам и продуктам
-    # { delivery_id: { (order_ref, product_name): { ... } } }
+    # 4. Группируем товарные позиции по доставкам и продуктам
     grouped_items = {}
     for item in items_list:
         delivery_id = item["delivery"]
         product_name = item["product"]
         order_ref = item["order_ref"]
-        # Создаем уникальный ключ для группировки по заказу и продукту
         grouping_key = (order_ref, product_name)
 
-        # Инициализируем словари, если их еще нет
         if delivery_id not in grouped_items:
             grouped_items[delivery_id] = {}
         if grouping_key not in grouped_items[delivery_id]:
@@ -1675,34 +1755,63 @@ async def get_data_for_delivery(X_Telegram_Init_Data: str = Header()):
             item_qty = float(item.get("quantity") or 0.0)
             item_w = round(unit_w * item_qty, 2)
             grouped_items[delivery_id][grouping_key] = {
-                "order_ref": order_ref,  # Возвращаем order_ref
+                "order_ref": order_ref,
                 "product": product_name,
                 "line_of_business": item.get("line_of_business"),
-                "quantity": item["quantity"],  # Общее количество для продукта
+                "quantity": item["quantity"],
                 "unit_weight": unit_w,
                 "weight": item_w,
                 "total_weight": item_w,
                 "parties": [],
             }
 
-        # Добавляем информацию о партии
         grouped_items[delivery_id][grouping_key]["parties"].append(
             {"party": item["party"], "party_quantity": item["party_quantity"]}
         )
 
-    # 4. Собираем финальный результат
+    # 5. Собираем финальный результат
     for delivery_id, delivery_data in deliveries_map.items():
         if delivery_id in grouped_items:
-            # Преобразуем словарь продуктов в список
             delivery_data["items"] = list(grouped_items[delivery_id].values())
 
-        # Гарантія ненульової ваги: якщо в базі 0 або NULL, беремо суму позицій
         if not delivery_data.get("total_weight") or float(delivery_data["total_weight"]) <= 0:
             calc_w = sum(float(it.get("weight") or 0.0) for it in delivery_data.get("items", []))
             delivery_data["total_weight"] = round(calc_w, 2) if calc_w > 0 else 1.0
 
-    combined_data = list(deliveries_map.values())
-    return combined_data
+    return list(deliveries_map.values())
+
+
+@app.get(
+    "/delivery/{delivery_id}/items",
+    tags=["05. Доставка та Логістичний Календар"],
+    summary="Товарні позиції конкретної доставки",
+    description="Повертає перелік товарів та партій для однієї обраної доставки (для ленивої деталізації).",
+)
+async def get_delivery_items(delivery_id: int, user=Depends(get_current_telegram_user)):
+    items_list = await DeliveryItems.select().where(DeliveryItems.delivery == delivery_id).run()
+    grouped_items = {}
+    for item in items_list:
+        product_name = item["product"]
+        order_ref = item["order_ref"]
+        grouping_key = (order_ref, product_name)
+        if grouping_key not in grouped_items:
+            unit_w = get_fallback_weight(item.get("line_of_business") or "", product_name)
+            item_qty = float(item.get("quantity") or 0.0)
+            item_w = round(unit_w * item_qty, 2)
+            grouped_items[grouping_key] = {
+                "order_ref": order_ref,
+                "product": product_name,
+                "line_of_business": item.get("line_of_business"),
+                "quantity": item["quantity"],
+                "unit_weight": unit_w,
+                "weight": item_w,
+                "total_weight": item_w,
+                "parties": [],
+            }
+        grouped_items[grouping_key]["parties"].append(
+            {"party": item["party"], "party_quantity": item["party_quantity"]}
+        )
+    return list(grouped_items.values())
 
 @app.get(
     "/delivery/unmapped_lobs",
@@ -1710,10 +1819,12 @@ async def get_data_for_delivery(X_Telegram_Init_Data: str = Header()):
     summary="Список незіставлених напрямків бізнесу (Unmapped LOBs)",
     description="Повертає перелік бізнес-напрямків товарів у доставках, для яких у системі ще не налаштовано правила відповідності та логістичної категоризації.",
 )
-async def get_unmapped_lobs(X_Telegram_Init_Data: str = Header()):
-    parsed_init_data = check_telegram_auth(X_Telegram_Init_Data)
-    if not parsed_init_data:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+@app.get(
+    "/data/get_unmapped_lobs",
+    tags=["05. Доставка та Логістичний Календар"],
+    include_in_schema=False,
+)
+async def get_unmapped_lobs(user=Depends(get_current_telegram_user)):
     
     # Отримуємо унікальні продукти, де line_of_business IS NULL або пустий
     items = await DeliveryItems.select(DeliveryItems.product).where(
