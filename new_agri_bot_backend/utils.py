@@ -12,13 +12,20 @@ load_dotenv()
 # Определяем режим работы: 'production' или 'development'. По умолчанию 'development'.
 APP_ENV = os.getenv("APP_ENV", "development")
 
+try:
+    from zoneinfo import ZoneInfo
+    KYIV_TZ = ZoneInfo("Europe/Kyiv")
+except ImportError:
+    import pytz
+    KYIV_TZ = pytz.timezone("Europe/Kyiv")
+
 bot = Bot(TELEGRAM_BOT_TOKEN)
 
 
 async def send_message_to_managers():
     """Отправляет сообщение всем менеджерам в Telegram или выводит в консоль в зависимости от режима."""
     user_tg_id_list = await Users.select().where(Users.is_allowed == True).run()
-    now = datetime.now() + timedelta(hours=3)
+    now = datetime.now(KYIV_TZ)
     time_format = "%d-%m-%Y %H:%M:%S"
     message_text = f"Дані в боті оновлені.\nІ вони актуальні станом на… {now.strftime(time_format)}"
 

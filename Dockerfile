@@ -2,8 +2,9 @@
 
 FROM python:3.11-alpine3.17
 
-# Устанавливаем зависимости для сборки, необходимые для некоторых Python-пакетов
-RUN apk add --no-cache build-base python3-dev linux-headers postgresql-dev libffi-dev
+# Устанавливаем зависимости для сборки, необходимые для некоторых Python-пакетов, а также tzdata для таймзоны
+RUN apk add --no-cache build-base python3-dev linux-headers postgresql-dev libffi-dev tzdata
+ENV TZ=Europe/Kyiv
 
 # Устанавливаем рабочую директорию внутри контейнера
 WORKDIR /app

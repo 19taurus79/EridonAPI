@@ -147,8 +147,14 @@ from aiogram.types import Update
 from .telegram_auth import confirm_login_token
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from pydantic import BaseModel
-from datetime import date
+from datetime import date, datetime
+
+try:
+    from zoneinfo import ZoneInfo
+    KYIV_TZ = ZoneInfo("Europe/Kyiv")
+except ImportError:
+    import pytz
+    KYIV_TZ = pytz.timezone("Europe/Kyiv")
 
 # Важно: если бот не используется напрямую в main, эту строку можно убрать
 
@@ -704,7 +710,7 @@ async def request_data_update(current_user: Users = Depends(get_current_telegram
         or f"ID: {current_user.telegram_id}"
     )
     username_part = f" (@{current_user.username})" if current_user.username else ""
-    date_str = datetime.now().strftime("%d.%m.%Y %H:%M")
+    date_str = datetime.now(KYIV_TZ).strftime("%d.%m.%Y %H:%M")
 
     message_text = (
         f"🔄 <b>Потрібне оновлення даних!</b>\n\n"
@@ -3079,35 +3085,47 @@ async def send_delivery_to_accountant(
             res_mail = {"success": False, "error": "Email не вказано для цього бухгалтера"}
             warnings.append("Email не вказано для обраного бухгалтера")
 
-    # Фіксуємо передачу даних бухгалтеру в базі даних Deliveries
+    # Перевіряємо, чи була реальна успішна відправка хоча б одним каналом (Telegram або Email)
+    is_actually_sent = bool(
+        (res_tg and res_tg.get("success")) or 
+        (res_mail and res_mail.get("success"))
+    )
+
     now_ts = datetime.now()
     target_delivery_ids = data.delivery_ids if data.delivery_ids else [data.delivery_id]
 
-    try:
-        await Deliveries.update({
-            Deliveries.is_accountant_sent: True,
-            Deliveries.accountant_sent_at: now_ts,
-            Deliveries.accountant_name: accountant.name
-        }).where(Deliveries.id.is_in(target_delivery_ids)).run()
-    except Exception as db_err:
-        logger.warning(f"Failed to update accountant sent status in DB: {db_err}")
+    # Фіксуємо передачу даних бухгалтеру в базі даних ТІЛЬКИ якщо дані реально відправлено
+    if is_actually_sent:
+        try:
+            await Deliveries.update({
+                Deliveries.is_accountant_sent: True,
+                Deliveries.accountant_sent_at: now_ts,
+                Deliveries.accountant_name: accountant.name
+            }).where(Deliveries.id.is_in(target_delivery_ids)).run()
+        except Exception as db_err:
+            logger.warning(f"Failed to update accountant sent status in DB: {db_err}")
 
-    # Сповіщаємо всіх підключених логістів через WebSocket в реальному часі
-    try:
-        await manager.broadcast({
-            "type": "DELIVERIES_BATCH_UPDATED",
-            "payload": {
-                "delivery_ids": target_delivery_ids,
-                "is_accountant_sent": True,
-                "accountant_sent_at": now_ts.isoformat(),
-                "accountant_name": accountant.name
-            }
-        })
-    except Exception as ws_err:
-        logger.warning(f"Failed to broadcast accountant sent event via WebSocket: {ws_err}")
+        # Сповіщаємо всіх підключених логістів через WebSocket в реальному часі
+        try:
+            await manager.broadcast({
+                "type": "DELIVERIES_BATCH_UPDATED",
+                "payload": {
+                    "delivery_ids": target_delivery_ids,
+                    "is_accountant_sent": True,
+                    "accountant_sent_at": now_ts.isoformat(),
+                    "accountant_name": accountant.name
+                }
+            })
+        except Exception as ws_err:
+            logger.warning(f"Failed to broadcast accountant sent event via WebSocket: {ws_err}")
+    else:
+        logger.warning(
+            f"⚠️ Жоден канал зв'язку (Telegram / Email) не завершився успішно для доставок {target_delivery_ids}. "
+            f"Статус is_accountant_sent не встановлено."
+        )
 
     return {
-        "status": "ok",
+        "status": "ok" if is_actually_sent else "failed",
         "accountant": {
             "id": str(accountant.id),
             "name": accountant.name,
@@ -3115,9 +3133,9 @@ async def send_delivery_to_accountant(
             "telegram_id": accountant.telegram_id,
             "telegram_username": accountant.telegram_username
         },
-        "is_accountant_sent": True,
-        "accountant_sent_at": now_ts.isoformat(),
-        "accountant_name": accountant.name,
+        "is_accountant_sent": is_actually_sent,
+        "accountant_sent_at": now_ts.isoformat() if is_actually_sent else None,
+        "accountant_name": accountant.name if is_actually_sent else None,
         "delivery_ids": target_delivery_ids,
         "telegram": res_tg,
         "email": res_mail,
