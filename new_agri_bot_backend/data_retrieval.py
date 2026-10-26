@@ -764,7 +764,13 @@ async def get_contracts(client: str = Query(..., description="ID контраг�
     description="Повертає глобальний реєстр усіх договорів із таблиці Submissions зі зведеними статусами документів (document_status), доставки (delivery_status), складами відвантаження, закріпленими менеджерами та контрагентами. Для кожного договору автоматично агрегуються фінансові суми та стан виконання. Використовується фронтендом для загальних реєстрів і фільтрів.",
 )
 @cached_endpoint()
-async def get_all_contracts():
+async def get_all_contracts(
+    line_of_business: Optional[str] = Query(None, description="Фільтр за видом діяльності / бізнес-напрямком"),
+    manager: Optional[str] = Query(None, description="Фільтр за менеджером (ILIKE)"),
+    client: Optional[str] = Query(None, description="Фільтр за клієнтом (ILIKE)"),
+    warehouse: Optional[str] = Query(None, description="Фільтр за складом відвантаження (ILIKE)"),
+    document_status: Optional[str] = Query(None, description="Фільтр за статусом документа (ILIKE)"),
+):
     query = Submissions.select(
         Submissions.contract_supplement,
         Submissions.line_of_business,
@@ -774,6 +780,23 @@ async def get_all_contracts():
         Submissions.manager,
         Submissions.client,
     ).where(Submissions.different > 0)
+
+    if line_of_business and line_of_business.strip():
+        # Exact match or case-insensitive exact to isolate 'Насіння' and 'Власне виробництво насіння'
+        clean_lob = line_of_business.strip()
+        query = query.where(Submissions.line_of_business.ilike(clean_lob))
+
+    if manager and manager.strip():
+        query = query.where(Submissions.manager.ilike(f"%{manager.strip()}%"))
+
+    if client and client.strip():
+        query = query.where(Submissions.client.ilike(f"%{client.strip()}%"))
+
+    if warehouse and warehouse.strip():
+        query = query.where(Submissions.shipping_warehouse.ilike(f"%{warehouse.strip()}%"))
+
+    if document_status and document_status.strip():
+        query = query.where(Submissions.document_status.ilike(f"%{document_status.strip()}%"))
 
     contracts = await query.group_by(
         Submissions.contract_supplement,
@@ -1800,7 +1823,9 @@ async def search_orders(
     client: Optional[str] = Query(None, description="Назва контрагента (ILIKE %client%)"),
     warehouse: Optional[str] = Query(None, description="Склад відвантаження (ILIKE %warehouse%)"),
     document_status: Optional[str] = Query(None, description="Статус документа (наприклад: 'затверджено')"),
+    line_of_business: Optional[str] = Query(None, description="Вид діяльності / бізнес-напрямок"),
     limit: int = Query(25, description="Максимальна кількість заявок (1-100)"),
+    offset: int = Query(0, ge=0, description="Зсув для пагінації"),
 ):
     query = Submissions.select().where(Submissions.different > 0)
 
@@ -1819,8 +1844,11 @@ async def search_orders(
     if document_status and document_status.strip():
         query = query.where(Submissions.document_status.ilike(f"%{document_status.strip()}%"))
 
+    if line_of_business and line_of_business.strip():
+        query = query.where(Submissions.line_of_business.ilike(line_of_business.strip()))
+
     safe_limit = max(1, min(limit, 100))
-    orders = await query.order_by(Submissions.different, ascending=False).limit(safe_limit).run()
+    orders = await query.order_by(Submissions.different, ascending=False).limit(safe_limit).offset(offset).run()
 
     if not orders:
         return []
