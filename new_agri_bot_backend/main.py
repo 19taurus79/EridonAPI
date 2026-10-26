@@ -1696,9 +1696,9 @@ async def get_data_for_delivery(
             query = query.where(Deliveries.status == st_clean)
     elif mode == "active" or (mode is None and not date_from and not date_to):
         # По умолчанию (или явный mode="active"): только активные доставки + выполненные за последние 3 дня
-        today = datetime.now(timezone.utc).date()
-        three_days_ago = today - timedelta(days=3)
-        three_days_ago_dt = datetime.now(timezone.utc) - timedelta(days=3)
+        now_naive = datetime.now().replace(tzinfo=None)
+        three_days_ago = now_naive.date() - timedelta(days=3)
+        three_days_ago_dt = now_naive - timedelta(days=3)
 
         active_clause = (
             Deliveries.status.not_in(["Виконано", "completed", "виконано"])
