@@ -1504,16 +1504,25 @@ async def get_vehicle_info(
     "/delivery/get_telegram_id_from_delivery_by_id/{id}",
     tags=["05. Доставка та Логістичний Календар"],
     summary="Отримання Telegram ID відповідального за доставкою",
-    description="Повертає числовий Telegram ID користувача (менеджера, що створив заявку) за ID доставки для адресної відправки сервісних повідомлень.",
+    description="Повертає числовий Telegram ID користувача (менеджера, що створив заявку) за ID доставки або calendar_id для адресної відправки сервісних повідомлень.",
 )
-async def get_telegram_id(id: int = Path(..., description="Числовий ID доставки в таблиці Deliveries")):
+async def get_telegram_id(id: str = Path(..., description="ID доставки (числовий) або ID події календаря (calendar_id)")):
     try:
-        telegram_id = (
-            await Deliveries.objects().where(Deliveries.calendar_id == str(id)).first()
+        # Спочатку шукаємо за calendar_id (подія календаря Google)
+        delivery = (
+            await Deliveries.objects().where(Deliveries.calendar_id == id).first().run()
         )
-        return telegram_id.created_by
-    except:
-        return
+        # Якщо не знайдено і id є числом — шукаємо за первинним ключем доставки (Deliveries.id)
+        if not delivery and id.isdigit():
+            delivery = (
+                await Deliveries.objects().where(Deliveries.id == int(id)).first().run()
+            )
+        if delivery:
+            return delivery.created_by
+        return None
+    except Exception as e:
+        logger.error(f"Помилка отримання telegram_id для delivery {id}: {e}")
+        return None
 
 
 @app.get(
