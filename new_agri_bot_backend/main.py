@@ -1991,6 +1991,68 @@ async def send_delivery(
         if user_in_db else "Логіст / Адміністратор"
     )
 
+    # 0. Автоматичне підтягування приміток до заявок та товарів, якщо їх ще немає в коментарі
+    order_refs = list({order.order.strip() for order in data.orders if order.order and order.order.strip()})
+    if order_refs and "Примітки з заявок:" not in (data.comment or ""):
+        try:
+            db_comments = await OrderComments.select().where(
+                OrderComments.order_ref.is_in(order_refs)
+            ).order_by(OrderComments.created_at, ascending=True).run()
+
+            if db_comments:
+                def _get(o, k):
+                    return o.get(k) if isinstance(o, dict) else getattr(o, k, None)
+
+                order_notes = [
+                    c for c in db_comments
+                    if _get(c, "comment_type") == "order" and (_get(c, "comment_text") or "").strip()
+                ]
+
+                delivery_item_tuples = set()
+                for order in data.orders:
+                    ord_ref = (order.order or "").strip()
+                    for item in order.items:
+                        if float(item.quantity or 0) > 0:
+                            prod = (item.product or "").strip().lower()
+                            delivery_item_tuples.add((ord_ref, prod))
+
+                product_notes = []
+                for c in db_comments:
+                    if _get(c, "comment_type") == "product" and (_get(c, "comment_text") or "").strip():
+                        c_ref = (_get(c, "order_ref") or "").strip()
+                        c_pname = (_get(c, "product_name") or "").strip().lower()
+                        c_pid = str(_get(c, "product_id") or "").strip().lower()
+                        if (c_ref, c_pname) in delivery_item_tuples or (c_ref, c_pid) in delivery_item_tuples:
+                            product_notes.append(c)
+
+                if order_notes or product_notes:
+                    note_lines = ["📋 Примітки з заявок:"]
+                    seen = set()
+                    for n in order_notes:
+                        text = _get(n, "comment_text").strip()
+                        ref = _get(n, "order_ref")
+                        key = (ref, text)
+                        if key not in seen:
+                            seen.add(key)
+                            note_lines.append(f"• [Заявка {ref}]: {text}")
+
+                    for n in product_notes:
+                        text = _get(n, "comment_text").strip()
+                        ref = _get(n, "order_ref")
+                        pname = (_get(n, "product_name") or "Товар").strip()
+                        key = (ref, pname, text)
+                        if key not in seen:
+                            seen.add(key)
+                            note_lines.append(f"• [Товар \"{pname}\" ({ref})]: {text}")
+
+                    extra_notes_text = "\n".join(note_lines)
+                    if data.comment and data.comment.strip():
+                        data.comment = f"{extra_notes_text}\n\n{data.comment}".strip()
+                    else:
+                        data.comment = extra_notes_text
+        except Exception as e:
+            logger.warning(f"⚠️ Не вдалося завантажити примітки до заявок для коментаря доставки: {e}")
+
     # 1. Формування повідомлення для Telegram
     if data.status == "Самовивіз":
         header = "🚗 <b>Нова заявка на Самовивіз!</b>"
